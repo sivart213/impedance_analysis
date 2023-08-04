@@ -925,7 +925,7 @@ class Complexer(object):
 # %% Testing
 if __name__ == "__main__":
     # examples
-    import defect_code.equations as eqs
+    import research_tools.equations as eqs
     from scipy import optimize
 
     xx = np.linspace(1, 100)
