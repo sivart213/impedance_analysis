@@ -65,6 +65,7 @@ def arrh(A0, Ea, T):
         return float(res)
     return res
 
+
 def erf(z):
     """Calculate. generic discription."""
     if isinstance(z, sp.Basic):
@@ -75,6 +76,7 @@ def erf(z):
     if isinstance(res, sp.Number):
         return float(res)
     return res
+
 
 def erfinv(z):
     """Calculate. generic discription."""
@@ -87,6 +89,7 @@ def erfinv(z):
         return float(res)
     return res
 
+
 def erfc(z):
     """Calculate. generic discription."""
     if isinstance(z, sp.Basic):
@@ -98,6 +101,7 @@ def erfc(z):
         return float(res)
     return res
 
+
 def erfcinv(z):
     """Calculate. generic discription."""
     if isinstance(z, sp.Basic):
@@ -108,6 +112,7 @@ def erfcinv(z):
     if isinstance(res, sp.Number):
         return float(res)
     return res
+
 
 def polynomial(*coeff, x=None):
     """
@@ -126,6 +131,7 @@ def polynomial(*coeff, x=None):
     elif hasattr(res, "expand"):
         return res.expand()
     return res
+
 
 # %% Geometric
 def line(x, m=1, b=0):

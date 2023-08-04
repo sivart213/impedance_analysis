@@ -11,7 +11,7 @@ General function file
 import numpy as np
 import sympy as sp
 
-from research_tools.functions import get_const, has_units
+from research_tools.functions import get_const, has_units, all_symbols
 
 from research_tools.equations.physics import ni_Si, mobility_generic
 
@@ -177,8 +177,11 @@ def IQE(ab, Wd, Se, Le, De, We, Sb, Wb, Lb, Db):
 def implied_carrier(V, N, ni=8697277437.298948, T=298.15, n=1):
     """Return excess carrier concentration (cm-3).
     Given: voltage and doping determine"""
-    w_units = has_units(vars())
-    k_B = get_const("boltzmann", w_units, ["eV", "K"])
+    arg_in = vars().copy()
+    w_units = has_units(arg_in)
+    symbolic = all_symbols(arg_in)
+
+    k_B = get_const("boltzmann", *([True] if symbolic else [w_units, ["eV", "K"]]))
     res = (-N + sp.sqrt(N**2 + 4 * ni**2 * sp.exp(V / (n * k_B * T)))) / 2
     if isinstance(res, sp.Number):
         return float(res)
@@ -196,9 +199,11 @@ def J0_layer(W, N, D, L, S, ni=8697277437.298948):
     Optional:
     ni - intrinsic carrier concentration (cm-3)
     """
-    w_units = has_units(vars())
+    arg_in = vars().copy()
+    w_units = has_units(arg_in)
+    symbolic = all_symbols(arg_in)
 
-    q = get_const("elementary_charge", w_units, ["C"])
+    q = get_const("elementary_charge", *([True] if symbolic else [w_units, ["C"]]))
 
     F = (S * sp.cosh(W / L) + D / L * sp.sinh(W * L)) / (
         D / L * sp.cosh(W * L) + S * sp.sinh(W / L)
@@ -230,9 +235,11 @@ def J0_factor(W, N, D, L, S, ni=8697277437.298948):
 def J0(ni, We, Ne, De, Le, Se, Nb, Wb, Db, Lb, Sb):
     """determines J0, the dark saturation current, under the narrow base diode
     condition.L > W."""
-    w_units = has_units(vars())
+    arg_in = vars().copy()
+    w_units = has_units(arg_in)
+    symbolic = all_symbols(arg_in)
 
-    q = get_const("elementary_charge", w_units, ["C"])
+    q = get_const("elementary_charge", *([True] if symbolic else [w_units, ["C"]]))
     Fe = (Se * sp.cosh(We / Le) + De / Le * sp.sinh(We * Le)) / (
         De / Le * sp.cosh(We * Le) + Se * sp.sinh(We / Le)
     )
@@ -247,9 +254,11 @@ def J0(ni, We, Ne, De, Le, Se, Nb, Wb, Db, Lb, Sb):
 
 def current2gen(curr):
     """Return generation (eh pairs/s) given current (amps)."""
-    w_units = has_units(vars())
+    arg_in = vars().copy()
+    w_units = has_units(arg_in)
+    symbolic = all_symbols(arg_in)
 
-    q = get_const("elementary_charge", w_units, ["C"])
+    q = get_const("elementary_charge", *([True] if symbolic else [w_units, ["C"]]))
     res = curr / q
     if isinstance(res, sp.Number):
         return float(res)
@@ -262,8 +271,10 @@ def I_diode(V, I0, T=298.15, n=1):
     V is the voltage across the junction (volts), T is the temperature (K),
     and n is the ideallity factor (units).
     For current density. I0 is in A/cm² and current density is returned"""
-    w_units = has_units(vars())
-    k_B = get_const("boltzmann", w_units, ["eV", "K"])
+    arg_in = vars().copy()
+    w_units = has_units(arg_in)
+    symbolic = all_symbols(arg_in)
+    k_B = get_const("boltzmann", *([True] if symbolic else [w_units, ["eV", "K"]]))
     res = I0 * sp.exp(V / (n * k_B * T) - 1)
     if isinstance(res, sp.Number):
         return float(res)
@@ -275,8 +286,10 @@ def I_cell(V, IL, I0, T=298.15, n=1):
     given voltage, light generated current, I0
     also works for J0
     """
-    w_units = has_units(vars())
-    k_B = get_const("boltzmann", w_units, ["eV", "K"])
+    arg_in = vars().copy()
+    w_units = has_units(arg_in)
+    symbolic = all_symbols(arg_in)
+    k_B = get_const("boltzmann", *([True] if symbolic else [w_units, ["eV", "K"]]))
     res = IL - I0 * sp.exp(V / (n * k_B * T))
     if isinstance(res, sp.Number):
         return float(res)
@@ -288,8 +301,10 @@ def I_cell_DD(V, IL, I01, n1, I02, n2, T=298.15):
     given voltage, light generated current, I0
     also works for J0
     """
-    w_units = has_units(vars())
-    k_B = get_const("boltzmann", w_units, ["eV", "K"])
+    arg_in = vars().copy()
+    w_units = has_units(arg_in)
+    symbolic = all_symbols(arg_in)
+    k_B = get_const("boltzmann", *([True] if symbolic else [w_units, ["eV", "K"]]))
 
     res = (
         IL
@@ -317,8 +332,10 @@ def I_cell_Rseries(V, Voc, Vmp, IL, I0, Imp):
 
 def I_cell_Rshunt(V, IL, I0, Rshunt, T=298.15, n=1):
     """Return current (A) of a solar cell from"""
-    w_units = has_units(vars())
-    k_B = get_const("boltzmann", w_units, ["eV", "K"])
+    arg_in = vars().copy()
+    w_units = has_units(arg_in)
+    symbolic = all_symbols(arg_in)
+    k_B = get_const("boltzmann", *([True] if symbolic else [w_units, ["eV", "K"]]))
     res = IL - I0 * sp.exp(V / (n * k_B * T)) - V / Rshunt
     if isinstance(res, sp.Number):
         return float(res)
@@ -333,8 +350,10 @@ def impliedV(Δn, N, T=298.15, n=1):
     T is the temperature (K).
     Implied voltage is often used to convert the carrier concentration in a lifetime
     tester to voltage."""
-    w_units = has_units(vars())
-    k_B = get_const("boltzmann", w_units, ["eV", "K"])
+    arg_in = vars().copy()
+    w_units = has_units(arg_in)
+    symbolic = all_symbols(arg_in)
+    k_B = get_const("boltzmann", *([True] if symbolic else [w_units, ["eV", "K"]]))
     res = (n * k_B * T) * sp.log((Δn + N) * Δn / ni_Si(T) ** 2)
     if isinstance(res, sp.Number):
         return float(res)
@@ -351,8 +370,10 @@ def Voc(IL, I0, T=298.15, n=1):
     IL and Io must be in the same units, Eg, (A), (mA) etc
     Using (mA/cm**2) uses J0 and JL instead.
     """
-    w_units = has_units(vars())
-    k_B = get_const("boltzmann", w_units, ["eV", "K"])
+    arg_in = vars().copy()
+    w_units = has_units(arg_in)
+    symbolic = all_symbols(arg_in)
+    k_B = get_const("boltzmann", *([True] if symbolic else [w_units, ["eV", "K"]]))
     res = (n * k_B * T) * sp.log(IL / I0 + 1)
     if isinstance(res, sp.Number):
         return float(res)
@@ -364,8 +385,10 @@ def V_cell(curr, IL, I0, T=298.15, n=1):
     I0 is the saturation current (A),
     curr is the current (A), T is the temperature (K) and n is the ideallity factor (units).
     For current density. I0 is in A/cm² and current density is returned"""
-    w_units = has_units(vars())
-    k_B = get_const("boltzmann", w_units, ["eV", "K"])
+    arg_in = vars().copy()
+    w_units = has_units(arg_in)
+    symbolic = all_symbols(arg_in)
+    k_B = get_const("boltzmann", *([True] if symbolic else [w_units, ["eV", "K"]]))
     res = (n * k_B * T) * sp.log((IL - curr) / I0 + 1)
     if isinstance(res, sp.Number):
         return float(res)
@@ -382,9 +405,11 @@ def emitter_resistance(Rsheet, Sf):
 def base_resistance(H, Nb, dopant="B"):
     """return the contribution of the emitter to cell series resistance (ohm cm²)
     given the spacing of the fingers (cm) and the emitter sheet resistivty (ohm/ sqr)"""
-    w_units = has_units(vars())
+    arg_in = vars().copy()
+    w_units = has_units(arg_in)
+    symbolic = all_symbols(arg_in)
 
-    q = get_const("elementary_charge", w_units, ["C"])
+    q = get_const("elementary_charge", *([True] if symbolic else [w_units, ["C"]]))
     res = (1 / (q * mobility_generic(Nb, dopant) * Nb)) * H
     if isinstance(res, sp.Number):
         return float(res)
@@ -492,8 +517,10 @@ def FF_ideal(Voc, ideality=1, T=298.15):
 def normalised_Voc(Voc, ideality, T=298.15, n=1):
     """Return the normalised voc of a solar cell.Voc is the open-circuit voltage,
     'ideality' is the ideality factor and T is the temperature (K)"""
-    w_units = has_units(vars())
-    k_B = get_const("boltzmann", w_units, ["eV", "K"])
+    arg_in = vars().copy()
+    w_units = has_units(arg_in)
+    symbolic = all_symbols(arg_in)
+    k_B = get_const("boltzmann", *([True] if symbolic else [w_units, ["eV", "K"]]))
     res = Voc / (ideality * (n * k_B * T))
     if isinstance(res, sp.Number):
         return float(res)
@@ -562,9 +589,11 @@ def optical_properties(fname):
 def phos_active(T):
     """Return the active limit of phosphorous in silicon
     given temperature (K)"""
-    w_units = has_units(vars())
+    arg_in = vars().copy()
+    w_units = has_units(arg_in)
+    symbolic = all_symbols(arg_in)
 
-    k_B = get_const("boltzmann", w_units, ["eV", "K"])
+    k_B = get_const("boltzmann", *([True] if symbolic else [w_units, ["eV", "K"]]))
 
     res = 1.3e22 * sp.exp(-0.37 / (k_B * T))
     if isinstance(res, sp.Number):
@@ -575,43 +604,46 @@ def phos_active(T):
 def phos_solubility(T):
     """Return the solubility limit of phosphorous in silicon
     given the temperature (K)"""
-    w_units = has_units(vars())
+    arg_in = vars().copy()
+    w_units = has_units(arg_in)
+    symbolic = all_symbols(arg_in)
 
-    k_B = get_const("boltzmann", w_units, ["eV", "K"])
+    k_B = get_const("boltzmann", *([True] if symbolic else [w_units, ["eV", "K"]]))
 
     res = 2.45e23 * sp.exp(-0.62 / (k_B * T))
     if isinstance(res, sp.Number):
         return float(res)
     return res
 
+    # # modules(Pedro)
+    # def read_cell_info(selected, path=None, file=None):
+    #     # TODO Rework with p_find
+    #     if path is None:
+    #         path = os.sep.join(("work", "Data"))
+    #     package_path = pathify(path)
+    #     if file is None:
+    #         fname = os.path.join(package_path, "cell_info.txt")
+    #     else:
+    #         fname = os.path.join(package_path, file)
 
-# # modules(Pedro)
-# def read_cell_info(selected, path=None, file=None):
-#     # TODO Rework with p_find
-#     if path is None:
-#         path = os.sep.join(("work", "Data"))
-#     package_path = pathify(path)
-#     if file is None:
-#         fname = os.path.join(package_path, "cell_info.txt")
-#     else:
-#         fname = os.path.join(package_path, file)
+    #     with open(fname, "r") as f:
+    #         for line in f:
+    #             col1, col2, col3, col4 = line.split()
+    #             if col1 == selected:
+    #                 semicondutor = col1
+    #                 J_SC = float(col2)
+    #                 V_OC = float(col3)
+    #                 J_0 = float(col4)
+    #     return semicondutor, J_SC, V_OC, J_0
 
-#     with open(fname, "r") as f:
-#         for line in f:
-#             col1, col2, col3, col4 = line.split()
-#             if col1 == selected:
-#                 semicondutor = col1
-#                 J_SC = float(col2)
-#                 V_OC = float(col3)
-#                 J_0 = float(col4)
-#     return semicondutor, J_SC, V_OC, J_0
+    # def module_current(M, N, T, material):
+    #     arg_in = vars().copy()
+    w_units = has_units(arg_in)
+    symbolic = all_symbols(arg_in)
 
 
-# def module_current(M, N, T, material):
-#     w_units = has_units(vars())
-
-#     q = get_const("elementary_charge", w_units, ["C"])
-#     k_B = get_const("boltzmann", w_units, ["eV", "K"])
+#     q = get_const("elementary_charge", *([True] if symbolic else [w_units, ["C"]]))
+#     k_B = get_const("boltzmann", *([True] if symbolic else [w_units, ["eV", "K"]]))
 
 #     semicondutor, J_SC, V_OC, J_0 = read_cell_info(material)
 #     I_0 = J_0 * 15.6 * 15.6

@@ -33,6 +33,7 @@ temperature_eqns = dict(
     RtoK=lambda T: T * 5.0 / 9.0,
 )
 
+
 # %% Equation Manipulators
 def has_units(arg):
     return any(
@@ -43,28 +44,39 @@ def has_units(arg):
         ]
     )
 
+
 def has_arrays(arg, func):
-    symb_var = {k: sp.symbols(str(k), real=True) for k, v in arg.items() if isinstance(v, (np.ndarray, sp.Array))}
-    if symb_var == {}:# or any([isinstance(v, sp.Symbol) for v in arg.values()]):
+    symb_var = {
+        k: sp.symbols(str(k), real=True)
+        for k, v in arg.items()
+        if isinstance(v, (np.ndarray, sp.Array))
+    }
+    if symb_var == {}:  # or any([isinstance(v, sp.Symbol) for v in arg.values()]):
         return False, None
     else:
         expr = func(**{**arg, **symb_var})
         try:
-            return True, sp.lambdify(symb_var.keys(), expr)(**{k: arg[k] for k in symb_var.keys() if k in arg.keys()})
+            return True, sp.lambdify(symb_var.keys(), expr)(
+                **{k: arg[k] for k in symb_var.keys() if k in arg.keys()}
+            )
         except (TypeError, ValueError):
             return True, expr
+
 
 def has_symbols(arg):
     return any([isinstance(v, sp.Basic) for v in arg.values()])
 
+
 def all_symbols(arg):
     return all([isinstance(v, sp.Basic) for v in arg.values()])
+
 
 def pick_math_module(arg):
     module = np
     if has_symbols(arg):
         module = sp
     return module
+
 
 def function_to_expr(func, **kwargs):
     """
@@ -109,8 +121,12 @@ def function_to_expr(func, **kwargs):
 
     # get function arguments as symbols
     if isinstance(kargs, dict):
-        args = [kargs.pop(a, kwargs.pop(a, sp.symbols(a, real=True))) for a in argspec[0]]
-        kwonlyargs = {a: kargs.pop(a, kwargs.pop(a, sp.symbols(a, real=True))) for a in argspec[4]}
+        args = [
+            kargs.pop(a, kwargs.pop(a, sp.symbols(a, real=True))) for a in argspec[0]
+        ]
+        kwonlyargs = {
+            a: kargs.pop(a, kwargs.pop(a, sp.symbols(a, real=True))) for a in argspec[4]
+        }
     else:
         args = [kwargs.pop(a, sp.symbols(a, real=True)) for a in argspec[0]]
         kwonlyargs = {a: kwargs.pop(a, sp.symbols(a, real=True)) for a in argspec[4]}
@@ -119,13 +135,15 @@ def function_to_expr(func, **kwargs):
             kargs = [kargs]
         else:
             kargs = list(kargs)
-            args[len(args)-len(kargs[:len(args)]):] = [sp.symbols(str(a), real=True) for a in kargs[:len(args)]]
+            args[len(args) - len(kargs[: len(args)]) :] = [
+                sp.symbols(str(a), real=True) for a in kargs[: len(args)]
+            ]
 
     varargs = kwargs.pop(argspec[1], kwargs.pop("args", varargs))
     if argspec[1] is None:
         varargs = []
     elif len(kargs) > len(args):
-        varargs = kargs[len(args):]
+        varargs = kargs[len(args) :]
     elif varargs == [] and "args" in kkeys:
         varargs = list(kwargs.values())
 
@@ -138,8 +156,10 @@ def function_to_expr(func, **kwargs):
         if isinstance(varargs, (list, tuple, np.ndarray)) and len(varargs) == 1:
             varargs = varargs[0]
         if isinstance(varargs, int):
-            sign = int(-varargs/abs(varargs))
-            varargs = [sp.symbols(f"C_{a+sign}", real=True) for a in range(varargs, 0, sign)]
+            sign = int(-varargs / abs(varargs))
+            varargs = [
+                sp.symbols(f"C_{a+sign}", real=True) for a in range(varargs, 0, sign)
+            ]
         elif isinstance(varargs, str):
             varargs = [sp.symbols(a, real=True) for a in varargs.split(" ")]
         elif isinstance(varargs, (list, tuple, np.ndarray)):
@@ -150,9 +170,13 @@ def function_to_expr(func, **kwargs):
     expr = func(*args, *varargs, **kwonlyargs, **varkw)
     if not hasattr(expr, "free_symbols"):
         return expr
-    res_dict = {a: eval(str(a))
-                for a in expr.free_symbols
-                if not bool(re.findall("[a-df-zA-DF-Z\\\\@!&^]|^[/eE]|[/eE]$|^\\..+\\.$", str(a)))}
+    res_dict = {
+        a: eval(str(a))
+        for a in expr.free_symbols
+        if not bool(
+            re.findall("[a-df-zA-DF-Z\\\\@!&^]|^[/eE]|[/eE]$|^\\..+\\.$", str(a))
+        )
+    }
     res = expr.subs(res_dict)
     if isinstance(res, sp.Number):
         return float(res)
@@ -280,6 +304,7 @@ def create_function(func, targ, var=None, cost=None, **kwargs):
     res = sp.lambdify(syms, expr)
     return res
 
+
 def extract_arguments(func, method="str", **kwargs):
     """
     Call sympy to convert function for use in fitting.
@@ -326,7 +351,11 @@ def extract_arguments(func, method="str", **kwargs):
         if isinstance(v, dict):
             args = args + extract_arguments(func, method="dict", **v)
         elif isinstance(v, (list, tuple)):
-            args = args + [sp.symbols(str(a), real=True) for a in v if isinstance(a, (str, sp.Symbol))]
+            args = args + [
+                sp.symbols(str(a), real=True)
+                for a in v
+                if isinstance(a, (str, sp.Symbol))
+            ]
     args = [a for a in args if str(a) not in ignore]
 
     res = syms
@@ -334,16 +363,16 @@ def extract_arguments(func, method="str", **kwargs):
         res = args
 
     if "union" in method.lower():
-        res = list(set(syms+args))
+        res = list(set(syms + args))
     elif "inter" in method.lower():
         res = [r for r in syms if r in args]
     elif "comp" in method.lower():
-        res = [r for r in list(set(syms+args)) if r not in res]
-
+        res = [r for r in list(set(syms + args)) if r not in res]
 
     if "str" in method.lower():
         return [str(r) for r in res]
     return res
+
 
 def curve_fit_wrap(fcn, pnts, **params):
     """Calculate. generic discription."""
@@ -423,6 +452,12 @@ def get_const(name, symbolic=False, unit=None):
     Uses sympy syntax to get the necessary constant. Can return either the float value or sympy with
     units for unit evaluation.
 
+    Typcial constants and their units:
+        elementary_charge : C
+        e0 : "farad", "cm"
+        boltzmann : "eV", "K"
+
+
     Parameters
     ----------
     name : str
@@ -467,13 +502,17 @@ def get_const(name, symbolic=False, unit=None):
         return float(const.scale_factor)
     return const
 
+
 def parse_constant(const, unit_system="SI"):
     if not isinstance(const, su.quantities.PhysicalConstant):
         return const
     dims = [getattr(su, str(d)) for d in const.dimension.atoms(sp.Symbol)]
     if isinstance(unit_system, str):
         unit_system = getattr(su.systems, "SI")
-    return su.convert_to(const, [unit_system.derived_units[d] for d in dims], unit_system)
+    return su.convert_to(
+        const, [unit_system.derived_units[d] for d in dims], unit_system
+    )
+
 
 def parse_unit(expr, unit_system="SI"):
     if isinstance(expr, sp.Number) or not isinstance(expr, sp.Basic):
@@ -789,7 +828,7 @@ def cost_basic(res, targ=0, func=None, **kwargs):
             targ = func(**kwargs)
         else:
             res = func(res, **kwargs)
-    return (res - targ)
+    return res - targ
 
 
 def cost_sqr(res, targ=0, func=None, **kwargs):
@@ -934,23 +973,42 @@ if __name__ == "__main__":
 
     yy_var = yy + np.random.random(len(xx)) - 0.5
 
-    extr1 = extract_arguments(eqs.line, method="str, intersection", kwargs=dict(targ=None, z=dict(x=xx), y=yy_var), new="y")
+    extr1 = extract_arguments(
+        eqs.line,
+        method="str, intersection",
+        kwargs=dict(targ=None, z=dict(x=xx), y=yy_var),
+        new="y",
+    )
 
     exp1 = solve_for_variable(eqs.line, "b", "y")
     func1 = create_function(exp1, "b", kwargs=dict(x=xx, m=2, y=yy_var))
-    test1 = optimize.least_squares(cost_basic, 15, kwargs=dict(targ=None, func=func1, x=xx, y=yy_var))
+    test1 = optimize.least_squares(
+        cost_basic, 15, kwargs=dict(targ=None, func=func1, x=xx, y=yy_var)
+    )
 
     func2 = create_function(exp1, "b", kwargs=dict(m=2))
-    test2 = optimize.least_squares(cost_basic, 15, kwargs=dict(targ=None, func=func2, x=xx, y=yy_var))
+    test2 = optimize.least_squares(
+        cost_basic, 15, kwargs=dict(targ=None, func=func2, x=xx, y=yy_var)
+    )
 
     func3 = create_function(eqs.line, "b", "y", cost=cost_basic, kwargs=dict(m=2))
     test3 = optimize.least_squares(func3, 15, kwargs=dict(x=xx, y=yy_var))
 
     func4 = create_function(eqs.line, "b", "y", kwargs=dict(m=2))
-    test4 = optimize.least_squares(cost_basic, 15, kwargs=dict(targ=yy_var, func=func4, x=xx))
+    test4 = optimize.least_squares(
+        cost_basic, 15, kwargs=dict(targ=yy_var, func=func4, x=xx)
+    )
 
     func5 = create_function(eqs.nernst_planck_analytic_sol, "C", "C")
-    test5 = optimize.least_squares(cost_basic, 15, kwargs=dict(targ=None, func=func5, x=1, t=1, z=1, E=0, L=1, conc0=1, D=1, T=1))
+    test5 = optimize.least_squares(
+        cost_basic,
+        15,
+        kwargs=dict(targ=None, func=func5, x=1, t=1, z=1, E=0, L=1, conc0=1, D=1, T=1),
+    )
 
     func6 = create_function(eqs.nernst_planck_analytic_sol, "t", "t")
-    test6 = optimize.least_squares(cost_basic, 2, kwargs=dict(targ=test5["x"], func=func6, x=1, z=1, E=0, L=1, conc0=1, D=1, T=1))
+    test6 = optimize.least_squares(
+        cost_basic,
+        2,
+        kwargs=dict(targ=test5["x"], func=func6, x=1, z=1, E=0, L=1, conc0=1, D=1, T=1),
+    )

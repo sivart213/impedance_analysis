@@ -11,24 +11,29 @@ General function file
 import numpy as np
 import sympy as sp
 
-from research_tools.functions import get_const, has_units, has_arrays, pick_math_module
+from research_tools.functions import (
+    get_const,
+    has_units,
+    has_arrays,
+    pick_math_module,
+    all_symbols,
+)
 
 from research_tools.equations.general import inv_sum_invs, erfc
 
 
 # %% Electrical
-def capacitance(er, A, L, **kwargs):
+def capacitance(e_r, A, L, **kwargs):
     """Calculate. generic discription."""
     arg_in = vars().copy()
     e0 = kwargs.get("e0", None)
     if e0 is None:
         w_units = has_units(arg_in)
-        e0 = get_const("e0", w_units, ["farad", "cm"])
+        symbolic = all_symbols(arg_in)
+        e0 = get_const("e0", *([True] if symbolic else [w_units, ["farad", "cm"]]))
 
-    res = er * e0 * A / L
+    res = e_r * e0 * A / L
 
-    # if isinstance(res, nsp.Number):
-    #     return float(res)
     return res
 
 
@@ -71,12 +76,11 @@ def sheet_resistivity(doping, thickness, dopant=None):
         mob = 300  # assume constant mobility
 
     w_units = has_units(arg_in)
-    q = get_const("elementary_charge", w_units, ["C"])
+    symbolic = all_symbols(arg_in)
+    q = get_const("elementary_charge", *([True] if symbolic else [w_units, ["C"]]))
 
     res = 1 / (q * doping * mob * thickness)
 
-    # if isinstance(res, nsp.Number):
-    #     return float(res)
     return res
 
 
@@ -89,12 +93,11 @@ def conductivity(n, p, ue, uh):
     uh - hole mobility (cm²/Vs)"""
     arg_in = vars().copy()
     w_units = has_units(arg_in)
-    q = get_const("elementary_charge", w_units, ["C"])
+    symbolic = all_symbols(arg_in)
+    q = get_const("elementary_charge", *([True] if symbolic else [w_units, ["C"]]))
 
     res = q * ue * n + q * uh * p
 
-    # if isinstance(res, nsp.Number):
-    #     return float(res)
     return res
 
 
@@ -105,15 +108,14 @@ def resistivity_Si_n(Ndonor):
     n_minority = ni_Si() ** 2 / Ndonor
 
     w_units = has_units(arg_in)
-    q = get_const("elementary_charge", w_units, ["C"])
+    symbolic = all_symbols(arg_in)
+    q = get_const("elementary_charge", *([True] if symbolic else [w_units, ["C"]]))
 
     res = 1 / (
         (q * mobility_thurber(Ndonor, False) * Ndonor)
         + (q * mobility_thurber(n_minority, False, False) * n_minority)
     )
 
-    # if isinstance(res, nsp.Number):
-    #     return float(res)
     return res
 
 
@@ -124,14 +126,13 @@ def resistivity_Si_p(Nacceptor):
     n_minority = ni_Si() ** 2 / Nacceptor
 
     w_units = has_units(arg_in)
-    q = get_const("elementary_charge", w_units, ["C"])
+    symbolic = all_symbols(arg_in)
+    q = get_const("elementary_charge", *([True] if symbolic else [w_units, ["C"]]))
 
     res = 1 / (
         (q * mobility_thurber(Nacceptor) * Nacceptor)
         + (q * mobility_thurber(n_minority, True, False) * n_minority)
     )
-    # if isinstance(res, nsp.Number):
-    #     return float(res)
     return res
 
 
@@ -140,10 +141,9 @@ def resistivity(N, dopant, W):
     given the doping of acceptors(cm-3)"""
     arg_in = vars().copy()
     w_units = has_units(arg_in)
-    q = get_const("elementary_charge", w_units, ["C"])
+    symbolic = all_symbols(arg_in)
+    q = get_const("elementary_charge", *([True] if symbolic else [w_units, ["C"]]))
     res = 1 / (q * mobility_generic(N, dopant) * N * W)
-    # if isinstance(res, nsp.Number):
-    #     return float(res)
     return res
 
 
@@ -153,10 +153,9 @@ def v_thermal(T=298.15):
     The default temperature is 298.15 K, which is equal to 25 °C"""
     arg_in = vars().copy()
     w_units = has_units(arg_in)
-    k_B = get_const("boltzmann", w_units, ["eV", "K"])
+    symbolic = all_symbols(arg_in)
+    k_B = get_const("boltzmann", *([True] if symbolic else [w_units, ["eV", "K"]]))
     res = k_B * T
-    # if isinstance(res, nsp.Number):
-    #     return float(res)
     return res
 
 
@@ -169,59 +168,54 @@ def depletion_region(Na, Nd, T=298.15):
 
     nsp = pick_math_module(arg_in)
     w_units = has_units(arg_in)
+    symbolic = all_symbols(arg_in)
 
-    q = get_const("elementary_charge", w_units, ["C"])
-    e0 = get_const("e0", w_units, ["farad", "cm"])
-    k_B = get_const("boltzmann", w_units, ["eV", "K"])
+    q = get_const("elementary_charge", *([True] if symbolic else [w_units, ["C"]]))
+    e0 = get_const("e0", *([True] if symbolic else [w_units, ["farad", "cm"]]))
+    k_B = get_const("boltzmann", *([True] if symbolic else [w_units, ["eV", "K"]]))
 
     Vbi = k_B * T * nsp.log(Na * Nd / ni_Si(T) ** 2)
 
     pre = 2 * 11.8 * e0 / q * Vbi * (1 / (Na + Nd))
     xp = nsp.sqrt(pre * Nd / Na)
     xn = nsp.sqrt(pre * Na / Nd)
-    # if isinstance(xp, nsp.Number):
-    #     xp = float(xp)
-    # if isinstance(xn, nsp.Number):
-    #     xn = float(xn)
+
     return xn, xp
 
 
-def probability_fermi_dirac(E, Ef, T):
+def probability_fermi_dirac(E, Ef, T=298.15):
     """Return the fermi dirac function (units) where E is the energy (),
     Ef is the fermi given the energies in electron volts"""
     arg_in = vars().copy()
     nsp = pick_math_module(arg_in)
     w_units = has_units(arg_in)
-    k_B = get_const("boltzmann", w_units, ["eV", "K"])
+    symbolic = all_symbols(arg_in)
+    k_B = get_const("boltzmann", *([True] if symbolic else [w_units, ["eV", "K"]]))
 
     res = 1 / (nsp.exp((E - Ef) / (k_B * T)) + 1.0)
-    # if isinstance(res, nsp.Number):
-    #     return float(res)
     return res
 
 
-def probability_maxwell_boltzmann(E, Ef, T):
+def probability_maxwell_boltzmann(E, Ef, T=298.15):
     """Given the energies in electron volts return the fermi dirac function"""
     arg_in = vars().copy()
     nsp = pick_math_module(arg_in)
     w_units = has_units(arg_in)
-    k_B = get_const("boltzmann", w_units, ["eV", "K"])
+    symbolic = all_symbols(arg_in)
+    k_B = get_const("boltzmann", *([True] if symbolic else [w_units, ["eV", "K"]]))
     res = 1 / (nsp.exp((E - Ef) / (k_B * T)))
-    # if isinstance(res, nsp.Number):
-    #     return float(res)
     return res
 
 
-def probability_bose_einstein(E, Ef, T):
+def probability_bose_einstein(E, Ef, T=298.15):
     """Given the energies in electron volts return the fermi dirac function"""
     arg_in = vars().copy()
     nsp = pick_math_module(arg_in)
     w_units = has_units(arg_in)
+    symbolic = all_symbols(arg_in)
 
-    k_B = get_const("boltzmann", w_units, ["eV", "K"])
+    k_B = get_const("boltzmann", *([True] if symbolic else [w_units, ["eV", "K"]]))
     res = 1 / (nsp.exp((E - Ef) / (k_B * T)) - 1.0)
-    # if isinstance(res, nsp.Number):
-    #     return float(res)
     return res
 
 
@@ -231,27 +225,25 @@ def equilibrium_carrier(doping, **kwargs):
     where N is the doping level (cm-3) and ni is the intrinsic carrier concentratoin (cm-3)
     Strictly N and ni just have to be in the same units but (cm-3 is almost always used.
     """
-    ni = kwargs.get("ni", ni_Si(kwargs.get("temp", 298.15)))
+    ni = kwargs.get("ni", ni_Si(kwargs.get("T", 298.15)))
     carrier = doping / (ni**2)
     return max(doping, carrier), min(doping, carrier)
 
 
-def ni_Si(temp=298.15, narrowing=True):
+def ni_Si(T=298.15, narrowing=True):
     """Return the intrinsic carrier concentration of silicon (cm**-3) according to Sproul94.
-    where temp is the temperature (K)
+    where T is the temperature (K)
     http://dx.doi.org/10.1063/1.357521
     Return the intrinsic carrier concentration (cm-3) without band gap narrowing
-    according to Misiakos, where temp is the temperature (K).
+    according to Misiakos, where T is the temperature (K).
     DOI http://dx.doi.org/10.1063/1.354551
     """
     arg_in = vars().copy()
     nsp = pick_math_module(arg_in)
     if narrowing:
-        res = 9.38e19 * (temp / 300) * (temp / 300) * nsp.exp(-6884 / temp)
+        res = 9.38e19 * (T / 300) * (T / 300) * nsp.exp(-6884 / T)
     else:
-        res = 5.29e19 * (temp / 300) ** 2.54 * nsp.exp(-6726 / temp)
-    # if isinstance(res, nsp.Number):
-    #     return float(res)
+        res = 5.29e19 * (T / 300) ** 2.54 * nsp.exp(-6726 / T)
     return res
 
 
@@ -271,7 +263,8 @@ def ni_eff(N_D, N_A, Δn, T=298.15):
         return symb_var
 
     w_units = has_units(arg_in)
-    k_B = get_const("boltzmann", w_units, ["eV", "K"])
+    symbolic = all_symbols(arg_in)
+    k_B = get_const("boltzmann", *([True] if symbolic else [w_units, ["eV", "K"]]))
     # n_i without BGN according to Misiakos93, parameterization fits very well
     # to value of Altermatt2003 at 300K
     ni0 = ni_Si(T, False)
@@ -299,9 +292,9 @@ def ni_eff(N_D, N_A, Δn, T=298.15):
     return ni
 
 
-def bandgap_paessler(temp=298.15):
+def bandgap_paessler(T=298.15):
     """Return the bandgap of silicon (eV) according to Paessler2002,
-    where temp is the temperature (K).
+    where T is the temperature (K).
     Code adapted from Richter Fraunhofer ISE
     https://doi.org/10.1103/PhysRevB.66.085201
     """
@@ -317,7 +310,7 @@ def bandgap_paessler(temp=298.15):
     Δ = 0.51
     Eg0_T0 = 1.17  # eV     band gap of Si at 0 K
 
-    Tdelta = 2 * temp / Θ
+    Tdelta = 2 * T / Θ
     wurzel = (
         1
         + nsp.pi**2 / (3 * (1 + Δ**2)) * Tdelta**2
@@ -326,7 +319,7 @@ def bandgap_paessler(temp=298.15):
         + Tdelta**6
     ) ** (1 / 6)
     Eg0 = Eg0_T0 - α * Θ * (
-        (1 - 3 * Δ**2) / (nsp.exp(Θ / temp) - 1) + 3 / 2 * Δ**2 * (wurzel - 1)
+        (1 - 3 * Δ**2) / (nsp.exp(Θ / T) - 1) + 3 / 2 * Δ**2 * (wurzel - 1)
     )
     # if isinstance(Eg0, nsp.Number):
     #     return float(Eg0)
@@ -344,7 +337,7 @@ def bandgap_schenk(n_e, n_h, N_D, N_A, Δn, T=298.15):
     N_A => acceptor concentration (1/cm³)
     N_D => donor concentration (1/cm³)
     Δn  => excess carrier density (1/cm³)
-    temp   => temperature (K)
+    T   => temperature (K)
 
     Band-gap narrowing after Schenk 1998, JAP 84(3689))
     model descriped very well in K. McIntosh IEEE PVSC 2010
@@ -364,7 +357,8 @@ def bandgap_schenk(n_e, n_h, N_D, N_A, Δn, T=298.15):
 
     nsp = pick_math_module(arg_in)
     w_units = has_units(arg_in)
-    k_B = get_const("boltzmann", w_units, ["eV", "K"])
+    symbolic = all_symbols(arg_in)
+    k_B = get_const("boltzmann", *([True] if symbolic else [w_units, ["eV", "K"]]))
 
     # Silicon material parameters (table 1)
     g_e = 12  # degeneracy factor for electrons
@@ -543,7 +537,7 @@ def mobility_masetti(N, dopant=0):
     )
 
 
-def mobility_klassen(Nd, Na, Δn=1, temp=298.16):
+def mobility_klassen(Nd, Na, Δn=1, T=298.16):
     """Return the mobility (cm2/Vs)
     given the doping etc."""
     s1 = 0.89233
@@ -564,7 +558,7 @@ def mobility_klassen(Nd, Na, Δn=1, temp=298.16):
     mh_me = 1.258
     me_m0 = 1
 
-    temp = 298.16
+    T = 298.16
     n0, p0 = equilibrium_carrier(Nd)
 
     cA = 0.5
@@ -597,32 +591,30 @@ def mobility_klassen(Nd, Na, Δn=1, temp=298.16):
     µ_eN = (
         phosphorus_µmax**2
         / (phosphorus_µmax - phosphorus_µmin)
-        * (temp / 300) ** (3 * phosphorus_α - 1.5)
+        * (T / 300) ** (3 * phosphorus_α - 1.5)
     )
     µ_hN = (
-        boron_µmax**2
-        / (boron_µmax - boron_µmin)
-        * (temp / 300) ** (3 * boron_α - 1.5)
+        boron_µmax**2 / (boron_µmax - boron_µmin) * (T / 300) ** (3 * boron_α - 1.5)
     )
 
     µ_ec = (
         phosphorus_µmax
         * phosphorus_µmin
         / (phosphorus_µmax - phosphorus_µmin)
-        * (300 / temp) ** 0.5
+        * (300 / T) ** 0.5
     )
-    µ_hc = boron_µmax * boron_µmin / (boron_µmax - boron_µmin) * (300 / temp) ** 0.5
+    µ_hc = boron_µmax * boron_µmin / (boron_µmax - boron_µmin) * (300 / T) ** 0.5
 
     Ne_sc = Na_h + Nd_h + p
     Nh_sc = Na_h + Nd_h + n
 
-    PBHe = 1.36e20 / cc * me_m0 * (temp / 300) ** 2
-    PBHh = 1.36e20 / cc * mh_me * (temp / 300) ** 2
+    PBHe = 1.36e20 / cc * me_m0 * (T / 300) ** 2
+    PBHh = 1.36e20 / cc * mh_me * (T / 300) ** 2
 
-    PCWe = 3.97e13 * (1 / (Zd_Nd**3 * (Nd_h + Na_h + p)) * ((temp / 300) ** 3)) ** (
+    PCWe = 3.97e13 * (1 / (Zd_Nd**3 * (Nd_h + Na_h + p)) * ((T / 300) ** 3)) ** (
         2 / 3
     )
-    PCWh = 3.97e13 * (1 / (Za_Na**3 * (Nd_h + Na_h + n)) * ((temp / 300) ** 3)) ** (
+    PCWh = 3.97e13 * (1 / (Za_Na**3 * (Nd_h + Na_h + n)) * ((T / 300) ** 3)) ** (
         2 / 3
     )
 
@@ -631,13 +623,13 @@ def mobility_klassen(Nd, Na, Δn=1, temp=298.16):
 
     G_Pe = (
         1
-        - s1 / ((s2 + (1 / me_m0 * 300 / temp) ** s4 * Pe) ** s3)
-        + s5 / (((me_m0 * 300 / temp) ** s7 * Pe) ** s6)
+        - s1 / ((s2 + (1 / me_m0 * 300 / T) ** s4 * Pe) ** s3)
+        + s5 / (((me_m0 * 300 / T) ** s7 * Pe) ** s6)
     )
     G_Ph = (
         1
-        - s1 / ((s2 + (1 / (me_m0 * mh_me) * temp / 300) ** s4 * Ph) ** s3)
-        + s5 / (((me_m0 * mh_me * 300 / temp) ** s7 * Ph) ** s6)
+        - s1 / ((s2 + (1 / (me_m0 * mh_me) * T / 300) ** s4 * Ph) ** s3)
+        + s5 / (((me_m0 * mh_me * 300 / T) ** s7 * Ph) ** s6)
     )
 
     F_Pe = (r1 * Pe**r6 + r2 + r3 / mh_me) / (Pe**r6 + r4 + r5 / mh_me)
@@ -647,8 +639,8 @@ def mobility_klassen(Nd, Na, Δn=1, temp=298.16):
     Nh_sc_eff = Na_h + G_Ph * Nd_h + n / F_Ph
 
     # Lattice Scattering
-    µ_eL = phosphorus_µmax * (300 / temp) ** phosphorus_θ
-    µ_hL = boron_µmax * (300 / temp) ** boron_θ
+    µ_eL = phosphorus_µmax * (300 / T) ** phosphorus_θ
+    µ_hL = boron_µmax * (300 / T) ** boron_θ
 
     µe_Dah = µ_eN * Ne_sc / Ne_sc_eff * (
         phosphorus_Nref_1 / Ne_sc
@@ -664,7 +656,7 @@ def mobility_klassen(Nd, Na, Δn=1, temp=298.16):
 
 
 # %% Diffusion
-def mobility_diffusion(D=1e-15, T=298.15, z=1, **kwargs):
+def mobility_diffusion(D, z=1, T=298.15):
     """Return the mobility (cm²/Vs) or Diffusivity (cm²/s) given the other value.
     This is also known as the Einstein relation"""
     arg_in = vars().copy()
@@ -673,16 +665,15 @@ def mobility_diffusion(D=1e-15, T=298.15, z=1, **kwargs):
         return symb_var
 
     w_units = has_units(arg_in)
+    symbolic = all_symbols(arg_in)
 
-    k_B = get_const("boltzmann", w_units, ["eV", "K"])
+    k_B = get_const("boltzmann", *([True] if symbolic else [w_units, ["eV", "K"]]))
     res = D * z / (k_B * T)
 
-    # if isinstance(res, nsp.Number):
-    #     return float(res)
     return res
 
 
-def characteristic_length(D, t, z, T, E):
+def characteristic_length(E, D, t, z=1, T=298.15):
     """Calculate via the characteristic t."""
     arg_in = vars().copy()
     lam_res, symb_var = has_arrays(arg_in, characteristic_length)
@@ -691,14 +682,13 @@ def characteristic_length(D, t, z, T, E):
 
     nsp = pick_math_module(arg_in)
     w_units = has_units(arg_in)
+    symbolic = all_symbols(arg_in)
 
-    k_B = get_const("boltzmann", w_units, ["eV", "K"])
+    k_B = get_const("boltzmann", *([True] if symbolic else [w_units, ["eV", "K"]]))
     mob = D * z / (k_B * T)
 
     res = 2 * nsp.sqrt(D * t) + mob * E * t
 
-    # if isinstance(res, nsp.Number):
-    #     return float(res)
     return res
 
 
@@ -712,14 +702,10 @@ def diffusion_length(t, D):
         return symb_var
     nsp = pick_math_module(arg_in)
     res = nsp.sqrt(t * D)
-    # if isinstance(res, nsp.Number):
-    #     return float(res)
     return res
 
 
-def nernst_planck_analytic_sol(
-    x=5e-2, t=3600, L=5e-2, E=0, D=1e-15, T=298.15, z=1, conc0=1
-):
+def nernst_planck_analytic_sol(C_0, x, L, E, D, t, z=1, T=298.15):
     """Calculate the ratio of C/C0 for arithmatic solution to np"""
     arg_in = vars().copy()
     lam_res, symb_var = has_arrays(arg_in, nernst_planck_analytic_sol)
@@ -733,21 +719,20 @@ def nernst_planck_analytic_sol(
 
     nsp = pick_math_module(arg_in)
     w_units = has_units(arg_in)
+    symbolic = all_symbols(arg_in)
 
-    k_B = get_const("boltzmann", w_units, ["eV", "K"])
+    k_B = get_const("boltzmann", *([True] if symbolic else [w_units, ["eV", "K"]]))
     mob = D * z / (k_B * T)
 
     term_A1 = erfc((x - mob * E * t) / (2 * nsp.sqrt(D * t)))
     term_A2 = erfc(-(x - 2 * L + mob * E * t) / (2 * nsp.sqrt(D * t)))
     term_B = erfc(-mob * E * t / (2 * nsp.sqrt(D * t)))
-    res = (conc0 / (2 * term_B)) * (term_A1 + term_A2)
+    res = (C_0 / (2 * term_B)) * (term_A1 + term_A2)
 
-    # if isinstance(res, nsp.Number):
-    #     return float(res)
     return res
 
 
-def nernst_planck_fundamental_sol(x=5e-2, t=3600, D=1e-15, conc0=1):
+def nernst_planck_fundamental_sol(C_0, x, D, t):
     """Calculate the ratio of C/C0 for arithmatic solution to np"""
     arg_in = vars().copy()
     lam_res, symb_var = has_arrays(arg_in, nernst_planck_fundamental_sol)
@@ -755,13 +740,11 @@ def nernst_planck_fundamental_sol(x=5e-2, t=3600, D=1e-15, conc0=1):
         return symb_var
     nsp = pick_math_module(arg_in)
 
-    res = conc0 * erfc((x) / (2 * nsp.sqrt(D * t)))
-    # if isinstance(res, nsp.Number):
-    #     return float(res)
+    res = C_0 * erfc((x) / (2 * nsp.sqrt(D * t)))
     return res
 
 
-def debye_length(z, er, C, T):
+def debye_length(C, z, e_r, T=298.15):
     arg_in = vars().copy()
     lam_res, symb_var = has_arrays(arg_in, debye_length)
     if lam_res:
@@ -769,47 +752,49 @@ def debye_length(z, er, C, T):
 
     nsp = pick_math_module(arg_in)
     w_units = has_units(arg_in)
+    symbolic = all_symbols(arg_in)
 
-    q = get_const("elementary_charge", w_units, ["C"])
-    e0 = get_const("e0", w_units, ["farad", "cm"])
-    k_B = get_const("boltzmann", w_units, ["joule", "K"])
+    q = get_const("elementary_charge", *([True] if symbolic else [w_units, ["C"]]))
+    e0 = get_const("e0", *([True] if symbolic else [w_units, ["farad", "cm"]]))
+    k_B = get_const("boltzmann", *([True] if symbolic else [w_units, ["joule", "K"]]))
 
     if isinstance(C, (tuple, list)):
         if not isinstance(z, (tuple, list)):
-            z = [z]*len(C)
-        charges = sum([C[n]*(q*z[n])**2 for n in range(len(C))])
+            z = [z] * len(C)
+        charges = sum([C[n] * (q * z[n]) ** 2 for n in range(len(C))])
     else:
-        charges = C*(q*z)**2
-    res = nsp.sqrt(er*e0*k_B*T/(charges))
+        charges = C * (q * z) ** 2
+    res = nsp.sqrt(e_r * e0 * k_B * T / (charges))
 
     return res
 
-def bjerrum_length(er, T):
+
+def bjerrum_length(e_r, T=298.15):
     arg_in = vars().copy()
     w_units = has_units(arg_in)
+    symbolic = all_symbols(arg_in)
 
-    q = get_const("elementary_charge", w_units, ["C"])
-    e0 = get_const("e0", w_units, ["farad", "cm"])
-    k_B = get_const("boltzmann", w_units, ["joule", "K"])
+    q = get_const("elementary_charge", *([True] if symbolic else [w_units, ["C"]]))
+    e0 = get_const("e0", *([True] if symbolic else [w_units, ["farad", "cm"]]))
+    k_B = get_const("boltzmann", *([True] if symbolic else [w_units, ["joule", "K"]]))
 
-    res = q**2/(er*e0*k_B*T)
+    res = q**2 / (e_r * e0 * k_B * T)
 
-    # if isinstance(res, nsp.Number):
-    #     return float(res)
     return res
 
-def screened_permitivity(er, k_D, x=1):
+
+def screened_permitivity(e_r, k_D, x=1):
     arg_in = vars().copy()
     nsp = pick_math_module(arg_in)
     w_units = has_units(arg_in)
+    symbolic = all_symbols(arg_in)
 
-    e0 = get_const("e0", w_units, ["farad", "cm"])
+    e0 = get_const("e0", *([True] if symbolic else [w_units, ["farad", "cm"]]))
 
-    res = er*e0*nsp.exp(k_D*x)
+    res = e_r * e0 * nsp.exp(k_D * x)
 
-    # if isinstance(res, nsp.Number):
-    #     return float(res)
     return res
+
 
 # %% Recombination & Lifetime
 def U_radiative(n, p):
@@ -818,14 +803,14 @@ def U_radiative(n, p):
     return U_radiative
 
 
-def U_radiative_alt(n0, p0, Δn, temp=298.15):
+def U_radiative_alt(n0, p0, Δn, T=298.15):
     n_p = n0 + p0 + 2 * Δn
     n = n0 + Δn
     p = p0 + Δn
     B_low = 4.73e-15
-    b_min = 0.2 + (0 - 0.2) / (1 + (temp / 320) ** 2.5)
-    b1 = 1.5e18 + (10000000 - 1.5e18) / (1 + (temp / 550) ** 3)
-    b3 = 4e18 + (1000000000 - 4e18) / (1 + (temp / 365) ** 3.54)
+    b_min = 0.2 + (0 - 0.2) / (1 + (T / 320) ** 2.5)
+    b1 = 1.5e18 + (10000000 - 1.5e18) / (1 + (T / 550) ** 3)
+    b3 = 4e18 + (1000000000 - 4e18) / (1 + (T / 365) ** 3.54)
     B_rel = b_min + (1 - b_min) / (
         1 + (0.5 * n_p / b1) ** 0.54 + (0.5 * n_p / b3) ** 1.25
     )
@@ -840,12 +825,11 @@ def U_SRH(n, p, Et, τ_n, τ_p, ni_eff=8.5e9, T=298.15):
     arg_in = vars().copy()
     nsp = pick_math_module(arg_in)
     w_units = has_units(arg_in)
-    k_B = get_const("boltzmann", w_units, ["eV", "K"])
+    symbolic = all_symbols(arg_in)
+    k_B = get_const("boltzmann", *([True] if symbolic else [w_units, ["eV", "K"]]))
     n1 = ni_eff * nsp.exp(Et / (k_B * T))
     p1 = ni_eff * nsp.exp(-Et / (k_B * T))
     res = (n * p - ni_eff**2) / (τ_p * (n + n1) + τ_n * (p + p1))
-    # if isinstance(res, nsp.Number):
-    #     return float(res)
     return res
 
 
@@ -873,8 +857,6 @@ def U_auger_richter(n0, p0, Δn, ni_eff):
     g_ehh = 1 + C_p0 * (1 - nsp.tanh((p0 / D_p0) ** exp_p0))
     np_ni2 = (n0 + Δn) * (p0 + Δn) - ni_eff**2
     res = np_ni2 * (B_n0 * n0 * g_eeh + B_p0 * p0 * g_ehh + C_dn * Δn**D_dn)
-    # if isinstance(res, nsp.Number):
-    #     return float(res)
     return res
 
 
@@ -898,7 +880,7 @@ def U_surface(n, p, Sn, Sp, n1=8.3e9, p1=8.3e9, **kwargs):
     Sn, Sp: surface recombination for electrons and holes
     n1, p1 XXX
     ni - intrinsice carrier concentratoin (cm-3)"""
-    ni = kwargs.get("ni", ni_Si(kwargs.get("temp", 298.15)))
+    ni = kwargs.get("ni", ni_Si(kwargs.get("T", 298.15)))
     U_surface = Sn * Sp * (n * p - ni**2) / (Sn * (n + n1) + Sp * (p + p1))
     return U_surface
 
@@ -938,10 +920,10 @@ def lifetime_auger(Δn, Ca=1.66e-30):
     return 1 / (Ca * Δn**2)
 
 
-def lifetime_SRH(N, Nt, Et, σ_n, σ_p, Δn, temp=298.15):
+def lifetime_SRH(N, Nt, Et, σ_n, σ_p, Δn, T=298.15):
     # TODO needs correction
     # p0 = N
-    # n0 = (ni_Si(temp) ** 2) / N
+    # n0 = (ni_Si(T) ** 2) / N
     # τ_n0 = 1 / (Nt * σ_n * vth)
     # τ_p0 = 1 / (Nt * σ_p * vth)
     # n1 = Nc * np.exp(-Et / Vt())
