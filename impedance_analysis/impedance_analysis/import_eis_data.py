@@ -9,8 +9,8 @@ import pandas as pd
 
 from pathlib import Path
 
-from defect_code.functions import load
-from defect_code.impedance_analysis.impedance_analysis.fit_eis_data import Impedance
+from research_tools.functions import load
+from research_tools.impedance_analysis.impedance_analysis.fit_eis_data import Impedance
 
 
 class DataImport(object):
@@ -151,7 +151,7 @@ class DataImport(object):
 
 # %% Testing
 if __name__ == "__main__":
-    from defect_code.functions import f_find, p_find
+    from research_tools.functions import f_find, p_find
 
     my_folder_path = p_find("Dropbox (ASU)", "Work Docs", "Data", "Raw", "MFIA", base="home")
     files = f_find(my_folder_path, file_filter="topcon")

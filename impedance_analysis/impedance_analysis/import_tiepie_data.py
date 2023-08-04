@@ -11,7 +11,7 @@ import pandas as pd
 from scipy import fft
 from dataclasses import dataclass
 
-from defect_code.functions import p_find
+from research_tools.functions import p_find
 
 
 @dataclass
@@ -96,7 +96,7 @@ class TiePieData(object):
 # %% Testing
 if __name__ == "__main__":
     # examples
-    from defect_code.functions import f_find
+    from research_tools.functions import f_find
 
     my_folder_path = p_find("Dropbox (ASU)", "Work Docs", "Data", "Raw", "MFIA", base="home")
     files = f_find(my_folder_path, file_filter="topcon")

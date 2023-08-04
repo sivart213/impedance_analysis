@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 from IPython import get_ipython
 from functools import partial
 
-from defect_code.functions import get_config
+from research_tools.functions import get_config
 
 get_ipython().run_line_magic("matplotlib", "inline")
 
@@ -290,7 +290,7 @@ class MFIA_Freq_Sweep(MFIA):
 
 
 if __name__ == "__main__":
-    from defect_code.functions import save, p_find
+    from research_tools.functions import save, p_find
 
     config_path = p_find("defect_code", "impedance_analysis", "tool_interface", base="cwd")
     save_path = p_find("Dropbox (ASU)", "Work Docs", "Data", "Raw", "MFIA", base="home")

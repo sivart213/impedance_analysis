@@ -14,10 +14,10 @@ from pathlib import Path
 from IPython import get_ipython
 from scipy.optimize import Bounds
 
-from defect_code.impedance_analysis.impedance_analysis.import_eis_data import DataImport
-from defect_code.impedance_analysis.impedance_analysis.fit_eis_data import IS_Ckt
+from research_tools.impedance_analysis.impedance_analysis.import_eis_data import DataImport
+from research_tools.impedance_analysis.impedance_analysis.fit_eis_data import IS_Ckt
 
-from defect_code.functions import save, slugify
+from research_tools.functions import save, slugify
 
 
 class IS_Data(object):
@@ -518,7 +518,7 @@ class IS_Data(object):
 
 # %% Testing
 if __name__ == "__main__":
-    from defect_code.functions import f_find, p_find
+    from research_tools.functions import f_find, p_find
 
     ckt_model = "L_1-p(R_1,C_1)-p(R_2,CPE_1)-p(R_3,CPE_2)"
 

@@ -13,8 +13,8 @@ from dataclasses import dataclass, InitVar
 from scipy.optimize import least_squares, Bounds
 from impedance.models.circuits import CustomCircuit, fitting, elements
 
-from defect_code.equations import Statistics
-from defect_code.functions import gen_bnds, gen_mask, nyquist, bode, Complexer
+from research_tools.equations import Statistics
+from research_tools.functions import gen_bnds, gen_mask, nyquist, bode, Complexer
 
 
 @dataclass
@@ -509,8 +509,8 @@ class IS_Ckt(object):
 
 # %% Testing
 if __name__ == "__main__":
-    from defect_code.impedance_analysis import DataImport
-    from defect_code.functions import f_find, p_find
+    from research_tools.impedance_analysis import DataImport
+    from research_tools.functions import f_find, p_find
     from pathlib import Path
 
     # Import data using by first getting the appropriate filename.  f_find and p_find
