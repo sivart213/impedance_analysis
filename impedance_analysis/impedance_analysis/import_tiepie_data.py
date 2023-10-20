@@ -99,6 +99,6 @@ if __name__ == "__main__":
     from research_tools.functions import f_find
 
     my_folder_path = p_find("Dropbox (ASU)", "Work Docs", "Data", "Raw", "MFIA", base="home")
-    files = f_find(my_folder_path, file_filter="topcon")
+    files = f_find(my_folder_path, re_filter="topcon")
 
     file = files[0]

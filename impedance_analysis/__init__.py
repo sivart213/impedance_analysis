@@ -16,6 +16,7 @@ from .tool_interface import (
     MFIA_Freq_Sweep,
 )
 
+from impedance_analysis import *
 
 __all__ = [
     'DataImport',

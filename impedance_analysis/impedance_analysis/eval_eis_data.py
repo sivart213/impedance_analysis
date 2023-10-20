@@ -532,13 +532,13 @@ if __name__ == "__main__":
     # names_all = names_base+names_base_r2+names_hot_base+names_hot_insitu
 
     # Import the data from the raw files exported from the meeasurement tool
-    # This provides the 1st filter, "file_filter" which will only get the filenames which match
+    # This provides the 1st filter, "re_filter" which will only get the filenames which match
     # the filter name.
 
     my_hdf_path = p_find("Dropbox (ASU)", "Work Docs", "Data", "Analysis", "HDFs", base="home")
     my_folder_path = p_find("Dropbox (ASU)", "Work Docs", "Data", "Raw", "MFIA", base="home")
 
-    files = f_find(my_folder_path, file_filter="topcon1")
+    files = f_find(my_folder_path, re_filter="topcon1")
 
     # Create an object to operate on all of the available data.  This will also save the
     # data into an hdf for persistant storage
@@ -552,7 +552,7 @@ if __name__ == "__main__":
 
     # Data can also be loaded after initialization directly via get_raw
     test_obj.get_raw(
-        f_find(my_folder_path, file_filter="topcon2"),
+        f_find(my_folder_path, re_filter="topcon2"),
         tool="MFIA",
         )
 
