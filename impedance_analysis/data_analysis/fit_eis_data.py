@@ -509,8 +509,9 @@ class IS_Ckt(object):
 
 # %% Testing
 if __name__ == "__main__":
-    from research_tools.impedance_analysis import DataImport
+    
     from research_tools.functions import f_find, p_find
+    from impedance_analysis import DataImport
     from pathlib import Path
 
     # Import data using by first getting the appropriate filename.  f_find and p_find
@@ -539,3 +540,4 @@ if __name__ == "__main__":
     # Call base fit (which uses impedance.py fit, which in turn uses least squares) on the data
     # contained within the object.
     ckt.base_fit()
+    

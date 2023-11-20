@@ -133,8 +133,9 @@ class MFIA_Freq_Sweep(MFIA):
     sample_key : str
         The sample key location for subscription necessary for a sweep
     result : pd.Dataframe, dict
-        A dataframe or dict of dataframes which holds the results of the most recent
-        analysis sequence. Intended  as a backup as results should be saved externally.
+        A dataframe or dict of dataframes returned by all sweep functions saved
+        within the class in case of error.
+        Note: Any new sweep functions should update and return this attr.
 
     Properties
     ----------
@@ -158,7 +159,6 @@ class MFIA_Freq_Sweep(MFIA):
         super().__init__(device, config_file, **kwargs)
 
         self.sweeper = self.init_config
-
         self.sample_key = kwargs.get("sample_key", f"/{self.device}/imps/0/sample")
 
     @property
@@ -177,7 +177,8 @@ class MFIA_Freq_Sweep(MFIA):
         if (
             isinstance(args, (tuple, list))
             and len(args) == 2
-            and hasattr(self._sweeper, args[0])
+            and "/"+args[0] in self._sweeper.listNodes("*",recursive=True)
+            # and hasattr(self._sweeper, args[0])
         ):
             self._sweeper.set(args[0], args[1])
         elif isinstance(args, dict):
@@ -237,7 +238,7 @@ class MFIA_Freq_Sweep(MFIA):
             result = data
         self.sweeper.unsubscribe(self.sample_key)
 
-        self.result = pd.DataFrame(
+        res_df = pd.DataFrame(
             {
                 k: v
                 for k, v in data[self.sample_key][0][0].items()
@@ -245,6 +246,10 @@ class MFIA_Freq_Sweep(MFIA):
             },
             dtype=np.float64,
         )
+        if hasattr(self, "result") and isinstance(self.result, dict):
+            return res_df
+        
+        self.result = res_df
         return self.result
 
     def biased_sweep(self, biases, delay=2, verbose=True, plot=None):
@@ -272,35 +277,37 @@ class MFIA_Freq_Sweep(MFIA):
         """
         if isinstance(biases, (int, float)):
             biases = [biases]
-
+        
+        # Enable bias after ensuring bias is 0 V
         self.daq.setDouble(f"/{self.device}/imps/0/bias/value", 0.0)
         self.daq.setInt(f"/{self.device}/imps/0/bias/enable", 1)
-
+        
+        self.result = {}
+        
         pplot = None
-        results = {}
         for bv in biases:
             print(f"Bias: {bv}")
             self.daq.setDouble(f"/{self.device}/imps/0/bias/value", bv)
             if callable(plot):
                 pplot = partial(plot, title=f"Bias: {bv}")
-            results[str(bv)] = self.sweep(delay, verbose, pplot)
-            self.result = results
-
-        return results
+            self.result[str(bv)] = self.sweep(delay, verbose, pplot)
+        
+        self.daq.setDouble(f"/{self.device}/imps/0/bias/value", 0.0)
+        return self.result
 
 
 if __name__ == "__main__":
     from research_tools.functions import save, p_find
 
-    config_path = p_find("defect_code", "impedance_analysis", "tool_interface", base="cwd")
+    config_path = p_find("impedance_analysis","impedance_analysis", "tool_interface", base="cwd")
     save_path = p_find("Dropbox (ASU)", "Work Docs", "Data", "Raw", "MFIA", base="home")
 
     sweep_obj = MFIA_Freq_Sweep(
         "dev6037", config_path/"config_mfia.ini", sections=["base_sweep_settings", "fast_sweep"]
     )
 
-    biases = [-0.1, 0.1, 0]
+    # biases = [-0.1, 0.1, 0]
+    biases = [-0.2, -0.1, 0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
     results = sweep_obj.biased_sweep(biases, plot=plot_measured_data)
 
-
-    save(results, save_path, "topcon2-2_bs_postPID_r1")
+    save(results, save_path, "otc_postPID_r1")

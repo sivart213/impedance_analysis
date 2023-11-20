@@ -14,10 +14,10 @@ from pathlib import Path
 from IPython import get_ipython
 from scipy.optimize import Bounds
 
-from research_tools.impedance_analysis.impedance_analysis.import_eis_data import DataImport
-from research_tools.impedance_analysis.impedance_analysis.fit_eis_data import IS_Ckt
+from impedance_analysis.data_analysis import DataImport
+from impedance_analysis.data_analysis import IS_Ckt
 
-from research_tools.functions import save, slugify
+from research_tools import save, slugify
 
 
 class IS_Data(object):
@@ -538,11 +538,11 @@ if __name__ == "__main__":
     my_hdf_path = p_find("Dropbox (ASU)", "Work Docs", "Data", "Analysis", "HDFs", base="home")
     my_folder_path = p_find("Dropbox (ASU)", "Work Docs", "Data", "Raw", "MFIA", base="home")
 
-    files = f_find(my_folder_path, re_filter="topcon1")
+    files = f_find(my_folder_path, re_filter="tc_postPID_r1")
 
     # Create an object to operate on all of the available data.  This will also save the
     # data into an hdf for persistant storage
-    test_obj = IS_Data("new_topcon",
+    test_obj = IS_Data("polarized_tc",
                        my_hdf_path,
                        model=ckt_model,
                        init_pos=init_position,
@@ -552,7 +552,7 @@ if __name__ == "__main__":
 
     # Data can also be loaded after initialization directly via get_raw
     test_obj.get_raw(
-        f_find(my_folder_path, re_filter="topcon2"),
+        f_find(my_folder_path, re_filter="polarized_tc"),
         tool="MFIA",
         )
 

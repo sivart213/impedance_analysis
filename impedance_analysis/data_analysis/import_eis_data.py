@@ -10,7 +10,7 @@ import pandas as pd
 from pathlib import Path
 
 from research_tools.functions import load
-from research_tools.impedance_analysis.impedance_analysis.fit_eis_data import Impedance
+from impedance_analysis.data_analysis.fit_eis_data import Impedance
 
 
 class DataImport(object):
