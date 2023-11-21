@@ -18,7 +18,7 @@ from research_tools.functions import gen_bnds, gen_mask, nyquist, bode, Complexe
 
 
 @dataclass
-class Impedance(Complexer):
+class Complex_Imp(Complexer):
     data: InitVar[np.ndarray] = np.ndarray(0)
     name: str = "Z"
 
@@ -31,13 +31,8 @@ class Impedance(Complexer):
         self.array = data
         if "Y" in self.name:
             self.array = 1 / self.array
-        setattr(self, "Z", self.array)
-        setattr(self, "R", self.Z.real)
-        setattr(self, "X", self.Z.imag)
-        setattr(self, "Y", 1 / self.array)
-        setattr(self, "G", self.Y.real)
-        setattr(self, "B", self.Y.imag)
 
+        
     def __getitem__(self, item):
         """Return sum of squared errors (pred vs actual)."""
         if hasattr(self, item.upper()):
@@ -60,7 +55,61 @@ class Impedance(Complexer):
             return self.mag
         elif "phase" in item.lower():
             return self.phase
+    
+    @property
+    def Z(self):
+        """Calculate. generic discription."""
+        return self.array
 
+    @Z.setter
+    def Z(self, _): pass
+
+    @property
+    def R(self):
+        """Calculate. generic discription."""
+        return self.Z.real
+
+    @R.setter
+    def R(self, _): pass
+
+    @property
+    def X(self):
+        """Calculate. generic discription."""
+        return self.Z.imag
+
+    @X.setter
+    def X(self, _): pass
+
+    @property
+    def Y(self):
+        """Calculate. generic discription."""
+        return 1 / self.array
+
+    @Y.setter
+    def Y(self, _): pass
+
+    @property
+    def G(self):
+        """Calculate. generic discription."""
+        return self.Y.real
+
+    @G.setter
+    def G(self, _): pass
+
+    @property
+    def B(self):
+        """Calculate. generic discription."""
+        return self.Y.imag
+
+    @B.setter
+    def B(self, _): pass
+    
+        # setattr(self, "Z", self.array)
+        # setattr(self, "R", self.Z.real)
+        # setattr(self, "X", self.Z.imag)
+        # setattr(self, "Y", 1 / self.array)
+        # setattr(self, "G", self.Y.real)
+        # setattr(self, "B", self.Y.imag)
 
 class IS_Ckt(object):
     def __init__(self, data, guess, constants={}, model="R_0-p(R_1,C_1)", conf=None):
@@ -116,15 +165,15 @@ class IS_Ckt(object):
     @property
     def Z(self):
         if not hasattr(self, "_Z"):
-            self._Z = Impedance(self.data[["real", "imag"]])
+            self._Z = Complex_Imp(self.data[["real", "imag"]])
         return self._Z
 
     @Z.setter
     def Z(self, val):
         if not hasattr(self, "_data"):
             self._data = pd.DataFrame(columns=["freq", "real", "imag"])
-        if not isinstance(val, Impedance):
-            self._Z = Impedance(val)
+        if not isinstance(val, Complex_Imp):
+            self._Z = Complex_Imp(val)
         else:
             self._Z = val
         self._data["real"] = self._Z.real
@@ -210,11 +259,11 @@ class IS_Ckt(object):
 
     @property
     def pred(self):
-        return Impedance(self.ckt.predict(self.freq, use_initial=False))
+        return Complex_Imp(self.ckt.predict(self.freq, use_initial=False))
 
     @property
     def sim(self):
-        return Impedance(self.ckt.predict(self.sim_f, use_initial=True))
+        return Complex_Imp(self.ckt.predict(self.sim_f, use_initial=True))
 
     @property
     def stats(self):
@@ -342,7 +391,7 @@ class IS_Ckt(object):
         bns = bns[bns > 0]
 
         lfunc = (
-            lambda freq, params, val: Impedance(self.func(params, freq))["real"] - val
+            lambda freq, params, val: Complex_Imp(self.func(params, freq))["real"] - val
         )
         kwargs = {**{"jac": "3-point", "xtol": 1e-12}, **kwargs}
         if solve:
@@ -404,13 +453,13 @@ class IS_Ckt(object):
         true = self.Z
 
         if pred is None and params is not None:
-            pred = Impedance(self.func(params, self.freq))
+            pred = Complex_Imp(self.func(params, self.freq))
         elif pred is None:
             pred = self.pred
         elif isinstance(pred, str):
             pred = self[pred]
-        elif not isinstance(pred, Impedance):
-            pred = Impedance(pred)
+        elif not isinstance(pred, Complex_Imp):
+            pred = Complex_Imp(pred)
         if not isinstance(forms, list):
             forms = [forms]
         pred_freq = self.rel_freq(params, solve=msolve, **kwargs)
@@ -519,13 +568,13 @@ if __name__ == "__main__":
     # importing of data
     my_folder_path = p_find("Dropbox (ASU)", "Work Docs", "Data", "Raw", "MFIA", base="home")
 
-    files = f_find(my_folder_path, re_filter="topcon")
+    files = f_find(my_folder_path)
     file = files[0]
     data_in = DataImport(file, tool="MFIA", read_type="full")
 
     # The impedance class wraps the complex class with terms common to impedance.  Used internally
     # by several of the eis modules/classes.
-    imp_data = Impedance(data_in[data_in.keys()[0]])
+    imp_data = Complex_Imp(data_in[data_in.keys()[0]])
 
     # Begin fitting of impedance data by first declaring the initial conditions needed by
     # impedance.py

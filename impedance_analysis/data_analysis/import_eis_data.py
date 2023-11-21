@@ -10,7 +10,7 @@ import pandas as pd
 from pathlib import Path
 
 from research_tools.functions import load
-from impedance_analysis.data_analysis.fit_eis_data import Impedance
+from impedance_analysis.data_analysis.fit_eis_data import Complex_Imp
 
 
 class DataImport(object):
@@ -114,17 +114,17 @@ class DataImport(object):
                     key: pd.DataFrame(
                         {
                             "freq": val.iloc[:, 1].to_numpy(),
-                            self.column_info[key]["Y1"]: Impedance(
+                            self.column_info[key]["Y1"]: Complex_Imp(
                                 val.iloc[:, [2, 3]]
                             ).Z,
-                            self.column_info[key]["Y2"]: Impedance(
+                            self.column_info[key]["Y2"]: Complex_Imp(
                                 val.iloc[:, [4, 5]]
                             ).Z,
                         }
                     )
                     for key, val in self.raw_data.items()
                 }
-            elif self.tool.lower() == "mfia":
+            if self.tool.lower() == "mfia":
                 self._data = {
                     key: pd.DataFrame(
                         {
@@ -152,10 +152,8 @@ class DataImport(object):
 # %% Testing
 if __name__ == "__main__":
     from research_tools.functions import f_find, p_find
+    
+    my_folder_path = p_find("impedance_analysis", "testing", "Data", "Raw", base="cwd")
+    files = f_find(my_folder_path, re_filter="mfia_pv")
 
-    my_folder_path = p_find("Dropbox (ASU)", "Work Docs", "Data", "Raw", "MFIA", base="home")
-    files = f_find(my_folder_path, re_filter="topcon")
-
-    file = files[0]
-
-    data_in = DataImport(file, tool="MFIA", read_type="full")
+    data_in = DataImport(files[0], tool="MFIA", read_type="full")

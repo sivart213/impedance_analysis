@@ -9,14 +9,14 @@ from .data_analysis.import_eis_data import (
 )
 from .data_analysis.fit_eis_data import (
     IS_Ckt,
-    Impedance,
+    Complex_Imp,
 )
 from .data_analysis.eval_eis_data import (
     IS_Data,
 )
 
 
-from .tool_interface import (
+from .tool_interface.sweep_mfia import (
     MFIA,
     MFIA_Freq_Sweep,
 )
@@ -24,7 +24,7 @@ from .tool_interface import (
 
 __all__ = [
     'DataImport',
-    'Impedance',
+    'Complex_Imp',
     'IS_Ckt',
     'IS_Data',
 

@@ -299,15 +299,17 @@ class MFIA_Freq_Sweep(MFIA):
 if __name__ == "__main__":
     from research_tools.functions import save, p_find
 
-    config_path = p_find("impedance_analysis","impedance_analysis", "tool_interface", base="cwd")
-    save_path = p_find("Dropbox (ASU)", "Work Docs", "Data", "Raw", "MFIA", base="home")
+    config_path = p_find("impedance_analysis", "impedance_analysis", "tool_interface", base="cwd")
+    save_path = p_find("impedance_analysis", "testing", "Data", "Raw", base="cwd")
 
     sweep_obj = MFIA_Freq_Sweep(
-        "dev6037", config_path/"config_mfia.ini", sections=["base_sweep_settings", "fast_sweep"]
+        "dev6037", config_path/"config_mfia.ini", sections=["base_sweep_settings", "fast_sweep"],
     )
+    
+    single_sweep = sweep_obj.sweep(plot=plot_measured_data)
+    save(single_sweep, save_path, "mfia_test_single")
+    
+    biases = [-0.1, 0, 0.1]
+    sweep_sequence = sweep_obj.biased_sweep(biases, plot=plot_measured_data)
 
-    # biases = [-0.1, 0.1, 0]
-    biases = [-0.2, -0.1, 0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
-    results = sweep_obj.biased_sweep(biases, plot=plot_measured_data)
-
-    save(results, save_path, "otc_postPID_r1")
+    save(sweep_sequence, save_path, "mfia_test_sequence")

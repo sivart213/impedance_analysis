@@ -9,7 +9,7 @@ from .import_eis_data import (
 )
 from .fit_eis_data import (
     IS_Ckt,
-    Impedance,
+    Complex_Imp,
 )
 from .eval_eis_data import (
     IS_Data,
@@ -18,7 +18,7 @@ from .eval_eis_data import (
 
 __all__ = [
     "DataImport",
-    "Impedance",
+    "Complex_Imp",
     "IS_Ckt",
     "IS_Data",
 ]

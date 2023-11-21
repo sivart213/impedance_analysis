@@ -354,7 +354,7 @@ class IS_Data(object):
         refit : bool
             TODO Not used, eval for removal
         bounds_by_conf : bool
-            If True, create boundaries from the confidence interval sent to Impedance
+            If True, create boundaries from the confidence interval sent to Complex_Imp
         **fit_kwargs : dict
             weight_by_modulus : bool
                 Fit the result using the modulus to apply weighting
@@ -527,7 +527,6 @@ if __name__ == "__main__":
     uni_bands = Bounds([1e-7, 1e-2, 1e-16, 1, 1e-12, 0.75, 15, 1e-12, 0.5],
                        [5e-6, 10, 1e-8, 5e5, 1e-3, 1, 200, 1e3, 1],
                        keep_feasible=True)
-
     ls_kwargs = dict(ftol=1e-14, xtol=1e-6, maxfev=1e6, jac="3-point", x_scale="jac", bounds=uni_bands)
     # names_all = names_base+names_base_r2+names_hot_base+names_hot_insitu
 
@@ -538,11 +537,11 @@ if __name__ == "__main__":
     my_hdf_path = p_find("Dropbox (ASU)", "Work Docs", "Data", "Analysis", "HDFs", base="home")
     my_folder_path = p_find("Dropbox (ASU)", "Work Docs", "Data", "Raw", "MFIA", base="home")
 
-    files = f_find(my_folder_path, re_filter="tc_postPID_r1")
+    files = f_find(my_folder_path, re_filter="polar")
 
     # Create an object to operate on all of the available data.  This will also save the
     # data into an hdf for persistant storage
-    test_obj = IS_Data("polarized_tc",
+    test_group = IS_Data("polarized_tc",
                        my_hdf_path,
                        model=ckt_model,
                        init_pos=init_position,
@@ -551,10 +550,12 @@ if __name__ == "__main__":
                        )
 
     # Data can also be loaded after initialization directly via get_raw
-    test_obj.get_raw(
-        f_find(my_folder_path, re_filter="polarized_tc"),
+    test_group.get_raw(
+        f_find(my_folder_path, re_filter="polar"),
         tool="MFIA",
         )
 
     # This will run the fitting function
-    test_obj.base_fitter("topcon1_bs_postpid_r1", thresh=1, refit=False, bounds_by_conf=False, **ls_kwargs)
+    test_group.base_fitter("ntc_postpid_r1", thresh=1, refit=False, bounds_by_conf=False, **ls_kwargs)
+    
+    

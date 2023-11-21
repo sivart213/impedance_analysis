@@ -399,11 +399,11 @@ def save(data, path=None, name=None, ftype="xls", attrs=None, **kwargs):
         else:
             data = pd.DataFrame(data)
     
-    for k, df in data.items():
-        if attrs is not None and k in attrs.index:
-            comm = originstr(attrs.loc[k, :], **kwargs)
-            df_tmp=pd.DataFrame([[comm]*df.shape[1]], index=["Comments"], columns=df.columns)
-            data[k] = pd.concat([df_tmp, df])
+    # for k, df in data.items():
+    #     if attrs is not None and k in attrs.index:
+    #         comm = originstr(attrs.loc[k, :], **kwargs)
+    #         df_tmp=pd.DataFrame([[comm]*df.shape[1]], index=["Comments"], columns=df.columns)
+    #         data[k] = pd.concat([df_tmp, df])
     
     if isinstance(data, (dict)):
         if not isinstance(data[list(data.keys())[0]], (pd.DataFrame, pd.Series)):
