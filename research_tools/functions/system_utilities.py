@@ -22,7 +22,12 @@ from pathlib import Path
 from datetime import datetime as dt
 from inspect import getmembers
 
-from research_tools.functions.data_treatment import dict_df, dict_flat, dict_key_sep
+from research_tools.functions.data_treatment import (
+    dict_df,
+    dict_flat,
+    dict_key_sep,
+    eval_string,
+)
 
 # warnings.simplefilter("ignore", np.RankWarning)
 # warnings.filterwarnings("ignore")
@@ -93,7 +98,9 @@ def pathify(*dir_in, target=None):
         approx_sub = []
         exact = False
         for dirpaths, dirnames, files in os.walk(os.path.abspath(root_dir)):
-            exact_dir = np.array(dirnames)[[sub_dir == item for item in dirnames]]
+            exact_dir = np.array(dirnames)[
+                [sub_dir == item for item in dirnames]
+            ]
             approx_dir = np.array(dirnames)[
                 [sub_dir.lower() in item.lower() for item in dirnames]
             ]
@@ -176,10 +183,14 @@ def p_find(*dir_in, as_list=False, **kwargs):
         return [p_find(d, **kwargs) for d in dir_in]
 
     # Drive list
-    drives = [Path(dp.device) for dp in psutil.disk_partitions() if dp.fstype.lower() in ['ntfs', 'fuseblk', 'ext4']]
+    drives = [
+        Path(dp.device)
+        for dp in psutil.disk_partitions()
+        if dp.fstype.lower() in ["ntfs", "fuseblk", "ext4"]
+    ]
 
     def chng_dr(dr, pth):
-        return dr/Path(*pth.parts[1:])
+        return dr / Path(*pth.parts[1:])
 
     base_path = kwargs.get("base", Path.home() / "Documents")
     if isinstance(base_path, str) and base_path in ["cwd", "home"]:
@@ -189,7 +200,11 @@ def p_find(*dir_in, as_list=False, **kwargs):
         base_path = Path.home() / "Documents"
 
     if not base_path.exists():
-        paths = [chng_dr(d, base_path) for d in drives if chng_dr(d, base_path).exists()]
+        paths = [
+            chng_dr(d, base_path)
+            for d in drives
+            if chng_dr(d, base_path).exists()
+        ]
         if len(paths) == 1:
             base_path = paths[0]
         elif len(paths) > 1:
@@ -210,10 +225,14 @@ def p_find(*dir_in, as_list=False, **kwargs):
     # Combine the base path and begin checks
     dir_path = base_path / Path(*dir_in)
 
-    if  dir_path.exists():
+    if dir_path.exists():
         return dir_path
     else:
-        paths = [chng_dr(d, dir_path) for d in drives if chng_dr(d, dir_path).exists()]
+        paths = [
+            chng_dr(d, dir_path)
+            for d in drives
+            if chng_dr(d, dir_path).exists()
+        ]
         for pth in paths:
             if pth.exists():
                 return pth
@@ -242,17 +261,23 @@ def p_find(*dir_in, as_list=False, **kwargs):
     bases = [Path.cwd()]
     if Path.cwd() != Path.home():
         bases.append(Path.home())
-    bases = [chng_dr(d, p) for p in bases for d in drives if chng_dr(d, p).exists()]
-    bases = bases + list(caller.parents[:-len(Path.cwd().parts)])
+    bases = [
+        chng_dr(d, p) for p in bases for d in drives if chng_dr(d, p).exists()
+    ]
+    bases = bases + list(caller.parents[: -len(Path.cwd().parts)])
 
     bases.sort(reverse=True, key=lambda p: len(p.parts))
 
     bases.insert(0, base_path) if base_path not in bases else None
-    [bases.insert(1, chng_dr(d, base_path)) for d in drives if chng_dr(d, base_path).exists() and chng_dr(d, base_path) not in bases]
-
+    [
+        bases.insert(1, chng_dr(d, base_path))
+        for d in drives
+        if chng_dr(d, base_path).exists()
+        and chng_dr(d, base_path) not in bases
+    ]
 
     for b in bases:
-        paths = list(b.glob("**/"+str(Path(*dir_in))))
+        paths = list(b.glob("**/" + str(Path(*dir_in))))
         if len(paths) == 1:
             return paths[0]
         elif len(paths) > 1:
@@ -269,7 +294,6 @@ def p_find(*dir_in, as_list=False, **kwargs):
             #     for p in paths:
             #         if p.is_relative_to(Path.cwd().parents[-len(base_path.parts)]):
             #             return p
-
 
     # if not dir_path.exists():
     #     filesurvey = []
@@ -302,7 +326,9 @@ def f_find(path, search=False, res_type="path", re_filter=None):
     path = Path(path)
     if search:
         res = f_find(path.parent)
-        return [r for r in res if r.parent == path.parent and r.stem == path.stem][0]
+        return [
+            r for r in res if r.parent == path.parent and r.stem == path.stem
+        ][0]
 
     filesurvey = []
     for row in os.walk(Path(path)):  # Walks through current path
@@ -398,29 +424,48 @@ def save(data, path=None, name=None, ftype="xls", attrs=None, **kwargs):
             data = {x: data[x] for x in range(len(data))}
         else:
             data = pd.DataFrame(data)
-    
+
     # for k, df in data.items():
     #     if attrs is not None and k in attrs.index:
     #         comm = originstr(attrs.loc[k, :], **kwargs)
     #         df_tmp=pd.DataFrame([[comm]*df.shape[1]], index=["Comments"], columns=df.columns)
     #         data[k] = pd.concat([df_tmp, df])
-    
+
     if isinstance(data, (dict)):
-        if not isinstance(data[list(data.keys())[0]], (pd.DataFrame, pd.Series)):
+        if not isinstance(
+            data[list(data.keys())[0]], (pd.DataFrame, pd.Series)
+        ):
             data = pd.DataFrame(data)
 
     if isinstance(data, (pd.DataFrame, pd.Series)) and "xls" in ftype.lower():
-        data.to_excel(os.sep.join((path, f"{slugify(name)}.xlsx")), merge_cells=kwargs.pop("merge_cells", False), **kwargs)
+        data.to_excel(
+            os.sep.join((path, f"{slugify(name)}.xlsx")),
+            merge_cells=kwargs.pop("merge_cells", False),
+            **kwargs,
+        )
     elif isinstance(data, (dict)) and "xls" in ftype.lower():
-        with pd.ExcelWriter(os.sep.join((path, f"{slugify(name)}.xlsx"))) as writer:
+        with pd.ExcelWriter(
+            os.sep.join((path, f"{slugify(name)}.xlsx"))
+        ) as writer:
             for key, df in data.items():
-                df.to_excel(writer, sheet_name=key, merge_cells=kwargs.pop("merge_cells", False), **kwargs)
+                df.to_excel(
+                    writer,
+                    sheet_name=key,
+                    merge_cells=kwargs.pop("merge_cells", False),
+                    **kwargs,
+                )
     elif isinstance(data, (pd.DataFrame, pd.Series)):
-        data.to_csv(os.sep.join((path, f"{slugify(name)}.{ftype}")), index=kwargs.pop("index", False), **kwargs)
+        data.to_csv(
+            os.sep.join((path, f"{slugify(name)}.{ftype}")),
+            index=kwargs.pop("index", False),
+            **kwargs,
+        )
     elif isinstance(data, (dict)):
         for key, df in data.items():
             df.to_csv(
-                os.sep.join((path, f"{slugify(name)}_{key}.{ftype}")), index=kwargs.pop("index", False), **kwargs
+                os.sep.join((path, f"{slugify(name)}_{key}.{ftype}")),
+                index=kwargs.pop("index", False),
+                **kwargs,
             )
 
 
@@ -463,7 +508,8 @@ def load(file, path=None, pdkwargs={}, hdfkwargs={}, **kwargs):
             data = dict_df(dict_flat(data))
     elif file.exists() and file.is_dir():
         filelist = f_find(
-            file, re_filter=kwargs.get("file_filter", kwargs.get("re_filter", ""))
+            file,
+            re_filter=kwargs.get("file_filter", kwargs.get("re_filter", "")),
         )
         return [load(f, None, pdkwargs, hdfkwargs, **kwargs) for f in filelist]
     return data, attrs
@@ -510,10 +556,8 @@ def get_config(file, sections=["base"], **kwargs):
         If no section match, attempts to find sections which include the values provided by the
         list. If there are still no matches, the first section will be called and returned.
     kwargs : function, optional
-        Pass a function for plotting the data. Function must be limited to single data input
-        of type dict or dataframe with keys appropriate to the native output of the sweeper obj.
-        i.e. "frequency", "realz", "imagz", "absz", "phasez", "param0", or "param1"
-        Default : None
+        Pass additional items to be included in the configuration.  If the configuration
+        is in the .ini file, they will be overwritten.
 
     Returns
     -------
@@ -556,9 +600,7 @@ def get_config(file, sections=["base"], **kwargs):
     if checked_sec == []:
         checked_sec = [cp.sections()[0]]
     config_file = {
-        k: eval(v)
-        if not bool(re.findall("[a-df-zA-DF-Z\\\\@!&^]|^[/eE]|[/eE]$|^\\..+\\.$", v))
-        else v
+        k: eval_string(v)
         for sc in checked_sec
         for k, v in dict(cp.items(sc)).items()
     }
@@ -577,7 +619,9 @@ def get_config(file, sections=["base"], **kwargs):
 class PickleJar:
     """Calculate. generic discription."""
 
-    def __init__(self, data=None, folder="Auto", path=None, history=False, **kwargs):
+    def __init__(
+        self, data=None, folder="Auto", path=None, history=False, **kwargs
+    ):
         """Calculate. generic discription."""
         self.history = history
         self.folder = folder
@@ -597,7 +641,9 @@ class PickleJar:
     def path(self):
         """Return sum of squared errors (pred vs actual)."""
         if not hasattr(self, "_path"):
-            self._path = pathify("work", "Data", "Analysis", "Pickles", self.folder)
+            self._path = pathify(
+                "work", "Data", "Analysis", "Pickles", self.folder
+            )
             if not os.path.exists(self._path):
                 os.makedirs(self._path)
         return self._path

@@ -26,11 +26,11 @@ from research_tools.equations.general import inv_sum_invs, erfc
 def capacitance(epsilon_r, A, L, **kwargs):
     """Calculate. generic discription."""
     arg_in = vars().copy()
-    epsilon_0 = kwargs.get("vacuum_permittivity ", None)
+    epsilon_0 = kwargs.get("vacuum_permittivity", None)
     if epsilon_0 is None:
         w_units = has_units(arg_in)
         symbolic = all_symbols(arg_in)
-        epsilon_0 = get_const("vacuum_permittivity ", *([True] if symbolic else [w_units, ["farad", "cm"]]))
+        epsilon_0 = get_const("vacuum_permittivity", *([True] if symbolic else [w_units, ["farad", "cm"]]))
 
     res = epsilon_r * epsilon_0 * A / L
 
@@ -171,7 +171,7 @@ def depletion_region(Na, Nd, T=298.15):
     symbolic = all_symbols(arg_in)
 
     q = get_const("elementary_charge", *([True] if symbolic else [w_units, ["C"]]))
-    epsilon_0 = get_const("vacuum_permittivity ", *([True] if symbolic else [w_units, ["farad", "cm"]]))
+    epsilon_0 = get_const("vacuum_permittivity", *([True] if symbolic else [w_units, ["farad", "cm"]]))
     k_B = get_const("boltzmann", *([True] if symbolic else [w_units, ["eV", "K"]]))
 
     Vbi = k_B * T * nsp.log(Na * Nd / ni_Si(T) ** 2)
@@ -698,7 +698,7 @@ def debye_length(C, z, epsilon_r, T=298.15):
     symbolic = all_symbols(arg_in)
 
     q = get_const("elementary_charge", *([True] if symbolic else [w_units, ["C"]]))
-    epsilon_0 = get_const("vacuum_permittivity ", *([True] if symbolic else [w_units, ["farad", "cm"]]))
+    epsilon_0 = get_const("vacuum_permittivity", *([True] if symbolic else [w_units, ["farad", "cm"]]))
     k_B = get_const("boltzmann", *([True] if symbolic else [w_units, ["joule", "K"]]))
 
     if isinstance(C, (tuple, list)):
@@ -718,7 +718,7 @@ def bjerrum_length(epsilon_r, T=298.15):
     symbolic = all_symbols(arg_in)
 
     q = get_const("elementary_charge", *([True] if symbolic else [w_units, ["C"]]))
-    epsilon_0 = get_const("vacuum_permittivity ", *([True] if symbolic else [w_units, ["farad", "cm"]]))
+    epsilon_0 = get_const("vacuum_permittivity", *([True] if symbolic else [w_units, ["farad", "cm"]]))
     k_B = get_const("boltzmann", *([True] if symbolic else [w_units, ["joule", "K"]]))
 
     res = q**2 / (epsilon_r * epsilon_0 * k_B * T)
@@ -786,7 +786,7 @@ def screened_permitivity(epsilon_r, kappa, x=1):
     w_units = has_units(arg_in)
     symbolic = all_symbols(arg_in)
 
-    epsilon_0 = get_const("vacuum_permittivity ", *([True] if symbolic else [w_units, ["farad", "cm"]]))
+    epsilon_0 = get_const("vacuum_permittivity", *([True] if symbolic else [w_units, ["farad", "cm"]]))
 
     res = epsilon_r * epsilon_0 * nsp.exp(kappa * x)
 
@@ -802,7 +802,7 @@ def poisson_rhs(C, z, epsilon_r):
     symbolic = all_symbols(arg_in)
     
     q = get_const("elementary_charge", *([True] if symbolic else [w_units, ["C"]]))
-    epsilon_0 = get_const("vacuum_permittivity ", *([True] if symbolic else [w_units, ["farad", "cm"]]))
+    epsilon_0 = get_const("vacuum_permittivity", *([True] if symbolic else [w_units, ["farad", "cm"]]))
 
     res = q * z * C / (epsilon_r * epsilon_0)
     return res

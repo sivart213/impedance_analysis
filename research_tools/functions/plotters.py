@@ -7,6 +7,7 @@ Created on Wed Apr 11 17:05:01 2018.
 General function file
 """
 import os
+import re
 import warnings
 import numpy as np
 import pandas as pd
@@ -33,7 +34,10 @@ if "kindlmann" not in mpl.colormaps() or "kindlmann_r" not in mpl.colormaps():
     Path()
     csv = pd.read_csv(
         p_find(
-            "research_tools","functions","kindlmann-tables","kindlmann-table-float-1024.csv",
+            "research_tools",
+            "functions",
+            "kindlmann-tables",
+            "kindlmann-table-float-1024.csv",
             base="cwd",
         )
     )
@@ -52,6 +56,15 @@ if "kindlmann" not in mpl.colormaps() or "kindlmann_r" not in mpl.colormaps():
             ).reversed(),
         )
 
+def get_style(styl_str):
+    if styl_str in style.available:
+        style.use(styl_str)
+    else:
+        has_any = [sum([st in av for st in re.split("[-_]", styl_str)]) for av in style.available]
+        res = np.array(style.available)[[n == max(has_any) for n in has_any]]
+        style.use(res[0]) if len(res) >= 1 else None
+    return
+        
 
 def map_plt(
     x,
@@ -76,7 +89,7 @@ def map_plt(
     """
     Create a map plot using contourf.
     """
-    style.use("seaborn-colorblind")
+    get_style("seaborn-colorblind")
 
     if xlimit == [0, 0]:
         xlimit = [min(x), max(x)]
@@ -181,7 +194,7 @@ def scatter(
     **kwargs,
 ):
     """Calculate. generic discription."""
-    style.use("seaborn-colorblind")
+    get_style("seaborn-colorblind")
 
     sns.set_theme(context="talk", style="dark")
 
@@ -237,7 +250,9 @@ def scatter(
     if colorbar:
         if zname is None:
             zname = kwargs["hue"]
-        norm = plt.Normalize(data[kwargs["hue"]].min(), data[kwargs["hue"]].max())
+        norm = plt.Normalize(
+            data[kwargs["hue"]].min(), data[kwargs["hue"]].max()
+        )
         sm = plt.cm.ScalarMappable(cmap=kwargs["palette"], norm=norm)
         sm.set_array([])
 
@@ -250,7 +265,7 @@ def scatter(
             tick.set_fontname("serif")
             tick.set_fontweight("bold")
             tick.set_fontsize(12)
-    
+
     ax.grid(grid)
     # The plot is shown
     plt.tight_layout()
@@ -277,7 +292,7 @@ def nyquist(
     return_fig=False,
 ):
     """Calculate. generic discription."""
-    style.use("seaborn-colorblind")
+    get_style("seaborn-colorblind")
 
     data = data.copy()
     # if freq is not None:
@@ -302,18 +317,30 @@ def nyquist(
     if fit is not None:
         ax.plot(fit["real"], fit["inv_imag"])
         if band is not None:
-            ax.fill_between(band["real"], band[bmin], band[bmax], color="r", alpha=0.5)
+            ax.fill_between(
+                band["real"], band[bmin], band[bmax], color="r", alpha=0.5
+            )
 
-    norms = plt.matplotlib.colors.LogNorm(data["freq"].min(), data["freq"].max())
+    norms = plt.matplotlib.colors.LogNorm(
+        data["freq"].min(), data["freq"].max()
+    )
     sm = plt.cm.ScalarMappable(cmap="kindlmann", norm=norms)
     cbar = ax.figure.colorbar(sm)
     cbar.set_label("Freq", fontname="Arial", fontsize=18, fontweight="bold")
 
-    ax.set_xlabel("Z' [Ohms]", fontname="Arial", fontsize=18, fontweight="bold")
-    ax.set_ylabel("-Z'' [Ohms]", fontname="Arial", fontsize=18, fontweight="bold")
+    ax.set_xlabel(
+        "Z' [Ohms]", fontname="Arial", fontsize=18, fontweight="bold"
+    )
+    ax.set_ylabel(
+        "-Z'' [Ohms]", fontname="Arial", fontsize=18, fontweight="bold"
+    )
     ax.set_aspect("equal", adjustable="box", anchor="SW", share=True)
-    ax.set_xlim(0, sig_figs_ceil(data[["real", "inv_imag"]].max().max() * pad, 2))
-    ax.set_ylim(0, sig_figs_ceil(data[["real", "inv_imag"]].max().max() * pad, 2))
+    ax.set_xlim(
+        0, sig_figs_ceil(data[["real", "inv_imag"]].max().max() * pad, 2)
+    )
+    ax.set_ylim(
+        0, sig_figs_ceil(data[["real", "inv_imag"]].max().max() * pad, 2)
+    )
     ax.grid(True)
     ax.set_title(title, fontname="Arial", fontsize=18, fontweight="bold")
 
@@ -343,7 +370,7 @@ def bode(
     return_fig=False,
 ):
     """Calculate. generic discription."""
-    style.use("seaborn-colorblind")
+    get_style("seaborn-colorblind")
 
     if freq is not None:
         data["freq"] = freq
@@ -381,10 +408,18 @@ def bode(
         if band is not None:
             try:
                 ax1.fill_between(
-                    data["freq"], band[top][bmin], band[top][bmax], color="r", alpha=0.4
+                    data["freq"],
+                    band[top][bmin],
+                    band[top][bmax],
+                    color="r",
+                    alpha=0.4,
                 )
                 ax2.fill_between(
-                    data["freq"], band[bot][bmin], band[bot][bmax], color="r", alpha=0.4
+                    data["freq"],
+                    band[bot][bmin],
+                    band[bot][bmax],
+                    color="r",
+                    alpha=0.4,
                 )
             except KeyError:
                 pass
@@ -402,9 +437,15 @@ def bode(
     else:
         ax2.set(yscale="log", ylim=[data[bot].min(), data[bot].max()])
 
-    ax2.set_xlabel("Frequency Hz", fontname="Arial", fontsize=18, fontweight="bold")
-    ax1.set_ylabel(labels[top], fontname="Arial", fontsize=18, fontweight="bold")
-    ax2.set_ylabel(labels[bot], fontname="Arial", fontsize=18, fontweight="bold")
+    ax2.set_xlabel(
+        "Frequency Hz", fontname="Arial", fontsize=18, fontweight="bold"
+    )
+    ax1.set_ylabel(
+        labels[top], fontname="Arial", fontsize=18, fontweight="bold"
+    )
+    ax2.set_ylabel(
+        labels[bot], fontname="Arial", fontsize=18, fontweight="bold"
+    )
     ax1.set_title(title, fontname="Arial", fontsize=18, fontweight="bold")
     ax1.grid(True)
     ax2.grid(True)
@@ -428,7 +469,7 @@ def nyquist2(
     return_fig=False,
 ):
     """Calculate. generic discription."""
-    style.use("seaborn-colorblind")
+    get_style("seaborn-colorblind")
 
     data = data.copy()
     # if freq is not None:
@@ -452,20 +493,32 @@ def nyquist2(
     if fit is not None:
         nyln = ax.plot(fit["real"], fit["inv_imag"], "r")
         if band is not None:
-            ax.fill_between(band["real"], band[bmin], band[bmax], color="r", alpha=0.5)
+            ax.fill_between(
+                band["real"], band[bmin], band[bmax], color="r", alpha=0.5
+            )
     else:
         nyln = None
 
-    norms = plt.matplotlib.colors.LogNorm(data["freq"].min(), data["freq"].max())
+    norms = plt.matplotlib.colors.LogNorm(
+        data["freq"].min(), data["freq"].max()
+    )
     sm = plt.cm.ScalarMappable(cmap="kindlmann", norm=norms)
     cbar = ax.figure.colorbar(sm)
     cbar.set_label("Freq", fontname="Arial", fontsize=18, fontweight="bold")
 
-    ax.set_xlabel("Z' [Ohms]", fontname="Arial", fontsize=18, fontweight="bold")
-    ax.set_ylabel("-Z'' [Ohms]", fontname="Arial", fontsize=18, fontweight="bold")
+    ax.set_xlabel(
+        "Z' [Ohms]", fontname="Arial", fontsize=18, fontweight="bold"
+    )
+    ax.set_ylabel(
+        "-Z'' [Ohms]", fontname="Arial", fontsize=18, fontweight="bold"
+    )
     ax.set_aspect("equal", adjustable="box", anchor="SW", share=True)
-    ax.set_xlim(0, sig_figs_ceil(data[["real", "inv_imag"]].max().max() * pad, 2))
-    ax.set_ylim(0, sig_figs_ceil(data[["real", "inv_imag"]].max().max() * pad, 2))
+    ax.set_xlim(
+        0, sig_figs_ceil(data[["real", "inv_imag"]].max().max() * pad, 2)
+    )
+    ax.set_ylim(
+        0, sig_figs_ceil(data[["real", "inv_imag"]].max().max() * pad, 2)
+    )
     ax.grid(True)
     ax.set_title(title, fontname="Arial", fontsize=18, fontweight="bold")
 
@@ -495,7 +548,7 @@ def bode2(
     return_fig=False,
 ):
     """Calculate. generic discription."""
-    style.use("seaborn-colorblind")
+    get_style("seaborn-colorblind")
 
     if freq is not None:
         data["freq"] = freq
@@ -530,10 +583,18 @@ def bode2(
         if band is not None:
             try:
                 ax1.fill_between(
-                    data["freq"], band[top][bmin], band[top][bmax], color="r", alpha=0.4
+                    data["freq"],
+                    band[top][bmin],
+                    band[top][bmax],
+                    color="r",
+                    alpha=0.4,
                 )
                 ax2.fill_between(
-                    data["freq"], band[bot][bmin], band[bot][bmax], color="r", alpha=0.4
+                    data["freq"],
+                    band[bot][bmin],
+                    band[bot][bmax],
+                    color="r",
+                    alpha=0.4,
                 )
             except KeyError:
                 pass
@@ -563,9 +624,15 @@ def bode2(
             ],
         )
 
-    ax2.set_xlabel("Frequency Hz", fontname="Arial", fontsize=18, fontweight="bold")
-    ax1.set_ylabel(labels[top], fontname="Arial", fontsize=18, fontweight="bold")
-    ax2.set_ylabel(labels[bot], fontname="Arial", fontsize=18, fontweight="bold")
+    ax2.set_xlabel(
+        "Frequency Hz", fontname="Arial", fontsize=18, fontweight="bold"
+    )
+    ax1.set_ylabel(
+        labels[top], fontname="Arial", fontsize=18, fontweight="bold"
+    )
+    ax2.set_ylabel(
+        labels[bot], fontname="Arial", fontsize=18, fontweight="bold"
+    )
     ax1.set_title(title, fontname="Arial", fontsize=18, fontweight="bold")
     ax1.grid(True)
     ax2.grid(True)

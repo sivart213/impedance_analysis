@@ -190,7 +190,7 @@ def ode(f=None, x=None, deg=2, expr=0, **kwargs):
         f = sp.symbols("f", cls=sp.Function)
     if x is None:
         x = [extract_variable(expr, "x")]
-        x = x[0] if len(x) >= 1 else sp.Symbol("x", real=True)
+        x = x[0] if len(x) >= 1 and x[0] is not None else sp.Symbol("x", real=True)
     
     res = sp.Eq(f(x).diff(*[x]*deg), expr)
     if kwargs.get("solve", False):

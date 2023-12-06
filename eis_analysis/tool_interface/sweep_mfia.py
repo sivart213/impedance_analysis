@@ -21,7 +21,7 @@ from functools import partial
 
 from research_tools.functions import get_config
 
-get_ipython().run_line_magic("matplotlib", "inline")
+
 
 
 def plot_measured_data(sweep_data: dict, **kwargs):
@@ -299,17 +299,17 @@ class MFIA_Freq_Sweep(MFIA):
 if __name__ == "__main__":
     from research_tools.functions import save, p_find
 
-    config_path = p_find("impedance_analysis", "impedance_analysis", "tool_interface", base="cwd")
+    config_path = p_find("impedance_analysis", "eis_analysis", "tool_interface", base="cwd")
     save_path = p_find("impedance_analysis", "testing", "Data", "Raw", base="cwd")
-
-    sweep_obj = MFIA_Freq_Sweep(
-        "dev6037", config_path/"config_mfia.ini", sections=["base_sweep_settings", "fast_sweep"],
-    )
+    get_ipython().run_line_magic("matplotlib", "inline")
+    # sweep_obj = MFIA_Freq_Sweep(
+    #     "dev6037", config_path/"config_mfia.ini", sections=["base_sweep_settings", "fast_sweep"],
+    # )
     
-    single_sweep = sweep_obj.sweep(plot=plot_measured_data)
-    save(single_sweep, save_path, "mfia_test_single")
+    # single_sweep = sweep_obj.sweep(plot=plot_measured_data)
+    # save(single_sweep, save_path, "mfia_test_single")
     
-    biases = [-0.1, 0, 0.1]
-    sweep_sequence = sweep_obj.biased_sweep(biases, plot=plot_measured_data)
+    # biases = [-0.1, 0, 0.1]
+    # sweep_sequence = sweep_obj.biased_sweep(biases, plot=plot_measured_data)
 
-    save(sweep_sequence, save_path, "mfia_test_sequence")
+    # save(sweep_sequence, save_path, "mfia_test_sequence")

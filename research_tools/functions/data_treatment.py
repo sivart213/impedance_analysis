@@ -12,10 +12,8 @@ import pandas as pd
 import sympy as sp
 import sympy.physics.units as su
 
-from collections.abc import Mapping
-from dataclasses import dataclass, fields, _FIELDS, _FIELD, InitVar # astuple, asdict
-
 from inspect import getfullargspec
+
 # from dataclasses import dataclass, InitVar
 from scipy.optimize import curve_fit
 
@@ -36,6 +34,15 @@ temperature_eqns = dict(
     RtoK=lambda T: T * 5.0 / 9.0,
 )
 
+convert_sp = {
+    sp.Float: float,
+    sp.Integer: int,
+    sp.Symbol: str,
+    sp.Mul: str,
+    sp.Add: str,
+    sp.core.numbers.One: int,
+}
+
 
 # %% Equation Manipulators
 def has_units(arg):
@@ -54,7 +61,9 @@ def has_arrays(arg, func):
         for k, v in arg.items()
         if isinstance(v, (np.ndarray, sp.Array))
     }
-    if symb_var == {}:  # or any([isinstance(v, sp.Symbol) for v in arg.values()]):
+    if (
+        symb_var == {}
+    ):  # or any([isinstance(v, sp.Symbol) for v in arg.values()]):
         return False, None
     else:
         expr = func(**{**arg, **symb_var})
@@ -120,19 +129,27 @@ def function_to_expr(func, **kwargs):
 
     # Pull any dictionarys to top level
     kkeys = list(kwargs.keys())
-    [kwargs.update(kwargs.pop(k)) for k in kkeys if isinstance(kwargs[k], dict)]
+    [
+        kwargs.update(kwargs.pop(k))
+        for k in kkeys
+        if isinstance(kwargs[k], dict)
+    ]
 
     # get function arguments as symbols
     if isinstance(kargs, dict):
         args = [
-            kargs.pop(a, kwargs.pop(a, sp.symbols(a, real=True))) for a in argspec[0]
+            kargs.pop(a, kwargs.pop(a, sp.symbols(a, real=True)))
+            for a in argspec[0]
         ]
         kwonlyargs = {
-            a: kargs.pop(a, kwargs.pop(a, sp.symbols(a, real=True))) for a in argspec[4]
+            a: kargs.pop(a, kwargs.pop(a, sp.symbols(a, real=True)))
+            for a in argspec[4]
         }
     else:
         args = [kwargs.pop(a, sp.symbols(a, real=True)) for a in argspec[0]]
-        kwonlyargs = {a: kwargs.pop(a, sp.symbols(a, real=True)) for a in argspec[4]}
+        kwonlyargs = {
+            a: kwargs.pop(a, sp.symbols(a, real=True)) for a in argspec[4]
+        }
         if isinstance(kargs, int):
             varargs = kwargs.pop(argspec[1], kargs)
             kargs = [kargs]
@@ -156,12 +173,16 @@ def function_to_expr(func, **kwargs):
 
     if varargs != []:
         # If args is not empty, try to parse
-        if isinstance(varargs, (list, tuple, np.ndarray)) and len(varargs) == 1:
+        if (
+            isinstance(varargs, (list, tuple, np.ndarray))
+            and len(varargs) == 1
+        ):
             varargs = varargs[0]
         if isinstance(varargs, int):
             sign = int(-varargs / abs(varargs))
             varargs = [
-                sp.symbols(f"C_{a+sign}", real=True) for a in range(varargs, 0, sign)
+                sp.symbols(f"C_{a+sign}", real=True)
+                for a in range(varargs, 0, sign)
             ]
         elif isinstance(varargs, str):
             varargs = [sp.symbols(a, real=True) for a in varargs.split(" ")]
@@ -177,7 +198,9 @@ def function_to_expr(func, **kwargs):
         a: eval(str(a))
         for a in expr.free_symbols
         if not bool(
-            re.findall("[a-df-zA-DF-Z\\\\@!&^]|^[/eE]|[/eE]$|^\\..+\\.$", str(a))
+            re.findall(
+                "[a-df-zA-DF-Z\\\\@!&^]|^[/eE]|[/eE]$|^\\..+\\.$", str(a)
+            )
         )
     }
     res = expr.subs(res_dict)
@@ -186,7 +209,9 @@ def function_to_expr(func, **kwargs):
     return res
 
 
-def solve_for_variable(func, target=None, dep_var="res", res_form="res", **kwargs):
+def solve_for_variable(
+    func, target=None, dep_var="res", res_form="res", **kwargs
+):
     """
     Call sympy to solve for the target variable.
 
@@ -376,6 +401,7 @@ def extract_arguments(func, method="str", **kwargs):
         return [str(r) for r in res]
     return res
 
+
 def extract_variable(expr, targ):
     try:
         res = [var for var in expr.free_symbols if targ == str(var)]
@@ -395,6 +421,7 @@ def extract_variable(expr, targ):
         print("Must pass sympy object")
         return
 
+
 def curve_fit_wrap(fcn, pnts, **params):
     """Calculate. generic discription."""
     pnts = np.array(pnts)
@@ -404,8 +431,6 @@ def curve_fit_wrap(fcn, pnts, **params):
     }
     fit = curve_fit(fcn, pnts[:, 0], pnts[:, 1], **params)
     return [fit[0], np.sqrt(np.diag(fit[1]))]
-
-
 
 
 # %% Converters
@@ -459,7 +484,9 @@ def convert_temp(val, iunit, funit, expon=1):
         funit = funit[-1]
 
     res = (
-        temperature_eqns[f"{iunit.upper()}to{funit.upper()}"](val ** (1 / expon))
+        temperature_eqns[f"{iunit.upper()}to{funit.upper()}"](
+            val ** (1 / expon)
+        )
         / p_val
     )
 
@@ -495,6 +522,7 @@ def get_const(name, symbolic=False, unit=None):
     const : [float, sympy.unit.Quantity]
         requested value
     """
+    name = name.strip()
     try:
         const = getattr(su, name)
     except AttributeError:
@@ -511,7 +539,9 @@ def get_const(name, symbolic=False, unit=None):
         if not isinstance(unit, list):
             unit = [unit]
         try:
-            unit = [getattr(su, un) if isinstance(un, str) else un for un in unit]
+            unit = [
+                getattr(su, un) if isinstance(un, str) else un for un in unit
+            ]
             const = su.convert_to(const, unit).n()
         except (AttributeError, ValueError, TypeError):
             pass
@@ -543,7 +573,9 @@ def parse_unit(expr, unit_system="SI"):
     if isinstance(unit_system, str):
         unit_system = getattr(su.systems, "SI")
     consts = list(expr.atoms(su.quantities.PhysicalConstant))
-    expr = expr.subs({c: parse_constant(c, unit_system) for c in consts}).simplify()
+    expr = expr.subs(
+        {c: parse_constant(c, unit_system) for c in consts}
+    ).simplify()
 
     units = list(expr.atoms(su.Quantity))
     pows = list(expr.atoms(sp.Pow))
@@ -560,11 +592,70 @@ def parse_unit(expr, unit_system="SI"):
     for n in range(len(units.atoms(su.Quantity))):
         if len(units.atoms(su.Quantity)) == 1:
             break
-        munits = [su.convert_to(units, u) for u in unit_system.get_units_non_prefixed()]
+        munits = [
+            su.convert_to(units, u)
+            for u in unit_system.get_units_non_prefixed()
+        ]
         for t in munits:
             if len(t.atoms(su.Quantity)) < len(units.atoms(su.Quantity)):
                 units = t
     return unitless, units
+
+
+def eval_string(text):
+    """
+    Parse text into None, int, float, tuple, list, or dict via sympy parse_expr.
+    Parse_expr will attempt to resolve simple math expressions but will revert
+    to str if result doesn't resolve to a number.  Does not support complex
+    numbers.
+
+    text : str
+        The string of text to be converted if possible
+
+    Returns
+    -------
+    res : any, str
+        Returns an int, float, or string (or a tuple, list, set, or dict of base
+        base types). Returns text as str in case of error.
+    """
+    if not isinstance(text, str):
+        return text
+    bkts = [["(", ")"], ["[", "]"], ["{", "}"]]
+    ends = re.findall(r"^.|.$", text.strip())
+
+    if ends in bkts:
+        items = re.findall(
+            r"[^\,\n]*:?[\(\[\{][^\)\]\}]+[\)\]\}]|[^\,\n]+",
+            text.strip()[1:-1],
+        )
+        if all([":" in t for t in items]) and ends == bkts[2]:
+            res = {}
+            for item in items:
+                it = [i.strip() for i in item.split(":")]
+                res[it[0]] = (
+                    eval_string(":".join(it[1:])) if len(it) > 1 else None
+                )
+        else:
+            res = [eval_string(item.strip()) for item in items]
+            if ends == bkts[0]:
+                res = tuple(res)
+            if ends == bkts[2]:
+                try:
+                    res = set(res)
+                except TypeError as err:
+                    print(f"Error creating set: {err}")
+        return res
+    if text.lower() == "none":
+        return None
+    elif bool(re.findall(r"\d", text)):
+        try:
+            res = sp.parse_expr(
+                text, transformations=sp.parsing.sympy_parser.T[5]
+            )
+            return res
+        except (TypeError, SyntaxError, KeyError, NameError):
+            return text
+    return text
 
 
 def sci_note(num, prec=2):
@@ -618,12 +709,12 @@ def print_to_txt(filename, *info):
     print_file.close()
     return
 
+
 def nprint(val, prec=2):
     if isinstance(val, int):
         if np.log10(abs(val)) < 3:
             return val
-    
-            
+
 
 def find_nearest(array, target, index=True):
     """Get the nearest value in array or its index to target"""
@@ -662,7 +753,9 @@ def sample_array(array, get_index=False, **kwargs):
         arr_step = arr_max / (arr_size - 1)
     else:
         if arr_max % arr_step != 0:
-            arr_steps = [x for x in range(int(2 * arr_step), 0, -1) if arr_max % x == 0]
+            arr_steps = [
+                x for x in range(int(2 * arr_step), 0, -1) if arr_max % x == 0
+            ]
             if len(arr_steps) != 0:
                 arr_step = arr_steps[0]
         arr_size = min(int(kwargs.get("arr_size", len(array))), len(array))
@@ -672,7 +765,9 @@ def sample_array(array, get_index=False, **kwargs):
     if arr_step >= 1:
         arr_ind_vals = np.arange(arr_max + arr_step, step=arr_step)
     else:
-        arr_ind_vals = np.linspace(min(array), arr_max, int(arr_max / arr_step + 1))
+        arr_ind_vals = np.linspace(
+            min(array), arr_max, int(arr_max / arr_step + 1)
+        )
 
     arr_ind = find_nearest(array, arr_ind_vals)
 
@@ -685,16 +780,19 @@ def sample_array(array, get_index=False, **kwargs):
 
 
 def insert_attr_row(data, attrs, str_func, **kwargs):
-    data=data.copy() # dict
+    data = data.copy()  # dict
     for k, df in data.items():
         if attrs is not None and k in attrs.index:
             if str_func is None:
                 comm = ""
-                
+
             else:
-                comm = str_func(attrs.loc[k, :], **kwargs) # str
-            df_tmp = pd.DataFrame([[comm]*df.shape[1]], index=["Comments"], columns=df.columns)  # df
+                comm = str_func(attrs.loc[k, :], **kwargs)  # str
+            df_tmp = pd.DataFrame(
+                [[comm] * df.shape[1]], index=["Comments"], columns=df.columns
+            )  # df
             data[k] = pd.concat([df_tmp, df])
+
 
 def format_time_str(time_s: float):
     """
@@ -732,10 +830,22 @@ def format_time_str(time_s: float):
     #    time_str = "%01d Y %02d M %02d d %02d:%02d:%02d" % (years, \
     #        months,days,hrs,mins,time_s)
     if years >= 1:
-        time_str = "%01dY %02dM %02dd %02d:%02d:%02d" % (years,
-                                                         months, days, hrs, mins, time_s)
+        time_str = "%01dY %02dM %02dd %02d:%02d:%02d" % (
+            years,
+            months,
+            days,
+            hrs,
+            mins,
+            time_s,
+        )
     elif months >= 1:
-        time_str = "%02dM %02dd %02d:%02d:%02d" % (months, days, hrs, mins, time_s)
+        time_str = "%02dM %02dd %02d:%02d:%02d" % (
+            months,
+            days,
+            hrs,
+            mins,
+            time_s,
+        )
     elif days >= 1:
         time_str = "%02dd %02d:%02d:%02d" % (days, hrs, mins, time_s)
     elif hrs >= 1:
@@ -747,70 +857,6 @@ def format_time_str(time_s: float):
     return time_str
 
 
-class BaseClass(object):
-    def __getitem__(self, key):
-        return getattr(self, key)
-    
-    def __setitem__(self, key, val):
-        setattr(self, key, val)
-    
-    def update(self, *args, **kwargs):
-        for k, v in dict(args).items():
-            if k in self.__dict__.keys():
-                self[k] = v
-        for k, v in kwargs.items():
-            (kwargs.pop(k) for k in kwargs.keys() if k not in self.__dict__.keys())
-            self[k] = v
-        return self
-    
-    def copy(self, **kwargs):
-        """Return a new instance copy of obj"""
-        (kwargs.pop(k) for k in kwargs.keys() if k not in self.__dict__.keys())
-        kwargs = {**self.__dict__, **kwargs}
-        return self.__class__(**kwargs)
-    
-    def inputs(self):
-        return list(self.__dict__.keys())
-    
-    def sanitize(self, raw, key_names=None, create_instance=False, **init_kwargs):
-        """
-        dicta would be the old kwargs (key: value)
-        dictb would be the renaming dict (old K: new K)
-        dictc would be the cls input args
-        """
-        if isinstance(key_names, (list, tuple)):
-            try:
-                key_names = {k: v for k, v in key_names}
-            except ValueError:
-                pass
-        if isinstance(key_names, dict):
-            raw = {key_names.get(k, k): v for k, v in raw.items()}
-        
-        kwargs = {k: raw.get(k, v) for k, v in self.__dict__.items()}
-        if create_instance:
-            return self.__class__(**init_kwargs, **kwargs)
-        return kwargs
-
-
-class DictMixin(Mapping, BaseClass):
-    def __iter__(self):
-        return (f.name for f in fields(self))
-
-    def __getitem__(self, key):
-        if not isinstance(key, str):
-            return [self[k] for k in key]
-        field = getattr(self, _FIELDS)[key]
-        if field._field_type is not _FIELD:
-            raise KeyError(f"'{key}' is not a dataclass field.")
-        return getattr(self, field.name)
-    
-    def __setitem__(self, key, val):
-        setattr(self, key, val)
-    
-    def __len__(self):
-        return len(fields(self))
-
-            
 # %% Dict operations
 def dict_key_sep(data, sep="/"):
     if not isinstance(data, dict):
@@ -846,7 +892,9 @@ def dict_flat(data):
 
 def dict_search(data, key, default=None):
     if isinstance(data, dict):
-        if key in data.keys() or not any([isinstance(v, dict) for v in data.values()]):
+        if key in data.keys() or not any(
+            [isinstance(v, dict) for v in data.values()]
+        ):
             return data.get(key, default)
         for k, v in data.items():
             res = dict_search(v, key)
@@ -877,17 +925,27 @@ def dict_df(data, single=True):
                     if not isinstance(v, (np.ndarray, list, tuple, dict))
                 }
                 vals_dicts = {
-                    k: dict_df(v, single) for k, v in val.items() if isinstance(v, dict)
+                    k: dict_df(v, single)
+                    for k, v in val.items()
+                    if isinstance(v, dict)
                 }
                 if single and len(vals) > 0:
                     vlen = max([len(v) for v in vals.values()])
                     data[key] = pd.DataFrame(
-                        {str(kk): vv for kk, vv in vals.items() if len(vv) == vlen}
+                        {
+                            str(kk): vv
+                            for kk, vv in vals.items()
+                            if len(vv) == vlen
+                        }
                     )
                 else:
                     tmp_new = {
                         str(len(v)): pd.DataFrame(
-                            {kk: vv for kk, vv in vals.items() if len(vv) == len(v)}
+                            {
+                                kk: vv
+                                for kk, vv in vals.items()
+                                if len(vv) == len(v)
+                            }
                         )
                         for k, v in vals.items()
                     }
@@ -896,7 +954,11 @@ def dict_df(data, single=True):
                     if len(tmp_new) + len(vals_dicts) == 0:
                         data[key] = attrs
                     else:
-                        data[key] = {**tmp_new, **vals_dicts, **{"attrs": attrs}}
+                        data[key] = {
+                            **tmp_new,
+                            **vals_dicts,
+                            **{"attrs": attrs},
+                        }
     except (AttributeError, ValueError) as e:
         print(e)
         return data
@@ -913,6 +975,83 @@ def dict_df(data, single=True):
 
 
 # %% Fitting functions
+def gen_bnds(
+    arr, dev=0.1, dev_type="infer", abs_bnd=[(0, np.inf)], max_bnd=False
+):
+    """
+    Generate upper and lower boundaries for an array of values. Boundary range
+    can be set directly via dev_type or is inferred by the dtype of the dev.
+    Dev is inferred as follows: int -> Log scale, float ->
+
+    Parameters
+    ----------
+    arr : np.array
+        An array of the the initial values
+    dev : [int, float, list]
+        The expected deviation or error. A single numerical value will be applied
+        to all values of the array. List inputs must be of the same length as
+        the input array.
+    abs_bnd : [tuple, list of tuples]
+        The expected deviation or error.
+    max_bnd : bool
+        The expected deviation or error.
+
+
+    Returns
+    -------
+    config_file : dict
+        Returns a dict containing all settings imported from the .ini file
+    """
+    if not isinstance(arr, np.ndarray):
+        arr = np.array(arr, float)
+    arr = arr[~np.isnan(arr)]
+
+    if isinstance(dev, (float, int, np.number, sp.Number)) or len(dev) == 1:
+        dev = np.array([dev] * len(arr), float)
+    if not isinstance(dev, np.ndarray):
+        dev = np.array(dev)
+
+    if isinstance(dev_type, str):
+        dev_type = [dev_type]
+    if len(dev_type) != len(dev):
+        dev_type = [dev_type[0]] * len(dev)
+
+    if len(abs_bnd) != len(dev):
+        abs_bnd = [abs_bnd[0]] * len(dev)
+
+    dev = abs(dev)
+    amin = arr * 0.9
+    amax = arr * 1.1
+    if len(dev) != len(arr):
+        print("Error: bad bound input")
+        return (amin, amax)
+    for n in range(len(arr)):
+        if (
+            int(dev[n]) == dev[n] and dev_type[n] == "infer"
+        ) or "log" in dev_type[n].lower():
+            # intergers are assumed to be log variation
+            an = arr[n] * 10 ** float(-dev[n])
+            ax = arr[n] * 10 ** float(dev[n])
+        elif (
+            dev[n] in sp.Interval(0.1, 100)
+            and abs(np.log10(abs(arr[n] / dev[n]))) > 2
+        ) or "perc" in dev_type[n].lower():
+            an = arr[n] * (1 - dev[n])
+            ax = arr[n] * (1 + dev[n])
+        else:
+            # assumes the value is a std dev if vals are w/in 2 orders of magnitude
+            an = arr[n] - dev[n]
+            ax = arr[n] + dev[n]
+        amin[n] = an if an >= abs_bnd[n][0] else abs_bnd[n][0]
+        amax[n] = ax if ax < abs_bnd[n][1] else abs_bnd[n][1]
+
+        if max_bnd:
+            amin[n] = 0 if arr[n] > 1 else an
+            amax[n] = 1 if arr[n] in sp.Interval(0, 1, True, True) else ax
+
+    return (amin, amax)
+
+
 def ode_bounds(f=None, x=None, ind=0, dep=0, deg=0, **kwargs):
     if f is None:
         f = sp.symbols("f", cls=sp.Function)
@@ -921,10 +1060,12 @@ def ode_bounds(f=None, x=None, ind=0, dep=0, deg=0, **kwargs):
     bnds = kwargs.get("bnds", kwargs.get("bounds"))
     if bnds is None:
         if deg >= 1:
-            return {f(x).diff(*[x]*int(deg)).subs(x, ind): dep}
+            return {f(x).diff(*[x] * int(deg)).subs(x, ind): dep}
         return {f(ind): dep}
-    
-    if isinstance(bnds, dict) and all(isinstance(m, sp.Basic) for m in bnds.keys()):
+
+    if isinstance(bnds, dict) and all(
+        isinstance(m, sp.Basic) for m in bnds.keys()
+    ):
         return bnds
     elif isinstance(bnds, (tuple, list)):
         if all(isinstance(n, (int, float, np.number)) for n in bnds):
@@ -939,6 +1080,7 @@ def ode_bounds(f=None, x=None, ind=0, dep=0, deg=0, **kwargs):
             return res
     return
 
+
 def gen_mask(self, mask, arr):
     if isinstance(mask, (list, np.ndarray)) and len(mask) != arr:
         mask = None
@@ -951,57 +1093,62 @@ def gen_mask(self, mask, arr):
     return mask
 
 
-def gen_bnds(arr, dev=0.1, dev_type=" ", abs_bnd=[(0, np.inf)], max_bnd=False):
-    if not isinstance(arr, np.ndarray):
-        arr = np.array(arr, float)
-    arr = arr[~np.isnan(arr)]
+# def gen_bnds(arr, dev=0.1, dev_type=" ", abs_bnd=[(0, np.inf)], max_bnd=False):
+#     if not isinstance(arr, np.ndarray):
+#         arr = np.array(arr, float)
+#     arr = arr[~np.isnan(arr)]
 
-    if isinstance(dev, (float, int, np.integer, np.float)) or len(dev) == 1:
-        dev = np.array([dev] * len(arr), float)
-    if not isinstance(dev, np.ndarray):
-        dev = np.array(dev)
-    if not isinstance(dev_type, list):
-        dev_type = list(dev_type)
-    if len(dev_type) != len(dev):
-        dev_type = [dev_type[0]] * len(dev)
-    if len(abs_bnd) != len(dev):
-        abs_bnd = [abs_bnd[0]] * len(dev)
-    dev = abs(dev)
-    amin = arr * 0.9
-    amax = arr * 1.1
-    if len(dev) != len(arr):
-        print("Error: bad bound input")
-        return (amin, amax)
-    for n in range(len(arr)):
-        if (int(dev[n]) == dev[n] and dev_type[n] == " ") or "exp" in dev_type[
-            n
-        ].lower():
-            # intergers are assumed to be log variation
-            amin[n] = 10 ** (np.log10(arr[n]) - dev[n])
-            amax[n] = 10 ** (np.log10(arr[n]) + dev[n])
-        elif (
-            (abs(np.log10(arr[n]) - np.log10(dev[n])) <= 2 and dev_type[n] == " ")
-            or "std" in dev_type[n].lower()
-            or "dev" in dev_type[n].lower()
-        ):
-            # assumes the value is a std dev
-            amin[n] = arr[n] - dev[n]
-            amax[n] = arr[n] + dev[n]
-        else:
-            # floats are assumed to be percentages
-            amin[n] = arr[n] * (1 - dev[n])
-            amax[n] = arr[n] * (1 + dev[n])
-    amin = [
-        amin[m] if amin[m] >= abs_bnd[m][0] else abs_bnd[m][0] for m in range(len(amin))
-    ]
-    amax = [
-        amax[m] if amax[m] < abs_bnd[m][1] else abs_bnd[m][1] for m in range(len(amax))
-    ]
+#     if isinstance(dev, (float, int, np.integer, np.float)) or len(dev) == 1:
+#         dev = np.array([dev] * len(arr), float)
+#     if not isinstance(dev, np.ndarray):
+#         dev = np.array(dev)
+#     if not isinstance(dev_type, list):
+#         dev_type = list(dev_type)
+#     if len(dev_type) != len(dev):
+#         dev_type = [dev_type[0]] * len(dev)
+#     if len(abs_bnd) != len(dev):
+#         abs_bnd = [abs_bnd[0]] * len(dev)
+#     dev = abs(dev)
+#     amin = arr * 0.9
+#     amax = arr * 1.1
+#     if len(dev) != len(arr):
+#         print("Error: bad bound input")
+#         return (amin, amax)
+#     for n in range(len(arr)):
+#         if (int(dev[n]) == dev[n] and dev_type[n] == " ") or "exp" in dev_type[
+#             n
+#         ].lower():
+#             # intergers are assumed to be log variation
+#             amin[n] = 10 ** (np.log10(arr[n]) - dev[n])
+#             amax[n] = 10 ** (np.log10(arr[n]) + dev[n])
+#         elif (
+#             (
+#                 abs(np.log10(arr[n]) - np.log10(dev[n])) <= 2
+#                 and dev_type[n] == " "
+#             )
+#             or "std" in dev_type[n].lower()
+#             or "dev" in dev_type[n].lower()
+#         ):
+#             # assumes the value is a std dev
+#             amin[n] = arr[n] - dev[n]
+#             amax[n] = arr[n] + dev[n]
+#         else:
+#             # floats are assumed to be percentages
+#             amin[n] = arr[n] * (1 - dev[n])
+#             amax[n] = arr[n] * (1 + dev[n])
+#     amin = [
+#         amin[m] if amin[m] >= abs_bnd[m][0] else abs_bnd[m][0]
+#         for m in range(len(amin))
+#     ]
+#     amax = [
+#         amax[m] if amax[m] < abs_bnd[m][1] else abs_bnd[m][1]
+#         for m in range(len(amax))
+#     ]
 
-    if max_bnd:
-        amin = np.array([0 if np.log10(an) >= 0 else an for an in amin])
-        amax = np.array([1 if np.log10(ax) < 0 else ax for ax in amax])
-    return (amin, amax)
+#     if max_bnd:
+#         amin = np.array([0 if np.log10(an) >= 0 else an for an in amin])
+#         amax = np.array([1 if np.log10(ax) < 0 else ax for ax in amax])
+#     return (amin, amax)
 
 
 def cost_basic(res, targ=0, func=None, **kwargs):
@@ -1041,108 +1188,6 @@ def cost_base10(res, targ=0, func=None, **kwargs):
     return (res - targ) ** 2
 
 
-@dataclass
-class Complexer(object):
-    """Calculate. generic discription."""
-
-    data: InitVar[np.ndarray] = np.ndarray(0)
-    name: str = "Z"
-
-    def __post_init__(self, data):
-        """Calculate. generic discription."""
-        self.array = data
-
-    def __getitem__(self, item):
-        """Return sum of squared errors (pred vs actual)."""
-        if hasattr(self, item.upper()):
-            return getattr(self, item.upper())
-        elif hasattr(self, item.lower()):
-            return getattr(self, item.lower())
-
-    @property
-    def array(self):
-        """Calculate. generic discription."""
-        return self._array  # .reshape((-1, 1))
-
-    @array.setter
-    def array(self, arr):
-        if isinstance(arr, np.ndarray):
-            self._array = arr
-        else:
-            self._array = np.array(arr).squeeze()
-
-        if not self._array.dtype == "complex128":
-            if len(self._array.shape) == 2 and self._array.shape[1] >= 2:
-                if "pol" in self.name.lower():
-                    if (abs(self._array[:, 1]) > np.pi / 2).any():
-                        self._array[:, 1] = np.deg2rad(self._array[:, 1])
-
-                    self._array = self._array[:, 0] * (
-                        np.cos(self._array[:, 1]) + 1j * np.sin(self._array[:, 1])
-                    )
-                else:
-                    self._array = self._array[:, 0] + 1j * self._array[:, 1]
-            else:
-                self._array = self._array + 1j * 0
-        elif len(self._array.shape) == 2 and self._array.shape[1] >= 2:
-            self._array = self._array[:, 0]
-
-    @property
-    def real(self):
-        """Calculate. generic discription."""
-        return self.array.real
-
-    @real.setter
-    def real(self, _):
-        pass
-
-    @property
-    def imag(self):
-        """Calculate. generic discription."""
-        return self.array.imag
-
-    @imag.setter
-    def imag(self, _):
-        pass
-
-    @property
-    def mag(self):
-        """Calculate. generic discription."""
-        return np.abs(self.array)
-
-    @mag.setter
-    def mag(self, _):
-        pass
-
-    @property
-    def phase(self):
-        """Calculate. generic discription."""
-        return np.angle(self.array, deg=True)
-
-    @phase.setter
-    def phase(self, _):
-        pass
-
-    @property
-    def df(self):
-        """Calculate. generic discription."""
-        vals = [
-            self.real,
-            self.imag,
-            -1 * self.imag,
-            self.mag,
-            self.phase,
-            -1 * self.phase,
-        ]
-        columns = ["real", "imag", "inv_imag", "mag", "phase", "inv_phase"]
-        # self._data = pd.DataFrame(dict(zip(columns, vals)))
-        return pd.DataFrame(dict(zip(columns, vals)))
-
-    @df.setter
-    def df(self, _):
-        pass
-
-
 # %% Testing
 if __name__ == "__main__":
     # examples
@@ -1173,7 +1218,9 @@ if __name__ == "__main__":
         cost_basic, 15, kwargs=dict(targ=None, func=func2, x=xx, y=yy_var)
     )
 
-    func3 = create_function(eqs.line, "b", "y", cost=cost_basic, kwargs=dict(m=2))
+    func3 = create_function(
+        eqs.line, "b", "y", cost=cost_basic, kwargs=dict(m=2)
+    )
     test3 = optimize.least_squares(func3, 15, kwargs=dict(x=xx, y=yy_var))
 
     func4 = create_function(eqs.line, "b", "y", kwargs=dict(m=2))
@@ -1185,12 +1232,16 @@ if __name__ == "__main__":
     test5 = optimize.least_squares(
         cost_basic,
         15,
-        kwargs=dict(targ=None, func=func5, x=1, t=1, z=1, E=0, L=1, conc0=1, D=1, T=1),
+        kwargs=dict(
+            targ=None, func=func5, x=1, t=1, z=1, E=0, L=1, conc0=1, D=1, T=1
+        ),
     )
 
     func6 = create_function(eqs.nernst_planck_analytic_sol, "t", "t")
     test6 = optimize.least_squares(
         cost_basic,
         2,
-        kwargs=dict(targ=test5["x"], func=func6, x=1, z=1, E=0, L=1, conc0=1, D=1, T=1),
+        kwargs=dict(
+            targ=test5["x"], func=func6, x=1, z=1, E=0, L=1, conc0=1, D=1, T=1
+        ),
     )

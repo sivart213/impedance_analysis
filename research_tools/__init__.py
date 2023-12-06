@@ -132,10 +132,17 @@ from .equations.solar import (
     Voc,
 )
 
-from .functions.data_treatment import (
-    all_symbols,
+from .functions.class_utils import (
     BaseClass,
     Complexer,
+    DictMixin,
+    Complex_Imp,
+)
+
+from .functions.data_treatment import (
+    convert_sp,
+    eval_string,
+    all_symbols,
     convert_prefix,
     convert_temp,
     convert_val,
@@ -149,7 +156,6 @@ from .functions.data_treatment import (
     dict_flat,
     dict_key_sep,
     dict_search,
-    DictMixin,
     extract_arguments,
     extract_variable,
     find_nearest,
@@ -323,9 +329,12 @@ __all__ = [
     "V_Rseries",
     "Voc",
 
+    "convert_sp",
+    "eval_string",
     "all_symbols",
     "BaseClass",
     "Complexer",
+    "Complex_Imp",
     "convert_prefix",
     "convert_temp",
     "convert_val",
