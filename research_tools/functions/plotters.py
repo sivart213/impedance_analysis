@@ -64,7 +64,7 @@ def get_style(styl_str):
         res = np.array(style.available)[[n == max(has_any) for n in has_any]]
         style.use(res[0]) if len(res) >= 1 else None
     return
-        
+
 
 def map_plt(
     x,
@@ -321,12 +321,12 @@ def nyquist(
                 band["real"], band[bmin], band[bmax], color="r", alpha=0.5
             )
 
-    norms = plt.matplotlib.colors.LogNorm(
-        data["freq"].min(), data["freq"].max()
-    )
-    sm = plt.cm.ScalarMappable(cmap="kindlmann", norm=norms)
-    cbar = ax.figure.colorbar(sm)
-    cbar.set_label("Freq", fontname="Arial", fontsize=18, fontweight="bold")
+    # norms = plt.matplotlib.colors.LogNorm(
+    #     data["freq"].min(), data["freq"].max()
+    # )
+    # sm = plt.cm.ScalarMappable(cmap="kindlmann", norm=norms)
+    # cbar = ax.figure.colorbar(sm)
+    # cbar.set_label("Freq", fontname="Arial", fontsize=18, fontweight="bold")
 
     ax.set_xlabel(
         "Z' [Ohms]", fontname="Arial", fontsize=18, fontweight="bold"

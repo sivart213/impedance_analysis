@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Created on Fri Jul  1 22:12:37 2022
+Created on Fri Jul  1 22:12:37 2022.
 
 @author: j2cle
 """
@@ -16,15 +16,27 @@ from scipy.optimize import Bounds
 
 from impedance.models.circuits import CustomCircuit
 
-from research_tools.functions import save, slugify, gen_bnds, nyquist, bode, Complex_Imp
+from research_tools.functions import (
+    save,
+    slugify,
+    gen_bnds,
+    nyquist,
+    bode,
+    Complex_Imp,
+)
 from eis_analysis.data_analysis.import_eis_data import DataImport
 
+
 class IS_Ckt(object):
-    def __init__(self, data, guess, constants={}, model="R_0-p(R_1,C_1)", conf=None):
+    def __init__(
+        self, data, guess, constants={}, model="R_0-p(R_1,C_1)", conf=None
+    ):
         self.data = data
 
         self.guess = [
-            self.Z.real.max() if isinstance(x, str) and x.lower() == "max" else x
+            self.Z.real.max()
+            if isinstance(x, str) and x.lower() == "max"
+            else x
             for x in guess
         ]
 
@@ -95,9 +107,9 @@ class IS_Ckt(object):
             self._data["mag"] = self.Z.mag
             self._data["phase"] = self.Z.phase
             self._data["inv_phase"] = -1 * self.Z.phase
-            self._data["decade1"] = 10 ** np.floor(np.log10(self._data["freq"])).astype(
-                float
-            )
+            self._data["decade1"] = 10 ** np.floor(
+                np.log10(self._data["freq"])
+            ).astype(float)
             self._data["decade2"] = self._data["decade1"].where(
                 np.log10(self._data["decade1"]).diff() == 1, np.nan
             )
@@ -136,18 +148,18 @@ class IS_Ckt(object):
     @guess.setter
     def guess(self, val):
         if isinstance(val, (list, np.ndarray)):
-            self._guess = val
+            self._guess = list(val)
             if not hasattr(self, "_init_params"):
-                self._init_params = val
+                self._init_params = list(val)
             elif any(val != self._init_params):
-                self._fit_params = val
+                self._fit_params = list(val)
         elif isinstance(val, str):
             if "init" in val.lower():
                 self._guess = self._init_params
             else:
                 self._guess = self._fit_params
         if hasattr(self, "ckt"):
-            self.ckt.initial_guess = self._guess
+            self.ckt.initial_guess = list(self._guess)
 
     @property
     def guess_conf(self):
@@ -236,7 +248,9 @@ class IS_Ckt(object):
 
     @property
     def fit_res_alt(self):
-        _fit_res = self.fit_res.iloc[:2, :].T.stack().to_numpy().reshape((1, -1))
+        _fit_res = (
+            self.fit_res.iloc[:2, :].T.stack().to_numpy().reshape((1, -1))
+        )
         new_cols = []
         for col in self.fit_res.columns:
             new_cols.append(col)
@@ -249,19 +263,25 @@ class IS_Ckt(object):
         if Z is None:
             Z = self.Z.Z
         if mask is not None:
+            if callable(mask):
+                mask = mask(self)
             f = f[mask]
             Z = Z[mask]
         if conf_bounds:
             kwargs["bounds"] = gen_bnds(self.fit_params, self.guess_conf)
         if "bounds" in kwargs and not isinstance(kwargs["bounds"], (Bounds)):
-            kwargs["bounds"] = Bounds(kwargs["bounds"][0], kwargs["bounds"][1], keep_feasible=True)
+            kwargs["bounds"] = Bounds(
+                kwargs["bounds"][0], kwargs["bounds"][1], keep_feasible=True
+            )
 
         self.ckt.fit(
-            f, Z, weight_by_modulus=kwargs.pop("weight_by_modulus", True), **kwargs
+            f,
+            Z,
+            weight_by_modulus=kwargs.pop("weight_by_modulus", True),
+            **kwargs,
         )
 
         self.guess = self.ckt.parameters_
-
 
     def nyquist(self, title="nyquist", pad=1.25, **kwargs):
         # if not hasattr(self, "bounds"):
@@ -299,7 +319,7 @@ class IS_Ckt(object):
             title=title,
             **kwargs,
         )
-    
+
 
 class IS_Data(object):
     """
@@ -388,7 +408,6 @@ class IS_Data(object):
 
         self.get_raw(kwargs.pop("raw_files", None), **kwargs)
 
-
         self.results
 
     def __getitem__(self, item):
@@ -470,7 +489,9 @@ class IS_Data(object):
         """
 
         if isinstance(file, (tuple, list)):
-            return {Path(f).stem: self.get_raw(f, store, **kwargs) for f in file}
+            return {
+                Path(f).stem: self.get_raw(f, store, **kwargs) for f in file
+            }
         if file is None:
             return
 
@@ -480,7 +501,9 @@ class IS_Data(object):
             file, tool=kwargs.get("tool", "Agilent"), read_type="shallow"
         )
 
-        if all([f"{file.stem}/{name}" in self.hdf_keys for name in data_in.keys()]):
+        if all(
+            [f"{file.stem}/{name}" in self.hdf_keys for name in data_in.keys()]
+        ):
             return
 
         data_in.read_type = "full"
@@ -621,7 +644,15 @@ class IS_Data(object):
         return
 
     def base_fitter(
-        self, fit_list, thresh=1, refit=False, bounds_by_conf=False, **fit_kwargs
+        self,
+        fit_list,
+        thresh=1,
+        refit=False,
+        bounds_by_conf=False,
+        verbose=False,
+        nyquist=False,
+        bode=False,
+        **fit_kwargs,
     ):
         """
         Iteravely Runs base_fit of the IS_Ckt object for each data_set
@@ -658,10 +689,14 @@ class IS_Data(object):
 
         with h5py.File(self.hdf_pth, "a") as hf:
             # get list of files to fit
+            if isinstance(fit_list, str):
+                fit_str = fit_list
+                fit_list = [x for x in hdf_keys if fit_str == x]
+                if fit_list == []:
+                    fit_list = [x for x in hdf_keys if fit_str in x]
             if fit_list == []:
                 fit_list = hdf_keys
-            elif isinstance(fit_list, str):
-                fit_list = [x for x in hdf_keys if fit_list in x]
+
 
             for sheet in hdf_keys:
                 if any(name == sheet for name in fit_list):
@@ -674,14 +709,20 @@ class IS_Data(object):
                         print(f"Skipping {fname}, run: {sname}")
                         continue
                     print(f"Fitting {fname}, run: {sname}")
-                    # print(f"Previous best cost: {self.results[sheet].stats}")
+                    if verbose:
+                        print(
+                            f"Previous best:\n{self.results[sheet].fit_res.T}\n"
+                        )
 
                     if bounds_by_conf:
                         minb = -1 * vals.diff().iloc[1, :]
                         maxb = vals.iloc[:2, :].sum()
                         fit_kwargs["bounds"] = Bounds(
                             [
-                                min(max(minb[n], 1e-24), abs(vals.loc[0, n] * 0.5))
+                                min(
+                                    max(minb[n], 1e-24),
+                                    abs(vals.loc[0, n] * 0.5),
+                                )
                                 for n in minb.index
                             ],
                             [
@@ -694,13 +735,21 @@ class IS_Data(object):
                         )
 
                     self.results[sheet].base_fit(**fit_kwargs)
+                    if verbose:
+                        print(f"Final fit: \n{self.results[sheet].fit_res.T}\n")
+                    if nyquist:
+                        self.results[sheet].nyquist(
+                            title=f"{fname}, bias: {sname}"
+                        )
+                    if bode:
+                        self.results[sheet].bode(
+                            title=f"{fname}, bias: {sname}"
+                        )
 
-                    # self.results[sheet].nyquist(title=f"{fname}, bias: {sname}")
-                    # self.results[sheet].bode(title=f"{fname}, bias: {sname}")
-                    # print(f"Final cost: {self.results[sheet].stats}")
-
-                    print(f"Final fit: \n{self.results[sheet].fit_res.T}\n")
-                    if (self.results[sheet].fit_res.iloc[1, :]<hf[sheet]["conf"][()]).mean() > 0.5:
+                    if (
+                        self.results[sheet].fit_res.iloc[1, :]
+                        < hf[sheet]["conf"][()]
+                    ).mean() > 0.5:
                         self.to_hdf(hf[sheet], self.results[sheet])
 
     def export_data(self, item="data_all", path=None, name=None, ftype="xlsx"):
@@ -726,7 +775,7 @@ class IS_Data(object):
                 self.export_data(item[n], path[n], name[n], ftype[n])
 
         if path is None:
-            path = self.hdf_pth.parent.parent/"IS"/self.super_set
+            path = self.hdf_pth.parent.parent / "IS" / self.super_set
 
         if isinstance(item, str):
             save(self[item], path, name, ftype)
@@ -746,7 +795,7 @@ class IS_Data(object):
         """
         # get_ipython().run_line_magic('matplotlib', 'qt5')
         if path is None:
-            path = self.hdf_pth.parent.parent/"IS"/"figs"/self.super_set
+            path = self.hdf_pth.parent.parent / "IS" / "figs" / self.super_set
         if not os.path.exists(path):
             os.makedirs(path)
 
@@ -760,7 +809,9 @@ class IS_Data(object):
                 pname = name(fname, sheet)
 
             if "bode" in ftype.lower():
-                plt = self.results[sheet].bode(title=f"{pname}_bode", return_fig=True)
+                plt = self.results[sheet].bode(
+                    title=f"{pname}_bode", return_fig=True
+                )
                 sname = slugify(pname.replace(": ", "_")) + "_bode"
             else:
                 plt = self.results[sheet].nyquist(
@@ -806,7 +857,9 @@ if __name__ == "__main__":
     # Import data using by first getting the appropriate filename.  f_find and p_find
     # search for the desired files given a list of folder names. DataImport handles the actual
     # importing of data
-    my_folder_path = p_find("Dropbox (ASU)", "Work Docs", "Data", "Raw", "MFIA", base="home")
+    my_folder_path = p_find(
+        "Dropbox (ASU)", "Work Docs", "Data", "Raw", "MFIA", base="home"
+    )
 
     files = f_find(my_folder_path)
     file = files[0]
@@ -830,45 +883,63 @@ if __name__ == "__main__":
     # Call base fit (which uses impedance.py fit, which in turn uses least squares) on the data
     # contained within the object.
     ckt.base_fit(bounds=gen_bnds(guess, [2, 4, 6], "log"))
-    
+
     from research_tools.functions import f_find, p_find
 
     ckt_model = "L_1-p(R_1,C_1)-p(R_2,CPE_1)-p(R_3,CPE_2)"
 
     init_position = [1e-6, 0.5, 1e-10, "max", 5e-6, 1, 50, 5e-6, 0.95]
 
-    uni_bands = Bounds([1e-7, 1e-2, 1e-16, 1, 1e-12, 0.75, 15, 1e-12, 0.5],
-                       [5e-6, 10, 1e-8, 5e5, 1e-3, 1, 200, 1e3, 1],
-                       keep_feasible=True)
-    ls_kwargs = dict(ftol=1e-14, xtol=1e-6, maxfev=1e6, jac="3-point", x_scale="jac", bounds=uni_bands)
+    uni_bands = Bounds(
+        [1e-7, 1e-2, 1e-16, 1, 1e-12, 0.75, 15, 1e-12, 0.5],
+        [5e-6, 10, 1e-8, 5e5, 1e-3, 1, 200, 1e3, 1],
+        keep_feasible=True,
+    )
+    ls_kwargs = dict(
+        ftol=1e-14,
+        xtol=1e-6,
+        maxfev=1e6,
+        jac="3-point",
+        x_scale="jac",
+        bounds=uni_bands,
+    )
     # names_all = names_base+names_base_r2+names_hot_base+names_hot_insitu
 
     # Import the data from the raw files exported from the meeasurement tool
     # This provides the 1st filter, "re_filter" which will only get the filenames which match
     # the filter name.
 
-    my_hdf_path = p_find("Dropbox (ASU)", "Work Docs", "Data", "Analysis", "HDFs", base="home")
-    my_folder_path = p_find("Dropbox (ASU)", "Work Docs", "Data", "Raw", "MFIA", base="home")
+    my_hdf_path = p_find(
+        "Dropbox (ASU)", "Work Docs", "Data", "Analysis", "HDFs", base="home"
+    )
+    my_folder_path = p_find(
+        "Dropbox (ASU)", "Work Docs", "Data", "Raw", "MFIA", base="home"
+    )
 
     files = f_find(my_folder_path, re_filter="polar")
 
     # Create an object to operate on all of the available data.  This will also save the
     # data into an hdf for persistant storage
-    test_group = IS_Data("polarized_tc",
-                       my_hdf_path,
-                       model=ckt_model,
-                       init_pos=init_position,
-                       raw_files=files,
-                       tool="MFIA",
-                       )
+    test_group = IS_Data(
+        "polarized_tc",
+        my_hdf_path,
+        model=ckt_model,
+        init_pos=init_position,
+        raw_files=files,
+        tool="MFIA",
+    )
 
     # Data can also be loaded after initialization directly via get_raw
     test_group.get_raw(
         f_find(my_folder_path, re_filter="polar"),
         tool="MFIA",
-        )
+    )
 
     # This will run the fitting function
-    test_group.base_fitter("ntc_postpid_r1", thresh=1, refit=False, bounds_by_conf=False, **ls_kwargs)
-    
-    
+    test_group.base_fitter(
+        "ntc_postpid_r1",
+        thresh=1,
+        refit=False,
+        bounds_by_conf=False,
+        **ls_kwargs,
+    )
