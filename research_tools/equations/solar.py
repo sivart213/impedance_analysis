@@ -343,9 +343,9 @@ def I_cell_Rshunt(V, IL, I0, Rshunt, T=298.15, n=1):
 
 
 # %% Voltage
-def impliedV(Δn, N, T=298.15, n=1):
+def impliedV(delta_n, N, T=298.15, n=1):
     """Return voltage (V).
-    Δn is the excess carrier concentration (cm-3),
+    delta_n is the excess carrier concentration (cm-3),
     N is the doping (cm-3),
     T is the temperature (K).
     Implied voltage is often used to convert the carrier concentration in a lifetime
@@ -354,7 +354,7 @@ def impliedV(Δn, N, T=298.15, n=1):
     w_units = has_units(arg_in)
     symbolic = all_symbols(arg_in)
     k_B = get_const("boltzmann", *([True] if symbolic else [w_units, ["eV", "K"]]))
-    res = (n * k_B * T) * sp.log((Δn + N) * Δn / ni_Si(T) ** 2)
+    res = (n * k_B * T) * sp.log((delta_n + N) * delta_n / ni_Si(T) ** 2)
     if isinstance(res, sp.Number):
         return float(res)
     return res

@@ -1,0 +1,27 @@
+name: JC_env
+channels:
+- conda-forge
+- defaults
+dependencies:
+- dill
+- h5py
+- ipython
+- matplotlib
+- numpy
+- openpyxl
+- pandas
+- pathlib
+- periodictable
+- pip
+- psutil
+- pyswarms
+- python
+- scikit-learn
+- scipy
+- seaborn
+- spyder
+- statsmodels
+- sympy
+- pip:
+  - impedance
+  - zhinst

@@ -247,7 +247,7 @@ def ni_Si(T=298.15, narrowing=True):
     return res
 
 
-def ni_eff(N_D, N_A, Δn, T=298.15):
+def ni_eff(N_D, N_A, delta_n, T=298.15):
     """Return effective ni (cm-3)
     given
     donor concentration N_D=n0 (1/cm³)      only one dopant type possible
@@ -277,9 +277,9 @@ def ni_eff(N_D, N_A, Δn, T=298.15):
     # self-conistent iterative calculation of n_ieff
 
     for i in range(5):  # lazy programmer as it converges pretty fast anyway
-        n = n0 + Δn
-        p = p0 + Δn
-        dEc, dEv = bandgap_schenk(n, p, N_A, N_D, Δn, T)
+        n = n0 + delta_n
+        p = p0 + delta_n
+        dEc, dEv = bandgap_schenk(n, p, N_A, N_D, delta_n, T)
         ni = ni0 * np.exp(
             (dEc + dEv) / (2 * (k_B * T))
         )  # there is something wrong here as the units don't match up.
@@ -305,38 +305,38 @@ def bandgap_paessler(T=298.15):
         return symb_var
 
     # constants from Table I on page 085201-7
-    α = 3.23 * 0.0001  # (eV/K)
-    Θ = 446  # (K)
-    Δ = 0.51
+    alpha_ = 3.23 * 0.0001  # (eV/K)
+    deg_ = 446  # (K)
+    delta_ = 0.51
     Eg0_T0 = 1.17  # eV     band gap of Si at 0 K
 
-    Tdelta = 2 * T / Θ
+    Tdelta = 2 * T / deg_
     wurzel = (
         1
-        + nsp.pi**2 / (3 * (1 + Δ**2)) * Tdelta**2
-        + (3 * Δ**2 - 1) / 4 * Tdelta**3
+        + nsp.pi**2 / (3 * (1 + delta_**2)) * Tdelta**2
+        + (3 * delta_**2 - 1) / 4 * Tdelta**3
         + 8 / 3 * Tdelta**4
         + Tdelta**6
     ) ** (1 / 6)
-    Eg0 = Eg0_T0 - α * Θ * (
-        (1 - 3 * Δ**2) / (nsp.exp(Θ / T) - 1) + 3 / 2 * Δ**2 * (wurzel - 1)
+    Eg0 = Eg0_T0 - alpha_ * deg_ * (
+        (1 - 3 * delta_**2) / (nsp.exp(deg_ / T) - 1) + 3 / 2 * delta_**2 * (wurzel - 1)
     )
     # if isinstance(Eg0, nsp.Number):
     #     return float(Eg0)
     return Eg0
 
 
-def bandgap_schenk(n_e, n_h, N_D, N_A, Δn, T=298.15):
+def bandgap_schenk(n_e, n_h, N_D, N_A, delta_n, T=298.15):
     """
     returns the band gap narowing in silicon
     delta conduction band, delta valence band in eV
     given:
 
-    n_e => total electron density with Δn (1/cm³)
-    n_h => total hole density with Δn (1/cm³)
+    n_e => total electron density with delta_n (1/cm³)
+    n_h => total hole density with delta_n (1/cm³)
     N_A => acceptor concentration (1/cm³)
     N_D => donor concentration (1/cm³)
-    Δn  => excess carrier density (1/cm³)
+    delta_n  => excess carrier density (1/cm³)
     T   => temperature (K)
 
     Band-gap narrowing after Schenk 1998, JAP 84(3689))
@@ -537,7 +537,7 @@ def mobility_masetti(N, dopant=0):
     )
 
 
-def mobility_klassen(Nd, Na, Δn=1, T=298.16):
+def mobility_klassen(Nd, Na, delta_n=1, T=298.16):
     """Return the mobility (cm2/Vs)
     given the doping etc."""
     s1 = 0.89233
@@ -566,8 +566,8 @@ def mobility_klassen(Nd, Na, Δn=1, T=298.16):
     Nref_A = 7.20e20
     Nref_D = 4.00e20
 
-    p = p0 + Δn
-    n = n0 + Δn
+    p = p0 + delta_n
+    n = n0 + delta_n
     cc = p + n
 
     Za_Na = 1 + 1 / (cA + (Nref_A / Na) ** 2)
@@ -579,22 +579,22 @@ def mobility_klassen(Nd, Na, Δn=1, T=298.16):
     boron_µmax = 470.5
     boron_µmin = 44.9
     boron_Nref_1 = 2.23e17
-    boron_α = 0.719
-    boron_θ = 2.247
+    boron_alpha_ = 0.719
+    boron_deg_ = 2.247
 
     phosphorus_µmax = 1414
     phosphorus_µmin = 68.5
     phosphorus_Nref_1 = 9.20e16
-    phosphorus_α = 0.711
-    phosphorus_θ = 2.285
+    phosphorus_alpha_ = 0.711
+    phosphorus_deg_ = 2.285
 
     µ_eN = (
         phosphorus_µmax**2
         / (phosphorus_µmax - phosphorus_µmin)
-        * (T / 300) ** (3 * phosphorus_α - 1.5)
+        * (T / 300) ** (3 * phosphorus_alpha_ - 1.5)
     )
     µ_hN = (
-        boron_µmax**2 / (boron_µmax - boron_µmin) * (T / 300) ** (3 * boron_α - 1.5)
+        boron_µmax**2 / (boron_µmax - boron_µmin) * (T / 300) ** (3 * boron_alpha_ - 1.5)
     )
 
     µ_ec = (
@@ -639,13 +639,13 @@ def mobility_klassen(Nd, Na, Δn=1, T=298.16):
     Nh_sc_eff = Na_h + G_Ph * Nd_h + n / F_Ph
 
     # Lattice Scattering
-    µ_eL = phosphorus_µmax * (300 / T) ** phosphorus_θ
-    µ_hL = boron_µmax * (300 / T) ** boron_θ
+    µ_eL = phosphorus_µmax * (300 / T) ** phosphorus_deg_
+    µ_hL = boron_µmax * (300 / T) ** boron_deg_
 
     µe_Dah = µ_eN * Ne_sc / Ne_sc_eff * (
         phosphorus_Nref_1 / Ne_sc
-    ) ** phosphorus_α + µ_ec * ((p + n) / Ne_sc_eff)
-    µh_Dae = µ_hN * Nh_sc / Nh_sc_eff * (boron_Nref_1 / Nh_sc) ** boron_α + µ_hc * (
+    ) ** phosphorus_alpha_ + µ_ec * ((p + n) / Ne_sc_eff)
+    µh_Dae = µ_hN * Nh_sc / Nh_sc_eff * (boron_Nref_1 / Nh_sc) ** boron_alpha_ + µ_hc * (
         (p + n) / Nh_sc_eff
     )
 
@@ -800,7 +800,7 @@ def poisson_rhs(C, z, epsilon_r):
 
     w_units = has_units(arg_in)
     symbolic = all_symbols(arg_in)
-    
+
     q = get_const("elementary_charge", *([True] if symbolic else [w_units, ["C"]]))
     epsilon_0 = get_const("vacuum_permittivity", *([True] if symbolic else [w_units, ["farad", "cm"]]))
 
@@ -815,10 +815,10 @@ def U_radiative(n, p):
     return U_radiative
 
 
-def U_radiative_alt(n0, p0, Δn, T=298.15):
-    n_p = n0 + p0 + 2 * Δn
-    n = n0 + Δn
-    p = p0 + Δn
+def U_radiative_alt(n0, p0, delta_n, T=298.15):
+    n_p = n0 + p0 + 2 * delta_n
+    n = n0 + delta_n
+    p = p0 + delta_n
     B_low = 4.73e-15
     b_min = 0.2 + (0 - 0.2) / (1 + (T / 320) ** 2.5)
     b1 = 1.5e18 + (10000000 - 1.5e18) / (1 + (T / 550) ** 3)
@@ -831,7 +831,7 @@ def U_radiative_alt(n0, p0, Δn, T=298.15):
     return U_radiative_alt
 
 
-def U_SRH(n, p, Et, τ_n, τ_p, ni_eff=8.5e9, T=298.15):
+def U_SRH(n, p, Et, tau_n, tau_p, ni_eff=8.5e9, T=298.15):
     """Return the shockley read hall recombination cm-3
     given Et (eV) trap level from intrinsic"""
     arg_in = vars().copy()
@@ -841,11 +841,11 @@ def U_SRH(n, p, Et, τ_n, τ_p, ni_eff=8.5e9, T=298.15):
     k_B = get_const("boltzmann", *([True] if symbolic else [w_units, ["eV", "K"]]))
     n1 = ni_eff * nsp.exp(Et / (k_B * T))
     p1 = ni_eff * nsp.exp(-Et / (k_B * T))
-    res = (n * p - ni_eff**2) / (τ_p * (n + n1) + τ_n * (p + p1))
+    res = (n * p - ni_eff**2) / (tau_p * (n + n1) + tau_n * (p + p1))
     return res
 
 
-def U_auger_richter(n0, p0, Δn, ni_eff):
+def U_auger_richter(n0, p0, delta_n, ni_eff):
     """Return the auger recombination
     18 and 19
     https://doi.org/10.1016/j.egypro.2012.07.034"""
@@ -867,21 +867,21 @@ def U_auger_richter(n0, p0, Δn, ni_eff):
     D_dn = 0.92
     g_eeh = 1 + C_n0 * (1 - nsp.tanh((n0 / D_n0) ** exp_n0))
     g_ehh = 1 + C_p0 * (1 - nsp.tanh((p0 / D_p0) ** exp_p0))
-    np_ni2 = (n0 + Δn) * (p0 + Δn) - ni_eff**2
-    res = np_ni2 * (B_n0 * n0 * g_eeh + B_p0 * p0 * g_ehh + C_dn * Δn**D_dn)
+    np_ni2 = (n0 + delta_n) * (p0 + delta_n) - ni_eff**2
+    res = np_ni2 * (B_n0 * n0 * g_eeh + B_p0 * p0 * g_ehh + C_dn * delta_n**D_dn)
     return res
 
 
-def U_low_doping(n0, p0, Δn):
+def U_low_doping(n0, p0, delta_n):
     """recombination due to Auger and radiative
     equation 21 in DOI: 10.1103/PhysRevB.86.165202"""
     B_low = 4.73e-15
-    n = n0 + Δn
-    p = p0 + Δn
-    U = Δn / (
+    n = n0 + delta_n
+    p = p0 + delta_n
+    U = delta_n / (
         n
         * p
-        * (8.7e-29 * n0**0.91 + 6.0e-30 * p0**0.94 + 3.0e-29 * Δn**0.92 + B_low)
+        * (8.7e-29 * n0**0.91 + 6.0e-30 * p0**0.94 + 3.0e-29 * delta_n**0.92 + B_low)
     )
     return U
 
@@ -897,16 +897,16 @@ def U_surface(n, p, Sn, Sp, n1=8.3e9, p1=8.3e9, **kwargs):
     return U_surface
 
 
-def lifetime(U, Δn):
+def lifetime(U, delta_n):
     """Return the lifetime (seconds).
-    U is the recombination  and Δn is the excess minority carrier density.
+    U is the recombination  and delta_n is the excess minority carrier density.
     This is the definition of lifetime"""
-    return Δn / U
+    return delta_n / U
 
 
 def lifetime_eff(*lifetimes):
     """Return the lifetime (seconds).
-    U is the recombination  and Δn is the excess minority carrier density.
+    U is the recombination  and delta_n is the excess minority carrier density.
     This is the definition of lifetime"""
     return inv_sum_invs(*lifetimes)
 
@@ -926,21 +926,21 @@ def lifetime_minority(N, tao_0=0.001, N_ref=1e17):
 
 
 # not sure if I should keep these
-def lifetime_auger(Δn, Ca=1.66e-30):
+def lifetime_auger(delta_n, Ca=1.66e-30):
     """Returns the Auger lifetime (s) at high level injection
     given the injection level (cm-3)"""
-    return 1 / (Ca * Δn**2)
+    return 1 / (Ca * delta_n**2)
 
 
-def lifetime_SRH(N, Nt, Et, σ_n, σ_p, Δn, T=298.15):
+def lifetime_SRH(N, Nt, Et, sigma__n, sigma__p, delta_n, T=298.15):
     # TODO needs correction
     # p0 = N
     # n0 = (ni_Si(T) ** 2) / N
-    # τ_n0 = 1 / (Nt * σ_n * vth)
-    # τ_p0 = 1 / (Nt * σ_p * vth)
+    # tau_n0 = 1 / (Nt * sigma__n * vth)
+    # tau_p0 = 1 / (Nt * sigma__p * vth)
     # n1 = Nc * np.exp(-Et / Vt())
     # p1 = Nv * np.exp((-Et - Eg) / Vt())
-    # k_ratio = σ_n / σ_p
-    # τ_SRH = (τ_p0 * (n0 + n1 + Δn) + τ_n0 * (p0 + p1 + Δn)) / (n0 + p0 + Δn)
-    # return τ_SRH
+    # k_ratio = sigma__n / sigma__p
+    # tau_SRH = (tau_p0 * (n0 + n1 + delta_n) + tau_n0 * (p0 + p1 + delta_n)) / (n0 + p0 + delta_n)
+    # return tau_SRH
     return print("non-functional")
