@@ -1,4 +1,4 @@
-name: JC_env
+name: rt_env
 channels:
 - conda-forge
 - defaults
@@ -25,3 +25,4 @@ dependencies:
 - pip:
   - impedance
   - zhinst
+  - -e git+https://github.com/sivart213/research_tools#egg=research_tools
