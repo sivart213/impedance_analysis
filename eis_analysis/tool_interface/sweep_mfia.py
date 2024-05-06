@@ -21,9 +21,6 @@ from functools import partial
 
 from research_tools.functions import get_config
 
-
-
-
 def plot_measured_data(sweep_data: dict, **kwargs):
     """Plot the sweep data in bode plot."""
     _, (ax1, ax2) = plt.subplots(2, 1)
