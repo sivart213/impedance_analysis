@@ -12,7 +12,7 @@ from scipy import fft
 from dataclasses import dataclass
 from pathlib import Path
 from research_tools.functions import load
-from research_tools.functions import Complex_Imp, p_find
+from research_tools.functions import Complex_Imp, find_path
 
         
 class DataImport(object):
@@ -158,7 +158,7 @@ class DataImport(object):
 @dataclass
 class TiePieData(object):
     folder: str = "RefSweep"
-    path: str = str(p_find("Data", "Raw", "TiePie", "Decade_Sweep"))
+    path: str = str(find_path("Data", "Raw", "TiePie", "Decade_Sweep"))
 
     def __getitem__(self, item, read_type="full"):
         """Return sum of squared errors (pred vs actual)."""
@@ -234,9 +234,10 @@ class TiePieData(object):
         return z_df
 # %% Testing
 if __name__ == "__main__":
-    from research_tools.functions import f_find, p_find
+    from research_tools.functions import f_find, find_path
     
-    my_folder_path = p_find("impedance_analysis", "testing", "Data", "Raw", base="cwd")
-    files = f_find(my_folder_path, re_filter="mfia_pv")
+    my_folder_path = find_path("impedance_analysis", "testing", "Data", "Raw", base="cwd")
+    
+    files = find_files(my_folder_path, patterns="mfia_pv")
 
     data_in = DataImport(files[0], tool="MFIA", read_type="full")

@@ -6,19 +6,19 @@ Created on Fri Jul  1 22:12:37 2022.
 """
 
 if __name__ == "__main__":
-    from research_tools.functions import f_find, p_find, save, Complex_Imp
+    from research_tools.functions import find_files, find_path, save, Complex_Imp
     from eis_analysis.data_analysis import DataImport, IS_Ckt
 
     """
     Import data using by first getting the appropriate filename.  f_find and
-    p_find search for the desired files given a list of folder names.
+    find_path search for the desired files given a list of folder names.
     DataImport handles the actual importing of data
     """
 
-    my_folder_path = p_find(
+    my_folder_path = find_path(
         "impedance_analysis", "testing", "Data", base="cwd"
     )
-    files = f_find(my_folder_path / "Raw", re_filter="mfia_rc")
+    files = find_files(my_folder_path / "Raw", patterns="mfia_rc")
 
     data_in = DataImport(files[0], tool="MFIA", read_type="full")
 

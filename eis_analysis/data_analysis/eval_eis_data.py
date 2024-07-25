@@ -323,18 +323,16 @@ class IS_Ckt(object):
 
 # %% Testing
 if __name__ == "__main__":
-    from research_tools.functions import f_find, p_find
+    from research_tools.functions import f_find, find_path
     from eis_analysis import DataImport
     from pathlib import Path
 
-    # Import data using by first getting the appropriate filename.  f_find and p_find
+    # Import data using by first getting the appropriate filename.  f_find and find_path
     # search for the desired files given a list of folder names. DataImport handles the actual
     # importing of data
-    my_folder_path = p_find(
-        "Dropbox (ASU)", "Work Docs", "Data", "Raw", "MFIA", base="home"
-    )
+    my_folder_path = find_path("Work Docs", "Data", "Raw", "MFIA",  base=find_path("ASU Dropbox", base="drive"))
 
-    files = f_find(my_folder_path)
+    files = find_files(my_folder_path)
     file = files[0]
     data_in = DataImport(file, tool="MFIA", read_type="full")
 
@@ -357,7 +355,7 @@ if __name__ == "__main__":
     # contained within the object.
     ckt.base_fit(bounds=gen_bnds(guess, [2, 4, 6], "log"))
 
-    from research_tools.functions import f_find, p_find
+    from research_tools.functions import f_find, find_path
 
     ckt_model = "L_1-p(R_1,C_1)-p(R_2,CPE_1)-p(R_3,CPE_2)"
 
