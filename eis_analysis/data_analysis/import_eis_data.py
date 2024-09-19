@@ -11,11 +11,120 @@ import pandas as pd
 from scipy import fft
 from dataclasses import dataclass
 from pathlib import Path
-from research_tools.functions import load
+from research_tools.functions import load_file
 from research_tools.functions import Complex_Imp, find_path
 
-        
+
+# def parse_raw_data(data_dict):
+#     """Gets all data columns."""
+#     raw_data = {}
+#     for key, val in data_dict.items():
+#         tmp = val.dropna(axis=1, thresh=int(val.shape[0] * 0.25)).dropna(
+#             thresh=int(val.shape[1] * 0.25)
+#         )
+#         if tmp.isna().sum().sum() == 1 and np.isnan(tmp.iloc[0, 0]):
+#             tmp = tmp.dropna(axis=1)
+#         if (
+#             sum([isinstance(s, str) for s in tmp.iloc[0, :]])
+#             > tmp.shape[1] * 0.75
+#             and sum([isinstance(s, str) for s in tmp.iloc[0, :]])
+#             > sum([isinstance(s, str) for s in tmp.iloc[1, :]]) * 2
+#         ):
+#             raw_data[key] = pd.DataFrame(
+#                 tmp.iloc[1:, :].to_numpy(), columns=tmp.iloc[0, :], dtype=float
+#             )
+#         else:
+#             raw_data[key] = tmp
+#     return raw_data
+
+# def parse_agilent_data(raw_data):
+#     column_info = {
+#                 key: pd.Series(val.loc[3:5, 11].to_numpy(), index=val.loc[3:5, 10])
+#                 for key, val in self.sheets.items()
+#             }
+#     data = {
+#             key: pd.DataFrame(
+#                 {
+#                     "freq": val.iloc[:, 1].to_numpy(),
+#                     column_info[key]["Y1"]: Complex_Imp(
+#                         val.iloc[:, [2, 3]]
+#                     ).Z,
+#                     column_info[key]["Y2"]: Complex_Imp(
+#                         val.iloc[:, [4, 5]]
+#                     ).Z,
+#                 }
+#             )
+#             for key, val in raw_data.items()
+#         }
+#     return data
+
+# def parse_EIS_data(self):
+#     """
+#     Parses the raw data based on the specified tool and read type.
+
+#     This method processes the raw data and converts it into a structured format
+#     suitable for analysis. It handles different tools and read types to ensure
+#     the data is parsed correctly.
+
+#     If the read type is "shallow", the method returns an empty dictionary.
+#     If the tool is "Agilent", the method processes the data to extract frequency
+#     and impedance (|Z| and phase) information.
+
+#     Returns:
+#     None
+#     """
+#     if self.read_type.lower() == "shallow":
+#         return {}
+#     if self.tool.lower() == "agilent":
+#         self._data = {
+#             key: pd.DataFrame(
+#                 {
+#                     "freq": val.iloc[:, 1].to_numpy(),
+#                     self.column_info[key]["Y1"]: Complex_Imp(
+#                         val.iloc[:, [2, 3]]
+#                     ).Z,
+#                     self.column_info[key]["Y2"]: Complex_Imp(
+#                         val.iloc[:, [4, 5]]
+#                     ).Z,
+#                 }
+#             )
+#             for key, val in self.raw_data.items()
+#         }
+#     if self.tool.lower() == "mfia":
+#         self._data = {
+#             key: pd.DataFrame(
+#                 {
+#                     "freq": val["frequency"].to_numpy(),
+#                     "real": val["realz"].to_numpy(),
+#                     "imag": val["imagz"].to_numpy(),
+#                 }
+#             ).sort_values("freq", ignore_index=True)
+#             for key, val in self.raw_data.items()
+#         }
+
+#     for key, val in self._data.items():
+#         for col in val.iloc[:, 1:].columns:
+#             if val[col].to_numpy().imag.sum() == 0:
+#                 val[col] = val[col].to_numpy().real
+
+#     return self._data
+
 class DataImport(object):
+    """
+    A class to handle the import and processing of EIS data files.
+
+    Attributes:
+    file (str or Path): The name or path of the file to be imported.
+    path (str or Path): The directory path where the file is located. Defaults to the current working directory.
+    tool (str): The tool used for data acquisition. Default is "Agilent".
+    read_type (str): The type of read operation to perform. Default is "full".
+
+    Methods:
+    __init__(file=None, path=None, tool="Agilent", read_type="full"):
+        Initializes the DataImport object with the specified file, path, tool, and read_type.
+    __getitem__(item):
+        Allows indexing and slicing of the data attribute.
+    """
     def __init__(self, file=None, path=None, tool="Agilent", read_type="full"):
         if isinstance(file, Path):
             path = str(file.parent)
@@ -40,7 +149,7 @@ class DataImport(object):
     def sheets(self):
         """Pulls the actual data from the excel document."""
         if not hasattr(self, "_sheets"):
-            self._sheets = load(self.file, self.path)[0]
+            self._sheets = load_file(self.file, self.path)[0]
             self._sheets.pop("Main", None)
             self._sheets.pop("MasterSheet", None)
         return self._sheets
@@ -49,7 +158,7 @@ class DataImport(object):
     def sheets(self, val):
         """Set input data into the sheets."""
         if not isinstance(val, dict):
-            if isinstance(val, pd.Dataframe):
+            if isinstance(val, pd.DataFrame):
                 self._sheets = {"Data": val}
                 self._keys = ["Data"]
             elif isinstance(val, (list, np.ndarray)):
@@ -65,8 +174,8 @@ class DataImport(object):
             for key, dat in val.items():
                 self._keys.append(key)
                 if isinstance(val, (list, np.ndarray)):
-                    self._sheets[key] = pd.Dataframe(val)
-                if not isinstance(val, pd.Dataframe):
+                    self._sheets[key] = pd.DataFrame(val)
+                if not isinstance(val, pd.DataFrame):
                     raise TypeError("Data must be dict of DataFrames")
 
     @property
@@ -113,6 +222,20 @@ class DataImport(object):
         return self._data
     
     def parse(self):
+        """
+        Parses the raw data based on the specified tool and read type.
+
+        This method processes the raw data and converts it into a structured format
+        suitable for analysis. It handles different tools and read types to ensure
+        the data is parsed correctly.
+
+        If the read type is "shallow", the method returns an empty dictionary.
+        If the tool is "Agilent", the method processes the data to extract frequency
+        and impedance (|Z| and phase) information.
+
+        Returns:
+        None
+        """
         if self.read_type.lower() == "shallow":
             return {}
         if self.tool.lower() == "agilent":
@@ -155,86 +278,88 @@ class DataImport(object):
             self._keys = list(self.sheets.keys())
         return self._keys
 
-@dataclass
-class TiePieData(object):
-    folder: str = "RefSweep"
-    path: str = str(find_path("Data", "Raw", "TiePie", "Decade_Sweep"))
+# @dataclass
+# class TiePieData(object):
+#     folder: str = "RefSweep"
+#     path: str = str(find_path("Data", "Raw", "TiePie", "Decade_Sweep"))
 
-    def __getitem__(self, item, read_type="full"):
-        """Return sum of squared errors (pred vs actual)."""
-        if isinstance(item, (int, slice, np.integer)):
-            return self.raw_data[self.names[item]]
-        elif isinstance(item, str) and item in self.names:
-            return self.raw_data[item]
-        elif hasattr(self, item):
-            return getattr(self, item)
+#     def __getitem__(self, item, read_type="full"):
+#         """Return sum of squared errors (pred vs actual)."""
+#         if isinstance(item, (int, slice, np.integer)):
+#             return self.raw_data[self.names[item]]
+#         elif isinstance(item, str) and item in self.names:
+#             return self.raw_data[item]
+#         elif hasattr(self, item):
+#             return getattr(self, item)
 
-    @property
-    def log(self):
-        """Return sum of squared errors (pred vs actual)."""
-        if not hasattr(self, "_log"):
-            self._log = pd.read_excel(
-                os.sep.join((self.path, self.folder, "Sample_log.xlsx"))
-            )
-        return self._log
+#     @property
+#     def log(self):
+#         """Return sum of squared errors (pred vs actual)."""
+#         if not hasattr(self, "_log"):
+#             self._log = pd.read_excel(
+#                 os.sep.join((self.path, self.folder, "Sample_log.xlsx"))
+#             )
+#         return self._log
 
-    @property
-    def names(self):
-        """Return sum of squared errors (pred vs actual)."""
-        return self.log["Identifier"].unique()
+#     @property
+#     def names(self):
+#         """Return sum of squared errors (pred vs actual)."""
+#         return self.log["Identifier"].unique()
 
-    @property
-    def data(self):
-        """Return sum of squared errors (pred vs actual)."""
-        if not hasattr(self, "_data"):
-            self._data = {ident: self.merge(ident) for ident in self.names}
-        return self._data
+#     @property
+#     def data(self):
+#         """Return sum of squared errors (pred vs actual)."""
+#         if not hasattr(self, "_data"):
+#             self._data = {ident: self.merge(ident) for ident in self.names}
+#         return self._data
 
-    def merge(self, ident, alt=False):
-        focus = self.log[self.log["Identifier"] == ident]
+#     def merge(self, ident, alt=False):
+#         focus = self.log[self.log["Identifier"] == ident]
 
-        files = [name for name in focus["File names"] if "alt" not in name]
-        if alt:
-            files[0] = focus["File names"][
-                focus["File names"].str.contains("alt")
-            ].to_numpy()[0]
+#         files = [name for name in focus["File names"] if "alt" not in name]
+#         if alt:
+#             files[0] = focus["File names"][
+#                 focus["File names"].str.contains("alt")
+#             ].to_numpy()[0]
 
-        for file in files:
-            data = pd.read_csv(
-                os.sep.join((self.path, self.folder, f"{file}.csv")), skiprows=[0, 1, 8]
-            )
-            freq = fft.fftfreq(len(data), data["Relative time"].diff().mean())
-            dec = np.unique(np.floor(np.log10(freq)), return_index=True)[1]
-            volt_1 = fft.fft(data["Average1"].to_numpy())
+#         for file in files:
+#             data = pd.read_csv(
+#                 os.sep.join((self.path, self.folder, f"{file}.csv")), skiprows=[0, 1, 8]
+#             )
+#             freq = fft.fftfreq(len(data), data["Relative time"].diff().mean())
+#             dec = np.unique(np.floor(np.log10(freq)), return_index=True)[1]
+#             volt_1 = fft.fft(data["Average1"].to_numpy())
 
-            dec_std = np.array(
-                [volt_1[int(dec[d]) : int(dec[d]) + 10].std() for d in range(len(dec))]
-            )
-            dec = dec[dec_std > 1.25]
+#             dec_std = np.array(
+#                 [volt_1[int(dec[d]) : int(dec[d]) + 10].std() for d in range(len(dec))]
+#             )
+#             dec = dec[dec_std > 1.25]
 
-            freq = freq[dec[-2] : dec[-1]]
-            volt_1 = volt_1[dec[-2] : dec[-1]]
-            volt_2 = fft.fft(data["Average2"].to_numpy())[dec[-2] : dec[-1]]
+#             freq = freq[dec[-2] : dec[-1]]
+#             volt_1 = volt_1[dec[-2] : dec[-1]]
+#             volt_2 = fft.fft(data["Average2"].to_numpy())[dec[-2] : dec[-1]]
 
-            z_calc = (
-                volt_1
-                / (volt_2)
-                * self.log["Reference R"][self.log["File names"] == file].to_numpy()[0]
-            )
+#             z_calc = (
+#                 volt_1
+#                 / (volt_2)
+#                 * self.log["Reference R"][self.log["File names"] == file].to_numpy()[0]
+#             )
 
-            if file == files[0]:
-                z_arrays = z_calc
-                freqs = freq
-            else:
-                z_arrays = np.concatenate((z_arrays, z_calc))
-                freqs = np.concatenate((freqs, freq))
+#             if file == files[0]:
+#                 z_arrays = z_calc
+#                 freqs = freq
+#             else:
+#                 z_arrays = np.concatenate((z_arrays, z_calc))
+#                 freqs = np.concatenate((freqs, freq))
 
-        z_df = pd.DataFrame(z_arrays, columns=["complex"])
-        z_df.insert(0, "freq", value=freqs)
-        return z_df
+#         z_df = pd.DataFrame(z_arrays, columns=["complex"])
+#         z_df.insert(0, "freq", value=freqs)
+#         return z_df
+    
+
 # %% Testing
 if __name__ == "__main__":
-    from research_tools.functions import f_find, find_path
+    from research_tools.functions import find_files, find_path
     
     my_folder_path = find_path("impedance_analysis", "testing", "Data", "Raw", base="cwd")
     

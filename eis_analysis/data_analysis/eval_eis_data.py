@@ -272,7 +272,7 @@ class IS_Ckt(object):
         if "bounds" in kwargs and not isinstance(kwargs["bounds"], (Bounds)):
             kwargs["bounds"] = Bounds(
                 kwargs["bounds"][0], kwargs["bounds"][1], keep_feasible=True
-            )
+            ) 
 
         self.ckt.fit(
             f,
@@ -323,7 +323,7 @@ class IS_Ckt(object):
 
 # %% Testing
 if __name__ == "__main__":
-    from research_tools.functions import f_find, find_path
+    from research_tools.functions import find_files, find_path
     from eis_analysis import DataImport
     from pathlib import Path
 

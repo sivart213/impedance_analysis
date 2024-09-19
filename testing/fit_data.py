@@ -26,26 +26,26 @@ if __name__ == "__main__":
     The impedance class wraps the complex class with terms common to impedance.
     Used internally by several of the eis modules/classes.
     """
-    imp_data = Complex_Imp(data_in[data_in.keys()[0]])
+    # imp_data = Complex_Imp(data_in[data_in.keys()[0]])
 
-    """
-    Begin fitting of impedance data by first declaring the initial conditions
-    needed by impedance.py
-    """
-    model = "R_0-p(R_1,C_1)"
-    guess = [1e4, 1e8, 1e-12]
-    constants = {}
+    # """
+    # Begin fitting of impedance data by first declaring the initial conditions
+    # needed by impedance.py
+    # """
+    # model = "R_0-p(R_1,C_1)"
+    # guess = [1e4, 1e8, 1e-12]
+    # constants = {}
 
-    """
-    Establish the ckt object. Data is retained in the object for fitting and
-    refitting as well as exporting.
-    """
-    ckt = IS_Ckt(data_in[data_in.keys()[0]], guess, constants, model)
+    # """
+    # Establish the ckt object. Data is retained in the object for fitting and
+    # refitting as well as exporting.
+    # """
+    # ckt = IS_Ckt(data_in[data_in.keys()[0]], guess, constants, model)
 
-    """
-    Call base fit (which uses impedance.py fit, which in turn uses least
-    squares) on the data contained within the object.
-    """
-    ckt.base_fit()
+    # """
+    # Call base fit (which uses impedance.py fit, which in turn uses least
+    # squares) on the data contained within the object.
+    # """
+    # ckt.base_fit()
 
-    save(ckt.data, my_folder_path / "Treated", "Test_single_fit")
+    # save(ckt.data, my_folder_path / "Treated", "Test_single_fit")
