@@ -161,6 +161,11 @@ cython_debug/
 
 # other
 local/
+archive/
 .vscode
 *.log.*
-src/
+
+
+# !/src/
+*/src/*
+!*/src/eis_analysis/

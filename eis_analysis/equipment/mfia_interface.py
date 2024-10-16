@@ -7,17 +7,17 @@ Created on Fri Apr 14 10:41:50 2023
 taken from the API commands log
 
 """
-
+from functools import partial
 import time
-import re
 import numpy as np
 import pandas as pd
+
 import zhinst.core
 
 import matplotlib.pyplot as plt
 
 from IPython import get_ipython
-from functools import partial
+
 
 from research_tools.functions import get_config
 
@@ -296,7 +296,7 @@ class MFIA_Freq_Sweep(MFIA):
 if __name__ == "__main__":
     from research_tools.functions import save, find_path
 
-    config_path = find_path("impedance_analysis", "eis_analysis", "tool_interface", base="cwd")
+    config_path = find_path("impedance_analysis", "eis_analysis", "device_control", base="cwd")
     save_path = find_path("impedance_analysis", "testing", "Data", "Raw", base="cwd")
     
     get_ipython().run_line_magic("matplotlib", "inline")

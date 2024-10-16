@@ -1,0 +1,363 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Apr 11 17:05:01 2018.
+
+@author: JClenney
+
+General function file
+"""
+
+import re
+import pandas as pd
+import numpy as np
+
+
+from ..data_treatment import (
+    merge_unique_sub_dicts,
+    sanitize_types,
+    dict_to_df,
+    rename_from_subset,
+    flip_dict_levels,
+    dict_level_ops,
+    recursive_concat,
+    modify_sub_dfs,
+    insert_inverse_col,
+    convert_from_unix_time,
+    moving_average,
+    hz_label,
+) 
+
+
+from ..string_operations import (
+    common_substring,
+    str_in_list,
+    eng_not,
+)
+
+
+def parse_mfia_file(pth):
+    """
+    Parses the given file path to extract metadata related to the MFIA file.
+
+    This function extracts a common substring, date, time, and differences from the
+    provided file path. It returns these extracted values along with the original path.
+
+    Parameters:
+    pth (Path): The file path to parse.
+
+    Returns:
+    list: A list containing the extracted common substring, date, time, differences, and the original path.
+          If the date and time cannot be converted to integers, they are returned as strings.
+    """
+    str0, [diff1, diff2] = common_substring([pth.stem, pth.parent.stem], sep="_")
+
+    _, f_date, f_time, _ = re.split(r"[_\s-]", pth.parent.parent.stem)
+
+    try:
+        return [str0, int(f_date), int(f_time), int(diff2), int(diff1), pth]
+    except ValueError:
+        return [str0, f_date, f_time, diff2, diff1, pth]
+
+
+def convert_mfia_data(
+    arg,
+    columns=None,
+    attrs=None,
+    rename=True,
+    simplify=True,
+    sanitize=True,
+    flip=True,
+    flatten=False,
+):
+    """
+    Converts MFIA data into a structured format, applying various transformations.
+
+    This function processes MFIA data, which can be provided as a tuple or other data structure.
+    It applies a series of transformations such as renaming, simplifying, sanitizing, flipping,
+    and flattening the data based on the provided parameters.
+
+    Parameters:
+    arg (tuple or other): The MFIA data to convert. If a tuple, it should contain the data and attributes.
+    columns (dict or list, optional): Specifies which keys to include as columns in the resulting DataFrame.
+    attrs (dict, optional): Additional attributes to attach to the resulting DataFrame.
+    rename (bool, optional): If True, renames columns based on predefined rules. Default is True.
+    simplify (bool, optional): If True, simplifies the data structure. Default is True.
+    sanitize (bool, optional): If True, sanitizes the data by removing or correcting invalid entries. Default is True.
+    flip (bool, optional): If True, flips the data orientation. Default is True.
+    flatten (bool, optional): If True, flattens nested structures into a single level. Default is False.
+
+    Returns:
+    pd.DataFrame or dict: The resulting DataFrame or dictionary after applying the transformations.
+    """
+    # collection of functions for data conversion
+    # Sanitize imports
+    if isinstance(arg, tuple):
+        if len(arg) == 2:
+            attrs = arg[1]
+            arg = arg[0]
+        else:
+            return
+
+    if attrs is None:
+        attrs = {}
+
+    # simplify dict
+    if simplify:
+        arg = merge_unique_sub_dicts(arg, ["000", "imps", "demods"])
+        attrs = merge_unique_sub_dicts(attrs, ["000", "imps", "demods"])
+
+    # Sanitize Data
+    if sanitize:
+        arg = sanitize_types(arg)
+        attrs = sanitize_types(attrs)
+
+    # Initial conversion
+    res = dict_to_df(arg, columns, attrs)
+
+    # Rename numeric keys. Must come after results are dicts
+    if rename:
+        res = rename_from_subset(res)
+
+    # Flip if desired
+    if flip:
+        res = flip_dict_levels(res)
+
+    if flatten:
+        res = dict_level_ops(res, recursive_concat, level=int(flatten))
+
+    modify_sub_dfs(
+        res,
+        convert_mfia_time,
+        (insert_inverse_col, ("imps", "imagz")),
+        (
+            hz_label,
+            dict(
+                kind="exp",
+                space="",
+                postfix="",
+                targ_col=("imps", "frequency"),
+                test_col=("imps", "imagz"),
+                new_col=("imps", "flabel"),
+            ),
+        ),
+    )
+
+    return res
+
+
+def convert_mfia_time(data):
+    """
+    Converts the time-related attributes in MFIA data to a standardized format.
+
+    This function processes the time attributes in the provided MFIA data, such as timebase,
+    created timestamp, and system time. It normalizes these times based on a base time and
+    an optional starting time.
+
+    Parameters:
+    data (pd.DataFrame): The MFIA data containing time-related attributes.
+
+    Returns:
+    np.ndarray: An array of converted time values.
+    """
+
+    def time_eq(arr, base=1, t_0=None):
+        if t_0 is None:
+            if isinstance(arr, (int, float)):
+                t_0 = 0
+            else:
+                t_0 = min(arr)
+        return (arr - t_0) * base
+
+    t_base = data.attrs["timebase"] if "timebase" in data.attrs.keys() else 1
+    t_start = (
+        data.attrs["createdtimestamp"]
+        if "createdtimestamp" in data.attrs.keys()
+        else None
+    )
+    t_sys = data.attrs["systemtime"] if "systemtime" in data.attrs.keys() else 0
+    if isinstance(t_sys, str):
+        try:
+            t_sys = min(int(n) for n in re.split(r"\D+", t_sys))
+        except ValueError:
+            val = re.search(r"[0-9]+", "sdfasdf")
+            t_sys = int(val[0]) if val is not None else 0
+
+    for c in data.columns:
+        if (isinstance(c, str) and "time" in c.lower()) or (
+            isinstance(c, tuple) and any("time" in tc.lower() for tc in c)
+        ):
+            data[c] = convert_from_unix_time(
+                time_eq(data[c], t_base, t_start).to_numpy(),
+                t_sys,
+            )
+    data.attrs["createdtime"] = convert_from_unix_time(t_sys)
+
+    return data
+
+
+def convert_mfia_df_for_fit(raw_data):
+    """
+    Converts raw MFIA data into a DataFrame suitable for fitting.
+
+    This function processes raw MFIA data, ensuring it contains the necessary columns
+    ('frequency', 'realz', 'imagz'). It then creates a new DataFrame with columns renamed
+    to 'freq', 'real', and 'imag', and sorts the data by frequency. If the imaginary part
+    of any column is zero, it converts that column to its real part.
+
+    Parameters:
+    raw_data (pd.DataFrame or dict): The raw MFIA data to convert. Must be a DataFrame containing
+                                     'frequency', 'realz', and 'imagz' columns.
+
+    Returns:
+    pd.DataFrame or None: The converted DataFrame if the necessary columns are present,
+                          otherwise None.
+    """
+    if isinstance(raw_data, pd.DataFrame):
+        native_cols = ["frequency", "realz", "imagz"]
+        if isinstance(raw_data.columns, pd.MultiIndex):
+            if raw_data.columns.nlevels == 2 and "imps" in raw_data.columns.get_level_values(0):
+                return convert_mfia_df_for_fit(raw_data["imps"])
+
+            # Identify the level containing native_cols
+            level_with_native_cols = None
+            for level in range(raw_data.columns.nlevels):
+                if all(col in raw_data.columns.get_level_values(level) for col in native_cols):
+                    level_with_native_cols = level
+                    break
+
+            if level_with_native_cols is None:
+                return None
+
+            # Create a list of length nlevels filled with slice(None)
+            selectors = [slice(None)] * raw_data.columns.nlevels
+            # Replace the appropriate level with native_cols
+            selectors[level_with_native_cols] = native_cols
+
+            # Select the desired columns
+            raw_data = raw_data.loc[:, tuple(selectors)]
+            # Remove levels by setting df.columns to native_cols
+            raw_data.columns = native_cols
+
+        if not all(nc in raw_data.columns for nc in native_cols):
+            return None
+        res = pd.DataFrame()
+        try:
+            res = pd.DataFrame(
+                {
+                    "freq": raw_data["frequency"].to_numpy(),
+                    "real": raw_data["realz"].to_numpy(),
+                    "imag": raw_data["imagz"].to_numpy(),
+                }
+            ).sort_values("freq", ignore_index=True)
+
+            for col in res.iloc[:, 1:].columns:
+                if res[col].to_numpy().imag.sum() == 0:
+                    res[col] = res[col].to_numpy().real
+        except KeyError:
+            return None
+        return res
+    elif isinstance(
+        raw_data, dict
+    ):  # and all([isinstance(d, pd.DataFrame) for d in data.values()])
+        res = {}
+        for k, d in raw_data.items():
+            val = convert_mfia_df_for_fit(d)
+            if val is not None:
+                res[k] = val
+        if len(res) == 0:
+            return None
+        return res
+    elif isinstance(raw_data, (list, tuple)):
+        res = []
+        for d in raw_data:
+            val = convert_mfia_df_for_fit(d)
+            if val is not None:
+                res.append(val)
+        if len(res) == 0:
+            return None
+        return res
+
+    return raw_data
+
+
+# def hz_label(
+#     data,
+#     test_arr=None,
+#     prec=2,
+#     kind="eng",
+#     space=" ",
+#     postfix="Hz",
+#     label_rc=True,
+#     targ_col="frequency",
+#     test_col="imag",
+#     new_col="flabel",
+# ):
+#     """
+#     Generates frequency labels for MFIA data.
+
+#     This function creates a new column in the provided DataFrame or processes a numpy array
+#     to generate frequency labels based on the specified parameters. It uses the target column
+#     for frequency values and the test column for additional calculations.
+
+#     Parameters:
+#     data (pd.DataFrame or np.ndarray): The data to process. If a DataFrame, it should contain
+#                                        the target and test columns.
+#     test_arr (np.ndarray, optional): An array for additional calculations. If not provided,
+#                                      it is computed using a moving average of the test column.
+#     prec (int, optional): The precision for the frequency labels. Default is 2.
+#     kind (str, optional): The format kind for the labels ('eng' for engineering notation). Default is "eng".
+#     space (str, optional): The space between the number and the postfix. Default is " ".
+#     postfix (str, optional): The postfix for the frequency labels. Default is "Hz".
+#     label_rc (bool, optional): If True, labels are generated in reverse order. Default is True.
+#     targ_col (str, optional): The name of the target column for frequency values in the DataFrame. Default is "frequency".
+#     test_col (str, optional): The name of the test column for additional calculations in the DataFrame. Default is "imag".
+#     new_col (str, optional): The name of the new column to store the generated labels in the DataFrame. Default is "flabel".
+
+#     Returns:
+#     pd.DataFrame or np.ndarray: The DataFrame with the new column of frequency labels, or the processed numpy array.
+#     """
+#     if isinstance(data, pd.DataFrame):
+#         targ_col = str_in_list(targ_col, data.columns)
+#         test_col = str_in_list(test_col, data.columns)
+#         if targ_col not in data.columns or test_col not in data.columns:
+#             return data
+#         data[new_col] = hz_label(
+#             data[targ_col].to_numpy(),
+#             test_arr=moving_average(-1 * data[test_col].to_numpy(), 5, True),
+#             prec=prec,
+#             kind=kind,
+#             space=space,
+#             postfix=postfix,
+#             label_rc=label_rc,
+#         )
+#         return data
+#     # if isinstance(data, pd.Series)
+#     base = [float(10 ** (np.floor(np.log10(a)))) if a > 0 else 0 for a in data]
+#     base_diff = np.diff(base)
+
+#     res = [np.nan] * len(data)
+
+#     for n, value in enumerate(data):
+#         if value == 0:
+#             continue
+#         elif n == 0 or base_diff[n - 1] != 0:
+#             res[n] = str(eng_not(base[n], 0, kind, space)) + postfix
+#             if (
+#                 label_rc
+#                 and isinstance(test_arr, (list, np.ndarray))
+#                 and test_arr[n] == max(abs(np.array(test_arr)))
+#             ):
+#                 res[n] = res[n] + " (RC)"
+#         elif (
+#             label_rc
+#             and isinstance(test_arr, (list, np.ndarray))
+#             and test_arr[n] == max(abs(np.array(test_arr)))
+#         ):
+#             try:
+#                 if len(kind) > 2 and "exp" in kind.lower():
+#                     res[n] = "RC (f=" + eng_not(data[n], prec, "eng", " ") + "Hz)"
+#                 else:
+#                     res[n] = "RC (f=" + eng_not(data[n], prec, kind, space) + "Hz)"
+#             except TypeError:
+#                 return res
+#     return res

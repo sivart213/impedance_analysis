@@ -37,9 +37,9 @@ def plot_measured_data(sweep_data: dict, **kwargs):
 
 if __name__ == "__main__":
     from research_tools.functions import save, find_path
-    from impedance_analysis.tool_interface import MFIA_Freq_Sweep
+    from impedance_analysis.device_control import MFIA_Freq_Sweep
 
-    config_path = find_path("impedance_analysis", "impedance_analysis", "tool_interface", base="cwd")
+    config_path = find_path("impedance_analysis", "impedance_analysis", "device_control", base="cwd")
     
     save_path = find_path("Work Docs", "Data", "Raw", "MFIA",  base=find_path("ASU Dropbox", base="drive"))
 
