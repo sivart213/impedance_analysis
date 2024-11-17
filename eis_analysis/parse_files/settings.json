@@ -1,0 +1,160 @@
+{
+    "2024-11-13 16:51:48": {
+        "patterns": [
+            "5cm",
+            "rev",
+            "\\D\\d{0,2}\\.xlsx$",
+            "_imps",
+            "xlsx"
+        ],
+        "groups": [
+            {
+                "search_terms": "9100, 406",
+                "reject_terms": "",
+                "keys": "9100, 406"
+            },
+            {
+                "search_terms": "init, dh, dryout, static",
+                "reject_terms": "",
+                "keys": "init, dh, dryout, static"
+            },
+            {
+                "search_terms": "\\s85c, \\s80c, \\s70c, \\s60c",
+                "reject_terms": "[^0]$, not bad$",
+                "keys": "85c, 80c, 70c, 60c"
+            }
+        ],
+        "columns": [
+            "('imps', 'frequency')",
+            "('imps', 'realz')",
+            "('imps', 'imagz')",
+            "('imps', 'inv_imagz')",
+            "('imps', 'absz')",
+            "('imps', 'phasez')",
+            "('imps', 'param0')",
+            "('imps', 'param1')"
+        ]
+    },
+    "2024-11-13 16:52:40": {
+        "patterns": [
+            "5cm",
+            "rev",
+            "\\D\\d{0,2}\\.xlsx$",
+            "xlsx"
+        ],
+        "groups": [
+            {
+                "search_terms": "9100, 406",
+                "reject_terms": "",
+                "keys": "9100, 406"
+            },
+            {
+                "search_terms": "init, dh, dryout, static",
+                "reject_terms": "",
+                "keys": "init, dh, dryout, static"
+            },
+            {
+                "search_terms": "\\s85c, \\s80c, \\s70c, \\s60c",
+                "reject_terms": "[^0]$, not bad$",
+                "keys": "85c, 80c, 70c, 60c"
+            }
+        ],
+        "columns": [
+            "('imps', 'frequency')",
+            "('imps', 'realz')",
+            "('imps', 'imagz')",
+            "('imps', 'inv_imagz')",
+            "('imps', 'absz')",
+            "('imps', 'phasez')",
+            "('imps', 'param0')",
+            "('imps', 'param1')"
+        ]
+    },
+    "EVA 9100 and 406": {
+        "directory": "D:\\Online\\ASU Dropbox\\Jacob Clenney\\Work Docs\\Data\\Analysis\\IS\\EVA",
+        "patterns": [
+            [
+                "5cm",
+                0
+            ],
+            [
+                "rev",
+                0
+            ],
+            [
+                "\\D\\d{0,2}\\.xlsx$",
+                0
+            ],
+            [
+                "_imps",
+                2
+            ],
+            [
+                "xlsx",
+                0
+            ]
+        ],
+        "groups": [
+            {
+                "search_terms": "9100, 406",
+                "reject_terms": "",
+                "keys": "9100, 406"
+            },
+            {
+                "search_terms": "init, dh, dryout, static",
+                "reject_terms": "",
+                "keys": "init, dh, dryout, static"
+            },
+            {
+                "search_terms": "\\s85c, \\s80c, \\s70c, \\s60c",
+                "reject_terms": "[^0]$, not bad$",
+                "keys": "85c, 80c, 70c, 60c"
+            }
+        ],
+        "columns": [
+            "('imps', 'frequency')",
+            "('imps', 'realz')",
+            "('imps', 'imagz')",
+            "('imps', 'inv_imagz')",
+            "('imps', 'absz')",
+            "('imps', 'phasez')",
+            "('imps', 'param0')",
+            "('imps', 'param1')"
+        ]
+    },
+    "Raw 1": {
+        "directory": "D:\\Online\\ASU Dropbox\\Jacob Clenney\\Work Docs\\Data\\Raw\\MFIA\\WebServer",
+        "patterns": [
+            [
+                "session",
+                0
+            ],
+            [
+                ".h5",
+                0
+            ],
+            [
+                "autosave",
+                2
+            ],
+            [
+                "sweep",
+                2
+            ],
+            [
+                "stream",
+                2
+            ],
+            [
+                "scope",
+                2
+            ]
+        ],
+        "groups": [
+            {
+                "keywords": "406, 9100"
+            }
+        ],
+        "columns": []
+    }
+}

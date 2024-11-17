@@ -6,22 +6,21 @@ Created on Wed Apr 11 17:05:01 2018.
 
 General function file
 """
-# import datetime
+
+import re
 import numpy as np
 import pandas as pd
 
-from ..string_operations import (
+from collections import defaultdict
+
+from ..string_ops import (
     common_substring,
-    slugify,
     str_in_list,
+    slugify,
+    re_not,
+    compile_search_patterns,
 )
-
-from .dataset_ops import (
-    most_frequent,
-)
-
-
-
+from ..utils.decorators import handle_subdicts
 
 def dict_level_ops(data, operation, level=1):
     """
@@ -245,6 +244,77 @@ def flatten_dict(d, parent_key='', sep='/'):
         else:
             items.append((new_key, v))
     return dict(items)
+
+
+@handle_subdicts
+def separate_dict(data, search_terms, reject_terms=None, keys=None):
+    """
+    Separates a dictionary into multiple dictionaries based on search terms.
+
+    Parameters:
+    - data (dict): The original dictionary to be separated.
+    - search_terms (list): A list of search terms (strings or tuples of strings).
+    - reject_terms (list): A list of common reject terms (strings).
+    - keys (list): Optional list of keys for the result dictionary.
+
+    Returns:
+    - dict: A dictionary containing the desired groupings and residuals.
+    """
+    # Determine keys for the result dictionary
+    if keys is None:
+        keys = [str(term) for term in search_terms]
+    keys.append("residuals")
+
+    search_terms = [
+        (
+            re_not(term.replace("not ", "").strip())
+            if term.startswith("not ")
+            else term.strip()
+        )
+        for term in search_terms
+    ]
+
+    if isinstance(reject_terms, (tuple, list)):
+        reject_terms = [
+            (
+                re_not(term.replace("not ", "").strip())
+                if term.startswith("not ")
+                else term.strip()
+            )
+            for term in reject_terms
+        ]
+        search_terms = [
+            (
+                [*t, *reject_terms]
+                if isinstance(t, (tuple, list))
+                else [t, *reject_terms]
+            )
+            for t in search_terms
+        ]
+
+    # Compile regex patterns for search terms
+    patterns = [re.compile(compile_search_patterns(term)) for term in search_terms]
+
+    # Initialize dictionaries for each search term
+    grouped_dicts = [defaultdict(dict) for _ in search_terms]
+    residuals = {}
+
+    # Iterate over dictionary items
+    for key, value in data.items():
+        matched = False
+        for i, pattern in enumerate(patterns):
+            if pattern.search(key):
+                grouped_dicts[i][key] = value
+                matched = True
+                break
+        if not matched:
+            residuals[key] = value
+
+    # Construct the result dictionary
+    result = {key: dict(grouped_dict) for key, grouped_dict in zip(keys, grouped_dicts)}
+    result["residuals"] = residuals
+
+    return result
 
 
 def recursive_concat(data, drop_singles=False):
@@ -474,13 +544,13 @@ def dict_to_df(arg, columns=None, attrs=None):
         columns = list(arg.keys())
         sort_func = False
 
-    target_len = most_frequent(
-        [
+    unique, counts = np.unique([
             len(v)
             for v in arg.values()
             if isinstance(v, (tuple, list, np.ndarray, set, dict))
-        ]
-    )
+        ], return_counts=True)
+
+    target_len = int(unique[np.argmax(counts)])
 
     attrs = {
         **attrs,

@@ -7,61 +7,6 @@ Created on Wed Apr 11 17:05:01 2018.
 General function file
 """
 import re
-# import unicodedata
-# import numpy as np
-import sympy as sp
-
-def eval_string(text):
-    """
-    Parse text into None, int, float, tuple, list, or dict via sympy parse_expr.
-    Parse_expr will attempt to resolve simple math expressions but will revert
-    to str if result doesn't resolve to a number.  Does not support complex
-    numbers.
-
-    text : str
-        The string of text to be converted if possible
-
-    Returns
-    -------
-    res : any, str
-        Returns an int, float, or string (or a tuple, list, set, or dict of base
-        base types). Returns text as str in case of error.
-    """
-    if not isinstance(text, str):
-        return text
-    brackets = [["(", ")"], ["[", "]"], ["{", "}"]]
-    ends = re.findall(r"^.|.$", text.strip())
-
-    if ends in brackets:
-        items = re.findall(
-            r"[^\,\n]*:?[\(\[\{][^\)\]\}]+[\)\]\}]|[^\,\n]+",
-            text.strip()[1:-1],
-        )
-        if all([":" in t for t in items]) and ends == brackets[2]:
-            res = {}
-            for item in items:
-                it = [i.strip() for i in item.split(":")]
-                res[it[0]] = eval_string(":".join(it[1:])) if len(it) > 1 else None
-        else:
-            res = [eval_string(item.strip()) for item in items]
-            if ends == brackets[0]:
-                res = tuple(res)
-            if ends == brackets[2]:
-                try:
-                    res = set(res)
-                except TypeError as err:
-                    print(f"Error creating set: {err}")
-        return res
-    if text.lower() == "none":
-        return None
-    elif bool(re.findall(r"\d", text)):
-        try:
-            res = sp.parse_expr(text, transformations=sp.parsing.sympy_parser.T[5])
-            return res
-        except (TypeError, SyntaxError, KeyError, NameError):
-            return text
-    return text
-
 
 def common_substring(strings, sep=""):
     """
@@ -104,7 +49,6 @@ def common_substring(strings, sep=""):
         for s in strings
     ]
 
-
 def str_in_list(key, keys, min_len=3):
     """
     Finds the closest matching string in a list of strings.
@@ -146,16 +90,3 @@ def str_in_list(key, keys, min_len=3):
             n_keys.sort()
         return n_keys[0]
 
-    return key
-
-
-    # elif any(key in k for k in keys):
-    #     n_keys = [k for k in keys if key in k]
-        
-    #     if len(n_keys) == 0:
-    #         return key
-    #     elif isinstance(key, str):
-    #         n_keys.sort(key=lambda x: len(x) - len(key))
-    #     else:
-    #         n_keys.sort()
-    #     return n_keys[0]

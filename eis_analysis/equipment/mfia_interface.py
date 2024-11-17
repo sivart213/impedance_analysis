@@ -7,8 +7,10 @@ Created on Fri Apr 14 10:41:50 2023
 taken from the API commands log
 
 """
-from functools import partial
 import time
+import configparser
+from functools import partial
+from pathlib import Path
 import numpy as np
 import pandas as pd
 
@@ -18,8 +20,9 @@ import matplotlib.pyplot as plt
 
 from IPython import get_ipython
 
+from ..system_utilities.special_io import get_config
 
-from research_tools.functions import get_config
+
 
 def plot_measured_data(sweep_data: dict, **kwargs):
     """Plot the sweep data in bode plot."""
@@ -294,7 +297,7 @@ class MFIA_Freq_Sweep(MFIA):
 
 
 if __name__ == "__main__":
-    from research_tools.functions import save, find_path
+    from ..system_utilities import save, find_path
 
     config_path = find_path("impedance_analysis", "eis_analysis", "device_control", base="cwd")
     save_path = find_path("impedance_analysis", "testing", "Data", "Raw", base="cwd")

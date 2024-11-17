@@ -13,27 +13,11 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-# import seaborn as sns
-# import matplotlib as mpl
+
 import matplotlib.pyplot as plt
 import matplotlib.style as style
 
 from matplotlib import ticker
-from matplotlib.widgets import Slider, Button
-
-# from ..system_utilities import (
-#     find_path,
-#     find_files,
-# )
-
-# from ..data_treatment import (
-#     sig_figs_ceil,
-# )
-
-# from ..string_operations import (
-#     slugify,
-#     sci_note,
-# )
 
 
 def sig_figs_ceil(number, digits=3):

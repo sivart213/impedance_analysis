@@ -9,54 +9,45 @@ General function file
 
 import re
 import pandas as pd
-import numpy as np
-
 
 from ..data_treatment import (
-    merge_unique_sub_dicts,
     sanitize_types,
-    dict_to_df,
-    rename_from_subset,
-    flip_dict_levels,
-    dict_level_ops,
-    recursive_concat,
+    convert_from_unix_time,
     modify_sub_dfs,
     insert_inverse_col,
-    convert_from_unix_time,
-    moving_average,
     hz_label,
-) 
-
-
-from ..string_operations import (
-    common_substring,
-    str_in_list,
-    eng_not,
 )
-
+# from ..data_treatment.ckt_analysis import (
+#     hz_label,
+# )
+from ..dict_ops import (
+    dict_level_ops,
+    rename_from_subset,
+    flip_dict_levels,
+    recursive_concat,
+    merge_unique_sub_dicts,
+    dict_to_df,
+)
+from ..string_ops import common_substring
 
 def parse_mfia_file(pth):
     """
-    Parses the given file path to extract metadata related to the MFIA file.
-
-    This function extracts a common substring, date, time, and differences from the
-    provided file path. It returns these extracted values along with the original path.
-
-    Parameters:
-    pth (Path): The file path to parse.
-
+    Parses the given file path to extract specific components.
+    Args:
+        pth (Path): The file path to parse.
     Returns:
-    list: A list containing the extracted common substring, date, time, differences, and the original path.
-          If the date and time cannot be converted to integers, they are returned as strings.
+        list: A list containing extracted components from the file path.
     """
-    str0, [diff1, diff2] = common_substring([pth.stem, pth.parent.stem], sep="_")
+    str0, [diff1, diff2] = common_substring(
+        [pth.stem, pth.parent.stem], sep="_"
+    )
 
-    _, f_date, f_time, _ = re.split(r"[_\s-]", pth.parent.parent.stem)
+    _, sdate, stime, _ = re.split(r"[_\s-]", pth.parent.parent.stem)
 
     try:
-        return [str0, int(f_date), int(f_time), int(diff2), int(diff1), pth]
+        return [str0, int(sdate), int(stime), int(diff2), int(diff1), pth]
     except ValueError:
-        return [str0, f_date, f_time, diff2, diff1, pth]
+        return [str0, sdate, stime, diff2, diff1, pth]
 
 
 def convert_mfia_data(

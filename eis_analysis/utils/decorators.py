@@ -16,7 +16,6 @@ def handle_collection(func):
     A decorator to handle collections (tuple, list, set, np.ndarray).
     Recursively applies the decorated function to each element.
     """
-
     def wrapper(arg, *args, **kwargs):
         if isinstance(arg, (tuple, list, set)):
             converted_vals = [
@@ -99,6 +98,7 @@ def handle_dicts(func):
 
     return wrapper
 
+# from eis_analysis.functions import sig_figs_ceil
 def handle_subdicts(func):
     """
     A decorator to handle dictionaries.
@@ -106,15 +106,11 @@ def handle_subdicts(func):
     """
 
     def wrapper(arg, *args, **kwargs):
-        if all(isinstance(a, dict) for a in arg):
-            return {
-                k: (
-                    wrapper(t, *args, **kwargs)
-                    if not (isinstance(t, float) and np.isnan(t))
-                    else float("nan")
-                )
-                for k, t in arg.items()
-            }
+        if isinstance(arg, dict) and all(
+            isinstance(a, dict) for a in arg.values()
+        ):
+            res = {k: wrapper(t, *args, **kwargs) for k, t in arg.items()}
+            return res
         else:
             return func(arg, *args, **kwargs)
 
