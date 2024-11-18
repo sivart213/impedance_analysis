@@ -156,5 +156,62 @@
             }
         ],
         "columns": []
+    },
+    "post raw2": {
+        "directory": "D:\\Online\\ASU Dropbox\\Jacob Clenney\\Work Docs\\Data\\Raw\\MFIA\\WebServer",
+        "patterns": [
+            [
+                "session",
+                0
+            ],
+            [
+                ".h5",
+                0
+            ],
+            [
+                "autosave",
+                2
+            ],
+            [
+                "sweep",
+                2
+            ],
+            [
+                "stream",
+                2
+            ],
+            [
+                "scope",
+                2
+            ],
+            [
+                "vstarts",
+                2
+            ],
+            [
+                "406",
+                0
+            ]
+        ],
+        "groups": [
+            {
+                "search_terms": "init, DH, Dryout",
+                "reject_terms": "",
+                "keys": ""
+            }
+        ],
+        "columns": [
+            "('demods', 'auxin0')",
+            "('demods', 'auxin1')",
+            "('imps', 'absz')",
+            "('imps', 'flabel')",
+            "('imps', 'frequency')",
+            "('imps', 'imagz')",
+            "('imps', 'inv_imagz')",
+            "('imps', 'param0')",
+            "('imps', 'param1')",
+            "('imps', 'phasez')",
+            "('imps', 'realz')"
+        ]
     }
 }

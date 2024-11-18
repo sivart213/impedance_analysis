@@ -15,7 +15,7 @@ from matplotlib.backends.backend_qt5agg import (
     NavigationToolbar2QT,
 )
 
-from PyQt5.QtCore import Qt, QThread
+from PyQt5.QtCore import Qt, QThread, QEventLoop
 
 from PyQt5.QtWidgets import (
     QApplication,
@@ -53,6 +53,7 @@ from .gui_windows import (
     CalcRCWindow,
     PrintWindow,
     MultiEntryWindow,
+    DataViewer,
 )
 from .gui_workers import (
     DataHandler,
@@ -90,6 +91,7 @@ class GraphGUI:
         self.worker = None
         self.progress_dialog = None
         self.fit_results = None
+        self.data_viewer = None
 
         self.options = DictWindow(self.root, self.data.option_inits)
         self.quick_bound_vals = DictWindow(
@@ -169,7 +171,10 @@ class GraphGUI:
 
         cols_layout = QGridLayout()
         error_layout = QGridLayout()
-        freq_layout = QGridLayout()
+        # freq_layout = QGridLayout()
+        freq_layout = QVBoxLayout()
+        freq_sub_layout = QHBoxLayout()
+        freq_layout.addLayout(freq_sub_layout)
 
         button_layout = QHBoxLayout()
 
@@ -308,7 +313,7 @@ class GraphGUI:
         font.setBold(True)  # Set font to bold
         error_label.setFont(font)
 
-        cursor_label = QLabel("Frequency at Cursor of ", self.control_frame)
+        cursor_label = QLabel("Point at cursor of ", self.control_frame)
         font = cursor_label.font()
         font.setPointSize(10)  # Set font size
         font.setBold(True)  # Set font to bold
@@ -341,7 +346,7 @@ class GraphGUI:
 
         # Create labels for displaying values
         self.error_printout = QLabel("Error: N/A", self.control_frame)
-        self.cursor_printout = QLabel("Freq: N/A")
+        self.cursor_printout = QLabel("Points: N/A")
 
         # Create separators
         def create_separator(frame=None):
@@ -446,11 +451,17 @@ class GraphGUI:
             create_separator(self.control_frame)
         )
 
+        # # self.control_frame_layout.addWidget(freq_frame)
+        # self.control_frame_layout.addLayout(freq_layout)
+        # freq_layout.addWidget(cursor_label, 0, 0)
+        # freq_layout.addWidget(self.cursor_var, 0, 1)
+        # freq_layout.addWidget(self.cursor_printout, 1, 0)
+
         # self.control_frame_layout.addWidget(freq_frame)
         self.control_frame_layout.addLayout(freq_layout)
-        freq_layout.addWidget(cursor_label, 0, 0)
-        freq_layout.addWidget(self.cursor_var, 0, 1)
-        freq_layout.addWidget(self.cursor_printout, 1, 0)
+        freq_sub_layout.addWidget(cursor_label)
+        freq_sub_layout.addWidget(self.cursor_var)
+        freq_layout.addWidget(self.cursor_printout)
 
         # Add parts for the graph frame
         # Create matplotlib figures
@@ -493,9 +504,12 @@ class GraphGUI:
         self.toolbar1.update()
         self.nyquist_frame_layout.addWidget(self.toolbar1)
 
-        # Connect the cursor event to update the cursor position
+        # Connect the cursor event to update the cursor position 
         self.canvas1.mpl_connect(
-            "motion_notify_event", self.update_cursor_position
+            "motion_notify_event", self.nyquist_cursor_position
+        )
+        self.canvas2.mpl_connect(
+            "motion_notify_event", self.bode_cursor_position
         )
 
         self.toolbar2 = NavigationToolbar2QT(self.canvas2, self.bode_frame)
@@ -543,12 +557,19 @@ class GraphGUI:
         file_menu.addSeparator()
         file_menu.addAction("Close", self.root.close)
 
+        data_menu = QMenu("Data", self.root)
+        menu_bar.addMenu(data_menu)
+
+        data_menu.addAction("Undo", self.undo)
+        data_menu.addAction("View Std Values", self.parameters_std.show)
+        
+        data_menu.addSeparator()
+        data_menu.addAction("Dataset Data", self.edit_data)
+        data_menu.addAction("Dataset Visibility", self.datasets.show)
+
         fitting_menu = QMenu("Fitting", self.root)
         menu_bar.addMenu(fitting_menu)
-
-        fitting_menu.addAction("Undo", self.undo)
-        fitting_menu.addAction("View Std Values", self.parameters_std.show)
-        fitting_menu.addAction("Datasets", self.datasets.show)
+        
         fitting_menu.addSeparator()
         fitting_menu.addAction("Quick Bounds", self.quick_bounds)
         fitting_menu.addAction("Modify Bounds", self.bounds.show)
@@ -564,12 +585,12 @@ class GraphGUI:
         tools_menu.addAction("Print Window", self.print_window.show)
         tools_menu.addSeparator()
         tools_menu.addAction("Calculate RC", self.calculation_window.show)
+        tools_menu.addSeparator()
+        tools_menu.addAction("Options", self.options.window)
 
-        options_menu = QMenu("Options", self.root)
-        menu_bar.addMenu(options_menu)
-
-        options_menu.addAction("Options", self.options.window)
-
+        # options_menu = QMenu("Options", self.root)
+        # menu_bar.addMenu(options_menu)
+        
     def close_all_windows(self):
         """Close all windows associated with the GUI."""
         if self.calculation_window.window:
@@ -711,6 +732,31 @@ class GraphGUI:
                 self.on_worker_error,
                 progress_dialog=self.progress_dialog,
             )
+
+    def edit_data(self):
+        """Edit the data in a separate window."""
+        if self.data.raw:
+            form = self.data.var_val[self.ny_type_var.currentText()]
+            dataset = self.data.raw[self.dataset_var.currentText()].base_df(form, "frequency")
+            self.data_viewer = DataViewer(dataset, self.root, "Raw Data")
+
+            # Create an event loop to block execution until the DataViewer is closed
+            loop = QEventLoop()
+            self.data_viewer.destroyed.connect(loop.quit)
+            loop.exec_()
+
+            if len(dataset) != len(self.data_viewer.data) or (dataset.to_numpy() != self.data_viewer.data.to_numpy()).any():
+                reply = QMessageBox.question(
+                    self.root,
+                    "Apply Changes",
+                    "The data has been modified. Do you want to apply?\n(Note: This will overwrite the original data)",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.Yes,
+                )
+                if reply == QMessageBox.Yes:
+                    self.data.raw[self.dataset_var.currentText()].update(self.data_viewer.data, form=form)
+                    self.data_viewer = None
+                    self.update_graphs()
 
     def save_results(self):
         """Save the fit results to a file."""
@@ -1434,10 +1480,10 @@ class GraphGUI:
         self.canvas1.draw()
         self.canvas2.draw()
 
-    def update_cursor_position(self, event):
+    def nyquist_cursor_position(self, event):
         """Update the cursor position display with x, y, and z values."""
-        x, y = event.xdata, event.ydata
-        if x is not None and y is not None and self.plotted_data is not None:
+        x_in, y_in = event.xdata, event.ydata
+        if x_in is not None and y_in is not None and self.plotted_data is not None:
             df = self.plotted_data[self.cursor_var.currentText()]
             x_col = f"{self.data.var_val[self.ny_type_var.currentText()]}.real"
             y_col = (
@@ -1445,15 +1491,51 @@ class GraphGUI:
             )
             z_col = "freq"
 
-            distances = np.sqrt((df[x_col] - x) ** 2 + (df[y_col] - y) ** 2)
+            distances = np.sqrt((df[x_col] - x_in) ** 2 + (df[y_col] - y_in) ** 2)
             nearest_index = np.argmin(distances)
             if distances[nearest_index] < 0.05 * self.ax1.get_xlim()[1]:
+                x = df[x_col][nearest_index]
+                y = df[y_col][nearest_index]
                 z = df[z_col][nearest_index]
-                self.cursor_printout.setText(f"Freq: {z:.2e}")
+                self.cursor_printout.setText(f"Point {int(nearest_index)} at:\n({x:.3e}, {y:.3e}, {z:.3e})")
             else:
-                self.cursor_printout.setText("Freq: N/A")
+                self.cursor_printout.setText("Point: N/A")
         else:
-            self.cursor_printout.setText("Freq: N/A")
+            self.cursor_printout.setText("Point: N/A")
+
+    def bode_cursor_position(self, event):
+        """Update the cursor position display with x, y, and z values."""
+        x_in, y_in = event.xdata, event.ydata
+        if x_in is not None and y_in is not None and self.plotted_data is not None:
+            ax = event.inaxes
+            x_in = np.log10(x_in) if ax.get_xscale() == "log" else x_in
+            y_in = np.log10(y_in) if ax.get_yscale() == "log" else y_in
+
+            df = self.plotted_data[self.cursor_var.currentText()]
+            x_col = "freq"
+            y_col = None
+            if ax == self.ax2: 
+                y_col = f"{self.data.var_val[self.top_type_var.currentText()]}.{self.data.var_val[self.top_mode_var.currentText()]}"
+            elif ax == self.ax3:
+                y_col = f"{self.data.var_val[self.bot_type_var.currentText()]}.{self.data.var_val[self.bot_mode_var.currentText()]}"
+            if y_col is not None:
+                x_arr = np.log10(df[x_col]) if ax.get_xscale() == "log" else df[x_col]
+                y_arr = np.log10(df[y_col]) if ax.get_yscale() == "log" else df[y_col]
+                xlim = np.diff(np.log10(ax.get_xlim()))[0] if ax.get_xscale() == "log" else np.diff(ax.get_xlim())[0]
+                ylim = np.diff(np.log10(ax.get_ylim()))[0] if ax.get_yscale() == "log" else np.diff(ax.get_ylim())[0]
+                
+                distances = np.sqrt((x_arr/xlim - x_in/xlim) ** 2 + (y_arr/ylim - y_in/ylim) ** 2)
+                nearest_index = np.argmin(distances)
+                if distances[nearest_index] < 0.05:
+                    x = df[x_col][nearest_index]
+                    y = df[y_col][nearest_index]
+                    self.cursor_printout.setText(f"Point {int(nearest_index)} at:\n({x:.3e}, {y:.3e})")
+                else:
+                    self.cursor_printout.setText("Point: N/A")
+            else:
+                self.cursor_printout.setText("Point: N/A")
+        else:
+            self.cursor_printout.setText("Point: N/A")
 
     def run_bootstrap(self):
         """Run the bootstrap fit based on the selected model."""

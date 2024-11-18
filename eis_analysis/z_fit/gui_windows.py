@@ -12,7 +12,7 @@ import sys
 import numpy as np
 import pandas as pd
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QEvent
 from PyQt5.QtWidgets import (
     QApplication,
     QDialog,
@@ -35,6 +35,8 @@ from PyQt5.QtWidgets import (
     QTableWidgetItem,
     QTextEdit,
     QProgressDialog,
+    QListWidget,
+    QListWidgetItem,
 )
 from PyQt5.QtGui import QBrush, QColor, QFontMetrics
 
@@ -708,13 +710,16 @@ class DataTreeWindow:
 
         if self.tree_cols[column - 1] in self.tree_gr_cols:
             return
+        try:
+            item.setFlags(item.flags() | Qt.ItemIsEditable)
+            self.tree1.editItem(item, column)
 
-        item.setFlags(item.flags() | Qt.ItemIsEditable)
-        self.tree1.editItem(item, column)
-
-        self.item_changed_connected = True
-        self.tree1.itemChanged.connect(self._update_dataframe)
-        self.tree1.itemSelectionChanged.connect(self._refresh)
+            self.item_changed_connected = True
+            self.tree1.itemChanged.connect(self._update_dataframe)
+            self.tree1.itemSelectionChanged.connect(self._refresh)
+        except RuntimeError as exc:
+            QMessageBox.critical(self.root, "Error", f"Error in editing of item: {exc}.")
+            pass
 
     def _update_dataframe(self, item, column):
         """Update the DataFrame when an item is edited."""
@@ -1288,6 +1293,7 @@ class DataViewer(QMainWindow):
         self.populate_table(self.data)
         self.table.cellDoubleClicked.connect(self.get_value)
         self.table.itemChanged.connect(self.set_value)
+        self.table.installEventFilter(self)
         self.show()
 
     def populate_table(self, data):
@@ -1304,6 +1310,9 @@ class DataViewer(QMainWindow):
                     item = QTableWidgetItem(str(data.iloc[row, col]))
                     item.setBackground(QColor(240, 255, 255))
                     self.table.setItem(row, col, item)
+            self.table.setVerticalHeaderLabels(
+                [str(i) for i in range(data.shape[0])]
+            )
             self.table.horizontalHeader().setStretchLastSection(
                 False
             )  # Do not stretch the last column
@@ -1325,6 +1334,9 @@ class DataViewer(QMainWindow):
                 value_item.setBackground(QColor(240, 255, 255))
                 self.table.setItem(row, 0, key_item)
                 self.table.setItem(row, 1, value_item)
+            self.table.setVerticalHeaderLabels(
+                [str(i) for i in range(len(data))]
+            )
             self.table.horizontalHeader().setStretchLastSection(
                 True
             )  # Stretch value column to fill width
@@ -1381,7 +1393,7 @@ class DataViewer(QMainWindow):
             else:
                 self.data[key] = dtype(item.text())
 
-        if self.parent and self.name:
+        if self.parent and isinstance(self.parent, DataViewer) and self.name:
             key = self.name
             if self.parent.table.horizontalHeaderItem(0).text() != "Key":
                 key = int(key)
@@ -1389,10 +1401,473 @@ class DataViewer(QMainWindow):
 
     def closeEvent(self, event):
         # Handle the close event to ensure the application closes properly
-        if self.parent:
+        if self.parent and isinstance(self.parent, DataViewer):
             self.parent.refresh_table()  # Refresh parent table on close
         event.accept()
         self.deleteLater()  # Ensure the widget is properly deleted
 
     def refresh_table(self):
         self.populate_table(self.data)
+
+    def eventFilter(self, source, event):
+        if event.type() == QEvent.KeyPress and event.key() == Qt.Key_Delete:
+            if source is self.table:
+                selected_rows = self.table.selectionModel().selectedRows()
+                if selected_rows:
+                    # for row in selected_rows:
+                    #     self.delete_row(row.row())
+                    # self.delete_row(selected_rows[0].row())
+                    self.delete_row([row.row() for row in selected_rows])
+                return True
+        return super().eventFilter(source, event)
+
+    def delete_row(self, rows):
+        reply = QMessageBox.question(
+            self,
+            "Delete Row(s)",
+            "Are you sure you want to delete data?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        if reply == QMessageBox.Yes:
+            for row in sorted(rows, reverse=True):
+                if isinstance(self.data, np.ndarray):
+                    self.data = np.delete(self.data, row, axis=0)
+                elif isinstance(self.data, pd.DataFrame):
+                    self.data = self.data.drop(self.data.index[row]).reset_index(drop=True)
+                else:
+                    key = self.table.item(row, 0).text()
+                    if self.table.horizontalHeaderItem(0).text() != "Key":
+                        key = int(key)
+                    del self.data[key]
+                self.refresh_table()
+
+
+
+class ListWindow(QMainWindow):
+    """
+    A class to convert MFIA files using a GUI.
+    Attributes:
+        is_xlsx (bool): Flag to indicate if the files are in xlsx format.
+        files (list): List of files to be processed.
+        in_path (Path): Input directory path.
+        t_files (DataFrame): DataFrame containing target files information.
+        data_in (dict): Dictionary to store input data.
+        data_org (dict): Dictionary to store organized data.
+        keywords_list (QLineEdit): Line edit for keywords.
+        checked_columns (list): List of checked columns.
+        tab_widget (QTabWidget): Tab widget for grouping iterations.
+        patterns_list (QListWidget): List widget for file patterns.
+        columns_list (QListWidget): List widget for columns.
+        files_table (QTableWidget): Table widget for files.
+        datasets_tree (QTreeWidget): Tree widget for datasets.
+        t_files_tree (QTreeWidget): Tree widget for target files.
+        files_datasets_tab_widget (QTabWidget): Tab widget for files and datasets.
+        save_format_combo (QComboBox): Combo box for save format.
+        get_all_checkbox (QCheckBox): Checkbox to get all files.
+    Methods:
+        initUI(): Initializes the user interface.
+        add_grouping_tab(search_terms="", reject_terms="", keys=""): Adds a grouping tab.
+        eventFilter(source, event): Handles key press events for deleting items.
+        browse_in_path(): Opens a dialog to browse for input directory.
+        add_pattern(): Adds a pattern to the patterns list.
+        update_files(): Updates the files table with the selected patterns.
+        set_data_org(): Sets the organized data.
+        apply_group(tab=None): Applies grouping logic to the data.
+        apply_all_groups(): Applies all grouping logic to the data.
+        update_tree_view(): Updates the tree view with the organized data.
+        update_t_files(): Updates the target files tree view.
+        convert_files(): Converts the files based on the selected patterns.
+        remove_dataset(item): Removes a dataset from the organized data.
+        reset_columns_list(): Resets the columns list with unique columns from the dataframes.
+        refresh_columns_list(): Refreshes the columns list keeping any checked list.
+        sort_columns_list(): Sorts the columns list.
+        concat_data(): Concatenates the data.
+        simplify_data(): Simplifies the data for fitting.
+        save(): Saves the converted data.
+        save_settings(): Saves the current settings.
+        load_empty_settings(): Loads empty settings.
+        load_all_settings(): Loads all settings.
+        load_settings(full=True): Loads the settings from a file.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.is_xlsx = True
+        self.files = None
+        self.in_path = None
+        self.t_files = None
+        self.data_in = None
+        self.data_org = None
+        self.keywords_list = None
+        self.checked_columns = []
+
+        self.setWindowTitle("MFIA File Conversion")
+
+        central_widget = QWidget(self)
+        layout = QVBoxLayout(central_widget)
+
+    
+
+        # List Widget for Columns
+        self.columns_list = QListWidget()
+        self.columns_list.setDragDropMode(
+            QAbstractItemView.InternalMove
+        )  # Enable drag-and-drop reordering
+        reset_columns_button = QPushButton("Reset")
+        reset_columns_button.clicked.connect(self.reset_columns_list)
+        reset_columns_button.setFixedWidth(75)
+        refresh_columns_button = QPushButton("Refresh")
+        refresh_columns_button.clicked.connect(self.refresh_columns_list)
+        refresh_columns_button.setFixedWidth(75)
+        sort_columns_button = QPushButton("Sort")
+        sort_columns_button.clicked.connect(self.sort_columns_list)
+        sort_columns_button.setFixedWidth(75)
+
+        columns_layout = QVBoxLayout()
+        columns_layout.addWidget(QLabel("<b>Columns:</b>"))
+        columns_layout.addWidget(self.columns_list)
+        columns_buttons_layout = QHBoxLayout()
+        columns_buttons_layout.addWidget(reset_columns_button)
+        columns_buttons_layout.addWidget(refresh_columns_button)
+        columns_buttons_layout.addWidget(sort_columns_button)
+        columns_layout.addLayout(columns_buttons_layout)
+
+        columns_frame = QFrame()
+        columns_frame.setLayout(columns_layout)
+
+        layout.addWidget(columns_frame)
+        
+
+        self.setCentralWidget(central_widget)
+
+        # needs update_entries, highlight, clear, checked_names, show
+
+    def reset_columns_list(self):
+        """Populate the columns list with unique columns from the dataframes ignoring any checked list."""
+        if self.data_org is None:
+            QMessageBox.warning(
+                self, "No Data", "Please load and group data first."
+            )
+            return
+
+        # Flatten the data organization dictionary
+        flattened_data = flatten_dict(self.data_org)
+
+        # Collect all unique columns from the dataframes
+        unique_columns = set()
+        for df in flattened_data.values():
+            if isinstance(df, pd.DataFrame):
+                unique_columns.update(df.columns)
+
+        check = Qt.Checked if len(unique_columns) < 10 else Qt.Unchecked
+        # Populate the list widget with unique columns
+        self.columns_list.clear()
+        for col in unique_columns:
+            item = QListWidgetItem(str(col))
+            item.setFlags(
+                item.flags() | Qt.ItemIsUserCheckable
+            )  # Allow item to be checkable
+            item.setCheckState(check)  # Default to checked
+            self.columns_list.addItem(item)
+
+    def refresh_columns_list(self):
+        """Populate the columns list with unique columns from the dataframes keeping any checked list."""
+        if self.data_org is None and self.checked_columns == []:
+            QMessageBox.warning(
+                self, "No Data", "Please load and group data first."
+            )
+            return
+
+        if self.data_org is None:
+            for col in self.checked_columns:
+                item = QListWidgetItem(str(col))
+                item.setFlags(
+                    item.flags() | Qt.ItemIsUserCheckable
+                )  # Allow item to be checkable
+                item.setCheckState(Qt.Checked)  # Default to checked
+                self.columns_list.addItem(item)
+            return
+
+        if self.columns_list.count() == 0:
+            self.reset_columns_list()
+
+        # # Flatten the data organization dictionary
+        # flattened_data = flatten_dict(self.data_org)
+
+        # # Collect all unique columns from the dataframes
+        # unique_columns = set()
+        # for df in flattened_data.values():
+        #     if isinstance(df, pd.DataFrame):
+        #         unique_columns.update(df.columns)
+
+        # # Make sure checked columns match the unique columns
+        # clean_check = []
+        # for col in self.checked_columns:
+        #     if col in unique_columns:
+        #         clean_check.append(col)
+        #     elif any(str(col) in str(u_col) for u_col in unique_columns):
+        #         clean_check.append(str(col))
+        #     else:
+        #         for u_col in unique_columns:
+        #             if str(u_col) in str(col):
+        #                 clean_check.append(u_col)
+        #                 break
+        # self.checked_columns = (
+        #     clean_check  # if clean_check != [] else self.checked_columns
+        # )
+
+        # items = {}
+        # c_items = {}
+        # for i in range(self.columns_list.count()):
+        #     item = self.columns_list.item(i)
+        #     if item.checkState() == Qt.Checked:
+        #         c_items[item.text()] = item
+        #     else:
+        #         items[item.text()] = item
+
+        # if self.checked_columns == [] and c_items:
+        #     self.checked_columns = list(c_items.keys())
+        # elif self.checked_columns != [] and c_items:
+        #     self.checked_columns = [
+        #         c for c in self.checked_columns if c in c_items
+        #     ]
+        #     if items:
+        #         self.checked_columns.extend(
+        #             [
+        #                 c
+        #                 for c in c_items.keys()
+        #                 if c not in self.checked_columns
+        #             ]
+        #         )
+        #     else:
+        #         for key, item in c_items.items():
+        #             if key not in self.checked_columns:
+        #                 item.setCheckState(Qt.Unchecked)
+        # elif self.checked_columns != [] and not c_items:
+        #     for key, item in items.items():
+        #         if key in self.checked_columns:
+        #             item.setCheckState(Qt.Checked)
+        # self.sort_columns_list()
+
+    def sort_columns_list(self):
+        """Sort the columns list by check state first, then alphabetically."""
+        if self.columns_list.count() == 0:
+            self.reset_columns_list()
+
+        items = [(c, Qt.Checked) for c in self.checked_columns]
+        unc_items = []
+        for i in range(self.columns_list.count()):
+            if self.columns_list.item(i).text() in self.checked_columns:
+                continue
+            item = self.columns_list.item(i)
+            unc_items.append((item.text(), item.checkState()))
+
+        # Sort by check state first, then alphabetically
+        unc_items.sort(key=lambda x: (x[1] == Qt.Unchecked, x[0].lower()))
+
+        items.extend(unc_items)
+
+        self.columns_list.clear()
+        for text, checkState in items:
+            item = QListWidgetItem(text)
+            item.setCheckState(checkState)
+            self.columns_list.addItem(item)
+
+
+
+        # columns_frame.setMaximumWidth(max_width)
+
+            # def create_separator(frame=None):
+        #     separator = QFrame(frame)
+        #     separator.setFrameShape(QFrame.HLine)
+        #     separator.setFrameShadow(QFrame.Sunken)
+        #     return separator
+
+        # max_width = 300
+
+        # # Input Path
+        # self.in_path_label = QLabel("<b>Input Path:</b>")
+        # in_path_button = QPushButton("Browse")
+        # in_path_button.setFixedWidth(100)
+        # in_path_button.clicked.connect(self.browse_in_path)
+        # in_path_layout = QHBoxLayout()
+        # in_path_layout.addWidget(self.in_path_label)
+        # in_path_layout.addWidget(in_path_button)
+        # in_path_frame = QFrame()
+        # in_path_frame.setLayout(in_path_layout)
+        # in_path_frame.setFrameShape(QFrame.StyledPanel)
+        # layout.addWidget(in_path_frame)
+
+        # layout.addWidget(create_separator())
+
+        # # File Patterns
+        # self.patterns_list = QListWidget()
+        # self.patterns_list.setMaximumWidth(max_width)
+        # self.patterns_list.installEventFilter(self)
+        # self.patterns_edit = QLineEdit()
+        # self.patterns_edit.setPlaceholderText("pattern")
+        # self.patterns_edit.returnPressed.connect(self.add_pattern)
+
+        # patterns_layout = QVBoxLayout()
+        # patterns_layout.addWidget(QLabel("<b>File Patterns:</b>"))
+        # patterns_layout.addWidget(self.patterns_list)
+
+        # patterns_edit_layout = QHBoxLayout()
+        # patterns_edit_layout.addWidget(QLabel("Add Item:"))
+        # patterns_edit_layout.addWidget(self.patterns_edit)
+
+        # patterns_layout.addLayout(patterns_edit_layout)
+
+        # patterns_frame = QFrame()
+        # patterns_frame.setLayout(patterns_layout)
+        # patterns_frame.setMaximumWidth(max_width)
+
+        # # Tab Widget for Grouping Iterations
+        # self.tab_widget = QTabWidget()
+        # self.add_grouping_tab()
+
+        # grid1 = QGridLayout()
+        # grid1.addWidget(patterns_frame, 0, 0)
+        # grid1.addWidget(self.tab_widget, 0, 1)
+        # grid1.addWidget(columns_frame, 0, 2)
+
+        # layout.addLayout(grid1)
+
+        # layout.addWidget(create_separator())
+
+        # self.files_datasets_tab_widget = QTabWidget()
+
+        # # Files Table
+        # self.files_table = QTableWidget()
+        # self.files_table.setColumnCount(3)
+        # self.files_table.setHorizontalHeaderLabels(
+        #     ["File Name", "Relative Path", "Path"]
+        # )
+        # self.files_table.setColumnWidth(0, 150)
+        # self.files_table.setColumnWidth(1, 250)
+        # self.files_table.setColumnWidth(2, 250)
+        # files_update_button = QPushButton("Update Files")
+        # files_update_button.clicked.connect(self.update_files)
+        # files_update_button.setFixedWidth(150)
+        # files_layout = QVBoxLayout()
+        # files_layout.addWidget(self.files_table)
+        # files_layout.addWidget(files_update_button)
+        # files_frame = QFrame()
+        # files_frame.setLayout(files_layout)
+        # files_frame.setMinimumWidth(int(max_width * 1.5))
+
+        # self.files_datasets_tab_widget.addTab(files_frame, "Loaded Files")
+
+        # # Tree View for Datasets
+        # datasets_layout = QVBoxLayout()
+
+        # self.datasets_tree = QTreeWidget()
+        # self.datasets_tree.setHeaderLabels(["Name", "Details"])
+        # self.datasets_tree.setColumnWidth(0, 400)
+        # self.datasets_tree.installEventFilter(self)
+        # self.datasets_tree.itemDoubleClicked.connect(self.view_data)
+        # datasets_layout.addWidget(self.datasets_tree)
+
+        # datasets_buttons = QHBoxLayout()
+
+        # reset_gr_button = QPushButton("Reset")
+        # reset_gr_button.clicked.connect(self.set_data_org)
+        # reset_gr_button.setFixedWidth(150)
+        # datasets_buttons.addWidget(reset_gr_button)
+
+        # apply_gr_button = QPushButton("Apply Groups")
+        # apply_gr_button.clicked.connect(self.apply_all_groups)
+        # apply_gr_button.setFixedWidth(150)
+        # datasets_buttons.addWidget(apply_gr_button)
+        
+        # datasets_rename_button = QPushButton("Rename Datasets")
+        # datasets_rename_button.clicked.connect(self.simplify_data_keys)
+        # datasets_rename_button.setFixedWidth(150)
+        # datasets_buttons.addWidget(datasets_rename_button)
+
+        # datasets_concat_button = QPushButton("Combine Datasets")
+        # datasets_concat_button.clicked.connect(self.concat_data)
+        # datasets_concat_button.setFixedWidth(150)
+        # datasets_buttons.addWidget(datasets_concat_button)
+
+        # datasets_layout.addLayout(datasets_buttons)
+
+        # self.datasets_frame = QFrame()
+        # self.datasets_frame.setLayout(datasets_layout)
+        # self.datasets_frame.setMinimumWidth(int(max_width * 1.5))
+
+        # self.files_datasets_tab_widget.addTab(self.datasets_frame, "Datasets")
+
+        # # Tree Widget for t_files
+        # t_files_layout = QVBoxLayout()
+
+        # self.t_files_tree = QTreeWidget()
+        # self.t_files_tree.setHeaderLabels(["Name", "ID"])
+        # t_files_layout.addWidget(self.t_files_tree)
+
+        # t_files_update_button = QPushButton("Update Target Files")
+        # t_files_update_button.clicked.connect(self.update_t_files)
+        # t_files_update_button.setFixedWidth(150)
+        # self.get_all_checkbox = QCheckBox("Get All")
+        # convert_button = QPushButton("Convert")
+        # convert_button.setFixedWidth(100)
+        # convert_button.clicked.connect(self.convert_files)
+
+        # check_update_layout = QHBoxLayout()
+        # check_update_layout.addWidget(t_files_update_button)
+        # check_update_layout.addWidget(self.get_all_checkbox)
+        # check_update_layout.addWidget(convert_button)
+        # t_files_layout.addLayout(check_update_layout)
+
+        # self.t_files_frame = QFrame()
+        # self.t_files_frame.setLayout(t_files_layout)
+        # self.t_files_frame.setMinimumWidth(int(max_width * 1.5))
+
+        # self.files_datasets_tab_widget.addTab(
+        #     self.t_files_frame, "Target Files"
+        # )
+        # self.files_datasets_tab_widget.setTabVisible(2, False)
+
+        # # layout.addLayout(grid2)
+        # layout.addWidget(self.files_datasets_tab_widget)
+        # layout.addWidget(create_separator())
+
+        # bottom_layout = QHBoxLayout()
+        # # Save Format
+        # self.save_format_combo = QComboBox()
+        # self.save_format_combo.addItems(
+        #     ["Use Columns", "Use Freq, Real, Imag"]
+        # )
+        # self.save_format_combo.setFixedWidth(150)
+        # save_button = QPushButton("Save")
+        # save_button.setFixedWidth(100)
+        # save_button.clicked.connect(self.save)
+
+        # save_format_layout = QHBoxLayout()
+        # save_format_layout.addWidget(QLabel("Save Format: "))
+        # save_format_layout.addWidget(self.save_format_combo)
+        # save_format_layout.addWidget(save_button)
+        # save_format_layout.setAlignment(Qt.AlignLeft)
+
+        # # Add Buttons for Save and Load Settings
+        # save_settings_button = QPushButton("Save Settings")
+        # save_settings_button.clicked.connect(self.save_settings)
+        # load_settings_button = QPushButton("Load Settings")
+        # load_settings_button.clicked.connect(self.load_settings)
+        # # load_all_settings_button = QPushButton("Load All Settings")
+        # # load_all_settings_button.clicked.connect(self.load_all_settings)
+
+        # # Add buttons to the layout
+        # settings_buttons_layout = QHBoxLayout()
+        # settings_buttons_layout.addWidget(save_settings_button)
+        # settings_buttons_layout.addWidget(load_settings_button)
+        # # settings_buttons_layout.addWidget(load_all_settings_button)
+        # settings_buttons_layout.setAlignment(Qt.AlignRight)
+
+        # bottom_layout.addLayout(save_format_layout)
+        # bottom_layout.addLayout(settings_buttons_layout)
+
+        # layout.addLayout(bottom_layout)
+
+

@@ -250,28 +250,39 @@ class ComplexSystem:
         "ρ": "resistivity",
     }
 
-    def __init__(self, data, frequency=None, thickness=1.0, area=1.0):
+    def __init__(self, data, frequency=None, thickness=1.0, area=1.0, form=None):
         self.thickness = thickness
         self.area = area
 
-        if frequency is not None:
-            self.frequency = frequency
-        elif isinstance(data, pd.DataFrame):
-            if "freq" in data.columns:
-                self.frequency = data["freq"].values
-                data = data.drop(columns=["freq"])
-        elif isinstance(data, np.ndarray):
-            if data.ndim == 2:
-                if np.all(data[:, 0] >= 0) and not np.iscomplexobj(data[:, 0]):
-                    self.frequency = data[:, 0]
-                    data = data[:, 1:]
-                elif np.all(data[:, -1] >= 0) and not np.iscomplexobj(data[:, -1]):
-                    self.frequency = data[:, -1]
-                    data = data[:, :-1]
+        if isinstance(data, type(self)):
+            self.frequency = data.frequency
+            self.complexer = data.complexer
+            self.update(data)
         else:
-            self.frequency = np.ones(len(data))
+            if frequency is not None:
+                self.frequency = frequency
+            elif isinstance(data, pd.DataFrame):
+                if "freq" in data.columns:
+                    self.frequency = data["freq"].values
+                    data = data.drop(columns=["freq"])
+                elif "frequency" in data.columns:
+                    self.frequency = data["frequency"].values
+                    data = data.drop(columns=["frequency"])
+            elif isinstance(data, np.ndarray):
+                if data.ndim == 2:
+                    if np.all(data[:, 0] >= 0) and not np.iscomplexobj(data[:, 0]):
+                        self.frequency = data[:, 0]
+                        data = data[:, 1:]
+                    elif np.all(data[:, -1] >= 0) and not np.iscomplexobj(data[:, -1]):
+                        self.frequency = data[:, -1]
+                        data = data[:, :-1]
+            else:
+                self.frequency = np.ones(len(data))
 
-        self.complexer = Complexer(data)
+            self.complexer = Complexer(data)
+        
+        if isinstance(form, str) and self[form] != self.complexer:
+            self.complexer = self[form]
 
     def __setattr__(self, name, value):
         name = self.aliases.get(name, name)
@@ -416,42 +427,36 @@ class ComplexSystem:
         """Calculate complex resistivity. (rho - jrho) generic discription."""
         return -1 * self.relative_permittivity.imag
 
+    def update(self, data=None, frequency=None, thickness=None, area=None, form="impedance"):
+        """Update the ComplexSystem with new data or parameters."""
+        if isinstance(data, ComplexSystem):
+            data = data[form].array
+            frequency = data.frequency
+            thickness = data.thickness if data.thickness != 1.0 else thickness
+            area = data.area if data.area != 1.0 else area
+
+        if thickness is not None:
+            self.thickness = float(thickness)
+        else:
+            thickness = self.thickness
+        if area is not None:
+            self.area = float(area)
+        else:
+            area = self.area
+
+        if data is not None:
+            new_system = ComplexSystem(data, frequency, thickness, area)
+            if all(new_system.frequency == 1) and len(data) == len(self.frequency):
+                new_system.frequency = self.frequency
+            self.__dict__.update(new_system.__dict__)
+        elif frequency is not None and len(frequency) == len(self.frequency):
+            self.frequency = frequency
+        
+        if form != "impedance" or self[form] != self.complexer:
+            self.complexer = self[form]
+
+
     def base_df(self, complex_str: str = None, x_axis: str = None) -> pd.DataFrame:
-        """Create a DataFrame with specified complex value components."""
-        if complex_str is None:
-            complex_str = "impedance"
-
-        data = {
-            "real": self[f"{complex_str}.real"],
-            "imag": self[f"{complex_str}.imag"],
-            "inv_imag": self[f"{complex_str}.imag"] * -1,
-            "mag": self[f"{complex_str}.mag"],
-            "phase": self[f"{complex_str}.phase"],
-            "inv_phase": self[f"{complex_str}.phase"] * -1,
-            "tan": self[f"{complex_str}.tan"],
-            "inv_tan": self[f"{complex_str}.tan"] * -1,
-        }
-
-        df = pd.DataFrame(data)
-
-        if x_axis:
-            if "freq" in x_axis:
-                x_data = self.frequency
-                x_name = "freq"
-            elif "omega" in x_axis:
-                x_data = self.angular_frequency
-                x_name = "omega"
-            else:
-                raise ValueError("x_axis must contain 'freq' or 'omega'")
-
-            if "log" in x_axis:
-                x_data = np.log10(x_data)
-
-            df.insert(0, x_name, x_data)
-
-        return df
-
-    def plot_df(self, complex_str: str = None, x_axis: str = None) -> pd.DataFrame:
         """Create a DataFrame with specified complex value components."""
         if complex_str is None:
             complex_str = "impedance"

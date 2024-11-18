@@ -45,12 +45,13 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtGui import QBrush, QColor
 
+from .gui_windows import DataViewer
 from ..data_treatment import (
     remove_duplicate_datasets,
     impedance_concat,
     simplify_multi_index,
 )
-from ..dict_ops import separate_dict, flatten_dict
+from ..dict_ops import separate_dict, flatten_dict, dict_key_sep
 from ..string_ops import re_not
 from ..equipment.mfia_ops import parse_mfia_file, convert_mfia_data, convert_mfia_df_for_fit
 
@@ -236,6 +237,7 @@ class MFIAFileConverter(QMainWindow):
         self.datasets_tree.setHeaderLabels(["Name", "Details"])
         self.datasets_tree.setColumnWidth(0, 400)
         self.datasets_tree.installEventFilter(self)
+        self.datasets_tree.itemDoubleClicked.connect(self.view_data)
         datasets_layout.addWidget(self.datasets_tree)
 
         datasets_buttons = QHBoxLayout()
@@ -249,6 +251,11 @@ class MFIAFileConverter(QMainWindow):
         apply_gr_button.clicked.connect(self.apply_all_groups)
         apply_gr_button.setFixedWidth(150)
         datasets_buttons.addWidget(apply_gr_button)
+        
+        datasets_rename_button = QPushButton("Rename Datasets")
+        datasets_rename_button.clicked.connect(self.simplify_data_keys)
+        datasets_rename_button.setFixedWidth(150)
+        datasets_buttons.addWidget(datasets_rename_button)
 
         datasets_concat_button = QPushButton("Combine Datasets")
         datasets_concat_button.clicked.connect(self.concat_data)
@@ -429,6 +436,21 @@ class MFIAFileConverter(QMainWindow):
                     self.remove_dataset(item)
                 return True
         return super().eventFilter(source, event)
+    
+    def view_data(self, item, column):
+        """View the data when a dataset is double-clicked."""
+        key_path = []
+        while item:
+            key_path.insert(0, item.text(0))
+            item = item.parent()
+
+        data = self.data_org
+        for key in key_path:
+            data = data[key]
+
+        if isinstance(data, pd.DataFrame):
+            self.data_viewer = DataViewer(data, self, name=" > ".join(key_path))
+
 
     def browse_in_path(self):
         """Opens a dialog to browse for the input directory"""
@@ -482,8 +504,13 @@ class MFIAFileConverter(QMainWindow):
 
         if is_xlsx:
             self.is_xlsx = True
+            # self.data_in = {
+            #     f.stem: load_file(f, header=[0, 1], index_col=0)[0]
+            #     for f in self.files
+            #     if f.suffix == ".xlsx"
+            # }
             self.data_in = {
-                f.stem: load_file(f, header=[0, 1], index_col=0)[0]
+                f.stem: load_file(f, index_col=0)[0]
                 for f in self.files
                 if f.suffix == ".xlsx"
             }
@@ -786,9 +813,23 @@ class MFIAFileConverter(QMainWindow):
         self.update_tree_view()
         self.datasets_tree.setColumnWidth(0, 150)
 
-    def simplify_data(self):
+    def simplify_data_keys(self):
         """Simplifies the data for fitting."""
-        self.data_org = convert_mfia_df_for_fit(self.data_org)
+        def simplify(data):
+            if isinstance(data, dict):
+                new_data = {}
+                run = 1
+                for k, v in data.items():
+                    if isinstance(v, dict):
+                        new_data[k] = simplify(v)
+                    else:
+                        new_data[f"_r{run}"] = v
+                        run += 1
+                return new_data
+            return data
+
+        self.data_org = simplify(self.data_org)
+
         self.update_tree_view()
 
     def save(self):
@@ -837,13 +878,14 @@ class MFIAFileConverter(QMainWindow):
                         tmp,
                         out_path / self.t_files["id"][ind].parent.parent.stem,
                         f_name + "_reduced",
+                        merge_cells=True,
                     )
                 else:
                     save(
                         tmp,
                         out_path / self.t_files["id"][ind].parent.parent.stem,
                         f_name,
-                        merge_cells=False,
+                        merge_cells=True,
                     )
         else:
             out_path, _ = QFileDialog.getSaveFileName(

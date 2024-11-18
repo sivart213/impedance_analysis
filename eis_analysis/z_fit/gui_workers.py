@@ -210,6 +210,9 @@ class DataHandler:
         """Get the parameters of the model."""
         if model is None:
             model = self.model
+        if not isinstance(model, str):
+            QMessageBox.warning(None, "Warning", f"Model must be a string. Current value is {model} of type {type(model)}")
+            model = self.model
         if model.lower() == "linkk":
             return ["M", "mu"]
         params = extract_circuit_elements(model)
