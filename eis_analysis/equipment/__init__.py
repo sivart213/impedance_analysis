@@ -12,7 +12,7 @@
 # # )
 
 # from .mfia_ops import (
-# 	parse_mfia_file, 
+# 	parse_labone_hdf5, 
 # 	convert_mfia_data, 
 # 	convert_mfia_time, 
 # 	convert_mfia_df_for_fit, 
@@ -23,7 +23,7 @@
 # __all__ = [
 # 	# "MFIA",
 # 	# "MFIA_Freq_Sweep",
-# 	"parse_mfia_file",
+# 	"parse_labone_hdf5",
 # 	"convert_mfia_data",
 # 	"convert_mfia_time",
 # 	"convert_mfia_df_for_fit",

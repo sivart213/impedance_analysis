@@ -8,7 +8,12 @@ General function file
 """
 
 import re
+import os
+from copy import deepcopy
+from datetime import datetime as dt
+
 import pandas as pd
+
 
 from ..data_treatment import (
     sanitize_types,
@@ -16,6 +21,7 @@ from ..data_treatment import (
     modify_sub_dfs,
     insert_inverse_col,
     hz_label,
+    drop_common_index_key,
 )
 # from ..data_treatment.ckt_analysis import (
 #     hz_label,
@@ -23,14 +29,18 @@ from ..data_treatment import (
 from ..dict_ops import (
     dict_level_ops,
     rename_from_subset,
+    rename_from_internal_df,
     flip_dict_levels,
+    push_non_dict_items,
     recursive_concat,
     merge_unique_sub_dicts,
     dict_to_df,
 )
-from ..string_ops import common_substring
+# from ..string_ops import common_substring
+from ..string_ops import find_common_str, safe_eval
 
-def parse_mfia_file(pth):
+
+def parse_mfia_files(pth):
     """
     Parses the given file path to extract specific components.
     Args:
@@ -38,8 +48,48 @@ def parse_mfia_file(pth):
     Returns:
         list: A list containing extracted components from the file path.
     """
-    str0, [diff1, diff2] = common_substring(
-        [pth.stem, pth.parent.stem], sep="_"
+    str0, diffs = find_common_str(
+        *[pth.stem, pth.parent.stem], sep="_", retry=False,
+    )
+
+    if len(str0) <= 5:
+        str0 = pth.stem
+
+    diff1, diff2 = [
+        int(match.group(1)) if (match := re.search(r'(\d+)$', d)) else 0
+        for d in diffs
+    ]
+
+    # Define the regex pattern to match the session format
+    pattern = re.compile(r"[\\/]session_(\d{8})_(\d{6})_\d{2}[\\/]")
+
+    # Search for the pattern in the path
+    match = pattern.search(str(pth))
+    if match:
+        d_str, t_str = match.groups()
+        sdate = stime = dt.combine(dt.strptime(d_str, '%Y%m%d').date(), dt.strptime(t_str, '%H%M%S').time())
+        # sdate = dt.strptime(sdate_str, '%Y%m%d')
+        # stime = dt.strptime(stime_str, '%H%M%S')
+    else:
+        # Get the creation date of the file
+        ctime = os.path.getctime(pth)
+        sdate = stime = dt.fromtimestamp(ctime)
+
+    return [str0, sdate, stime, diff2, diff1, pth]
+
+def parse_labone_hdf5(pth):
+    """
+    Parses the given file path to extract specific components.
+    Args:
+        pth (Path): The file path to parse.
+    Returns:
+        list: A list containing extracted components from the file path.
+    """
+    # str0, [diff1, diff2] = common_substring(
+    #     [pth.stem, pth.parent.stem], sep="_"
+    # )
+    str0, [diff1, diff2] = find_common_str(
+        *[pth.stem, pth.parent.stem], sep="_", retry=False,
     )
 
     _, sdate, stime, _ = re.split(r"[_\s-]", pth.parent.parent.stem)
@@ -48,6 +98,7 @@ def parse_mfia_file(pth):
         return [str0, int(sdate), int(stime), int(diff2), int(diff1), pth]
     except ValueError:
         return [str0, sdate, stime, diff2, diff1, pth]
+
 
 
 def convert_mfia_data(
@@ -88,26 +139,93 @@ def convert_mfia_data(
             arg = arg[0]
         else:
             return
-
+    # breakpoint()
     if attrs is None:
         attrs = {}
+    attrs = push_non_dict_items(attrs)
 
-    # simplify dict
-    if simplify:
-        arg = merge_unique_sub_dicts(arg, ["000", "imps", "demods"])
-        attrs = merge_unique_sub_dicts(attrs, ["000", "imps", "demods"])
+    # # simplify dict
+    # if simplify:
+    #     arg = merge_unique_sub_dicts(arg, ["000", "imps", "demods"])
+    #     attrs = merge_unique_sub_dicts(attrs, ["000", "imps", "demods"])
 
-    # Sanitize Data
-    if sanitize:
-        arg = sanitize_types(arg)
-        attrs = sanitize_types(attrs)
+    # # Sanitize Data
+    # if sanitize:
+    #     arg = sanitize_types(arg)
+    #     attrs = sanitize_types(attrs)
+
+    # # Initial conversion
+    # res = dict_to_df(arg, columns, attrs)
+
+    # # Rename numeric keys. Must come after results are dicts
+    # if rename:
+    #     res = rename_from_subset(res)
+
+    # # Flip if desired
+    # if flip:
+    #     res = flip_dict_levels(res)
+
+    # if flatten:
+    #     res = dict_level_ops(res, recursive_concat, level=int(flatten))
+    # """
+    # --- New target order ---
+    # 1. sanitize_types
+    # 2. convert to df
+    # 3a. rename dict
+    # 3b. convert time
+    # 4. flip or merge dict?
+    # 5. flatten dict
+    # 5a. simplify multiindex if not merge in 4
+    # 6. modify sub dfs
+    # """
+
+    # # Sanitize Data
+    # if sanitize:
+    #     arg = sanitize_types(arg)
+    #     attrs = sanitize_types(attrs)
+
+    # # Initial conversion
+    # res0 = dict_to_df(arg, columns, attrs)
+
+    # # Rename numeric keys. Must come after results are dicts
+    # if rename:
+    #     res0 = rename_from_internal_df(res0) # Should work like rename_from_subset without requiring merge previously
+
+    # if simplify:
+    #     res0 = merge_unique_sub_dicts(res0, ["000", "imps", "demods"])
+    #     res0 = push_non_dict_items(res0) # may not be necessary
+
+    # # Flip if desired
+    # if flip:
+    #     res0 = flip_dict_levels(res0)
+
+    # if flatten:
+    #     res0 = dict_level_ops(res0, recursive_concat, level=int(flatten))
+
+
+    """
+    --- New target order ---
+    1. sanitize_types
+    2. convert to df
+    3a. rename dict
+    3b. convert time
+    4. flip or merge dict?
+    5. flatten dict
+    5a. simplify multiindex if not merge in 4
+    6. modify sub dfs
+    """
+
+    # # Sanitize Data
+    # if sanitize:
+    #     arg = sanitize_types(arg)
+    #     attrs = sanitize_types(attrs)
 
     # Initial conversion
     res = dict_to_df(arg, columns, attrs)
 
     # Rename numeric keys. Must come after results are dicts
     if rename:
-        res = rename_from_subset(res)
+        res = rename_from_internal_df(res) # Should work like rename_from_subset without requiring merge previously
 
     # Flip if desired
     if flip:
@@ -115,26 +233,79 @@ def convert_mfia_data(
 
     if flatten:
         res = dict_level_ops(res, recursive_concat, level=int(flatten))
-
+        # hopefully cleaning the multi-index will work like merge
+        if simplify:
+            res = drop_common_index_key(res, ["imps", "demods"])
+    
+    # breakpoint()
     modify_sub_dfs(
         res,
         convert_mfia_time,
-        (insert_inverse_col, ("imps", "imagz")),
-        (
-            hz_label,
-            dict(
-                kind="exp",
-                space="",
-                postfix="",
-                targ_col=("imps", "frequency"),
-                test_col=("imps", "imagz"),
-                new_col=("imps", "flabel"),
-            ),
-        ),
+        # (insert_inverse_col, ("imps", "imagz")),
+        # (
+        #     hz_label,
+        #     dict(
+        #         kind="exp",
+        #         space="",
+        #         postfix="",
+        #         targ_col=("imps", "frequency"),
+        #         test_col=("imps", "imagz"),
+        #         new_col=("imps", "flabel"),
+        #     ),
+        # ),
     )
 
     return res
 
+
+# def convert_mfia_time(data):
+#     """
+#     Converts the time-related attributes in MFIA data to a standardized format.
+
+#     This function processes the time attributes in the provided MFIA data, such as timebase,
+#     created timestamp, and system time. It normalizes these times based on a base time and
+#     an optional starting time.
+
+#     Parameters:
+#     data (pd.DataFrame): The MFIA data containing time-related attributes.
+
+#     Returns:
+#     np.ndarray: An array of converted time values.
+#     """
+
+#     def time_eq(arr, base=1, t_0=None):
+#         if t_0 is None:
+#             if isinstance(arr, (int, float)):
+#                 t_0 = 0
+#             else:
+#                 t_0 = min(arr)
+#         return (arr - t_0) * base
+
+#     t_base = data.attrs["timebase"] if "timebase" in data.attrs.keys() else 1
+#     t_start = (
+#         data.attrs["createdtimestamp"]
+#         if "createdtimestamp" in data.attrs.keys()
+#         else None
+#     )
+#     t_sys = data.attrs["systemtime"] if "systemtime" in data.attrs.keys() else 0
+#     if isinstance(t_sys, str):
+#         try:
+#             t_sys = min(int(n) for n in re.split(r"\D+", t_sys))
+#         except ValueError:
+#             val = re.search(r"[0-9]+", "sdfasdf")
+#             t_sys = int(val[0]) if val is not None else 0
+
+#     for c in data.columns:
+#         if (isinstance(c, str) and "time" in c.lower()) or (
+#             isinstance(c, tuple) and any("time" in tc.lower() for tc in c)
+#         ):
+#             data[c] = convert_from_unix_time(
+#                 time_eq(data[c], t_base, t_start).to_numpy(),
+#                 t_sys,
+#             )
+#     data.attrs["createdtime"] = convert_from_unix_time(t_sys)
+
+#     return data
 
 def convert_mfia_time(data):
     """
@@ -159,30 +330,63 @@ def convert_mfia_time(data):
                 t_0 = min(arr)
         return (arr - t_0) * base
 
-    t_base = data.attrs["timebase"] if "timebase" in data.attrs.keys() else 1
-    t_start = (
-        data.attrs["createdtimestamp"]
-        if "createdtimestamp" in data.attrs.keys()
-        else None
-    )
-    t_sys = data.attrs["systemtime"] if "systemtime" in data.attrs.keys() else 0
+    t_sys = data.attrs.get("systemtime", 0)
+    t_start = data.attrs.get("createdtimestamp", None)
+    t_end = data.attrs.get("changedtimestamp", None)
+    t_base = data.attrs.get("timebase", 1/(6e7))
+    
     if isinstance(t_sys, str):
         try:
             t_sys = min(int(n) for n in re.split(r"\D+", t_sys))
         except ValueError:
             val = re.search(r"[0-9]+", "sdfasdf")
             t_sys = int(val[0]) if val is not None else 0
+    elif isinstance(t_sys, (list, tuple)):
+        t_sys = min([safe_eval(v) for v in t_sys])
+    if isinstance(t_start, (list, tuple)):
+        t_start = min([safe_eval(v) for v in t_start])
+    if isinstance(t_end, (list, tuple)):
+        t_end = min([safe_eval(v) for v in t_end])
+    if isinstance(t_base, (list, tuple)):
+        t_base = t_base[0]
+
+    data.attrs["createdtime"] = convert_from_unix_time(t_sys)
+    
+    data.attrs["mintime"] = (
+        convert_from_unix_time(time_eq(t_start, t_base, 0), t_sys)
+        if t_start is not None
+        else data.attrs["createdtime"]
+    )
+
+    data.attrs["maxtime"] = (
+        convert_from_unix_time(time_eq(t_end, t_base, t_start), t_sys)
+        if t_end is not None
+        else data.attrs["createdtime"]
+    )
+
 
     for c in data.columns:
         if (isinstance(c, str) and "time" in c.lower()) or (
             isinstance(c, tuple) and any("time" in tc.lower() for tc in c)
         ):
+            start = t_start
+            if (
+                t_start
+                and t_end
+                and (
+                    min(data[c]) > t_end or not 0.1 < max(data[c]) / t_end < 10
+                )
+            ):
+                start = None
             data[c] = convert_from_unix_time(
-                time_eq(data[c], t_base, t_start).to_numpy(),
+                time_eq(data[c], t_base, start).to_numpy(),
                 t_sys,
             )
-    data.attrs["createdtime"] = convert_from_unix_time(t_sys)
-
+            try:
+                data.attrs["mintime"] = min(data.attrs["mintime"], *data[c])
+                data.attrs["maxtime"] = max(data.attrs["maxtime"], *data[c])
+            except TypeError as e:
+                continue
     return data
 
 

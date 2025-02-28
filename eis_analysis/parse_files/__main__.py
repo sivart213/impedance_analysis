@@ -11,7 +11,7 @@ import json
 import re
 from pathlib import Path
 from datetime import datetime
-
+# from collections import namedtuple, defaultdict
 import pandas as pd
 
 from PyQt5.QtCore import Qt, QEvent
@@ -24,15 +24,12 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QFileDialog,
     QLabel,
-    QTreeWidget,
-    QTreeWidgetItem,
     QFormLayout,
     QLineEdit,
     QTabWidget,
     QFrame,
     QHBoxLayout,
     QMessageBox,
-    QTableWidget,
     QListWidget,
     QGridLayout,
     QInputDialog,
@@ -43,22 +40,31 @@ from PyQt5.QtWidgets import (
     QComboBox,
     QDialogButtonBox,
 )
-from PyQt5.QtGui import QBrush, QColor
 
-from .gui_windows import DataViewer
+from .gui_widgets import DataTreeWidget, DraggableTableWidget, RadioButtonDialog
+from .gui_workers import WorkerFunctions, LoadDatasetsWorker, SaveDatasetsWorker
+from .gui_plots import PopupGraph
+
 from ..data_treatment import (
-    remove_duplicate_datasets,
-    impedance_concat,
+    get_valid_keys,
     simplify_multi_index,
 )
-from ..dict_ops import separate_dict, flatten_dict, dict_key_sep
+from ..dict_ops import separate_dict, flatten_dict
 from ..string_ops import re_not
-from ..equipment.mfia_ops import parse_mfia_file, convert_mfia_data, convert_mfia_df_for_fit
+from ..equipment.mfia_ops import (
+    parse_mfia_files,
+    convert_mfia_data,
+    convert_mfia_df_for_fit,
+)
 
 from ..system_utilities import find_files, load_file, load_hdf, save
-from ..system_utilities.special_io import parse_files
+from ..system_utilities.special_io import parse_file_info
 
-class MFIAFileConverter(QMainWindow):
+# Define the named tuple for dataset entries
+
+
+
+class MFIAFileConverter(QMainWindow, WorkerFunctions):
     """
     A class to convert MFIA files using a GUI.
     Attributes:
@@ -66,7 +72,7 @@ class MFIAFileConverter(QMainWindow):
         files (list): List of files to be processed.
         in_path (Path): Input directory path.
         t_files (DataFrame): DataFrame containing target files information.
-        data_in (dict): Dictionary to store input data.
+        all_datasets (dict): Dictionary to store input data.
         data_org (dict): Dictionary to store organized data.
         keywords_list (QLineEdit): Line edit for keywords.
         checked_columns (list): List of checked columns.
@@ -74,7 +80,7 @@ class MFIAFileConverter(QMainWindow):
         patterns_list (QListWidget): List widget for file patterns.
         columns_list (QListWidget): List widget for columns.
         files_table (QTableWidget): Table widget for files.
-        datasets_tree (QTreeWidget): Tree widget for datasets.
+        tree (QTreeWidget): Tree widget for datasets.
         t_files_tree (QTreeWidget): Tree widget for target files.
         files_datasets_tab_widget (QTabWidget): Tab widget for files and datasets.
         save_format_combo (QComboBox): Combo box for save format.
@@ -87,16 +93,16 @@ class MFIAFileConverter(QMainWindow):
         add_pattern(): Adds a pattern to the patterns list.
         update_files(): Updates the files table with the selected patterns.
         set_data_org(): Sets the organized data.
-        apply_group(tab=None): Applies grouping logic to the data.
+        group_by_tab(tab=None): Applies grouping logic to the data.
         apply_all_groups(): Applies all grouping logic to the data.
-        update_tree_view(): Updates the tree view with the organized data.
+        refresh_tree(): Updates the tree view with the organized data.
         update_t_files(): Updates the target files tree view.
-        convert_files(): Converts the files based on the selected patterns.
-        remove_dataset(item): Removes a dataset from the organized data.
+        load_files(): Converts the files based on the selected patterns.
+        hide_tree_items(item): Removes a dataset from the organized data.
         reset_columns_list(): Resets the columns list with unique columns from the dataframes.
         refresh_columns_list(): Refreshes the columns list keeping any checked list.
         sort_columns_list(): Sorts the columns list.
-        concat_data(): Concatenates the data.
+        concat_tree_items(): Concatenates the data.
         simplify_data(): Simplifies the data for fitting.
         save(): Saves the converted data.
         save_settings(): Saves the current settings.
@@ -107,17 +113,141 @@ class MFIAFileConverter(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.is_xlsx = True
+        # self.is_xlsx = True
         self.files = None
         self.in_path = None
         self.t_files = None
-        self.data_in = None
-        self.data_org = None
-        self.keywords_list = None
+        self.loaded_data = None # flat dict of df containing loaded data (retained for resets)
+        self.data_viewer = None
+
+        self.worker = None  # Initialize worker
+        self.thread = None  # Initialize thread
+        self.progress_dialog = None  # Initialize progress dialog
+        self.kill_operation = False  # Initialize kill operation flag
+        
+        self.grouping_history = []
         self.checked_columns = []
+
+        self.popup_graph = PopupGraph()
 
         self.setWindowTitle("MFIA File Conversion")
 
+        # Widget Creation
+
+        # Labels
+        self.in_path_label = QLabel("<b>Input Path:</b>")
+
+        # List Widgets
+        self.file_kw_and_list = QListWidget()
+        self.file_kw_and_list.setMaximumWidth(300)
+        self.file_kw_and_list.installEventFilter(self)
+
+        self.file_kw_or_list = QListWidget()
+        self.file_kw_or_list.setMaximumWidth(300)
+        self.file_kw_or_list.installEventFilter(self)
+
+        self.columns_list = QListWidget()
+        self.columns_list.setDragDropMode(QAbstractItemView.InternalMove)
+
+        # Tree Widgets
+        self.tree = DataTreeWidget()
+        self.tree.installEventFilter(self)
+        self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
+
+        self.tree.saveDataRequested.connect(self.save_data)
+
+        # Replace t_files_tree with t_files_table
+        self.files_table = DraggableTableWidget()
+        self.files_table.setColumnCount(2)
+        self.files_table.setHorizontalHeaderLabels(["Name", "Path"])
+        self.files_table.setSortingEnabled(True)  # Enable column sorting
+        self.files_table.installEventFilter(self)
+
+        # Buttons
+        in_path_button = QPushButton("Browse")
+        in_path_button.setFixedWidth(100)
+        in_path_button.clicked.connect(self.browse_in_path)
+
+        reset_columns_button = QPushButton("Reset")
+        reset_columns_button.clicked.connect(self.reset_columns_list)
+        reset_columns_button.setFixedWidth(75)
+
+        refresh_columns_button = QPushButton("Refresh")
+        refresh_columns_button.clicked.connect(self.refresh_columns_list)
+        refresh_columns_button.setFixedWidth(75)
+
+        sort_columns_button = QPushButton("Sort")
+        sort_columns_button.clicked.connect(self.sort_columns_list)
+        sort_columns_button.setFixedWidth(75)
+
+        reset_tree_button = QPushButton("Reset")
+        reset_tree_button.clicked.connect(self.tree.set_data_org)
+        reset_tree_button.setFixedWidth(150)
+
+        reset_gr_button = QPushButton("Reset Grouping")
+        reset_gr_button.clicked.connect(self.remove_grouping)
+        reset_gr_button.setFixedWidth(150)
+
+        apply_fn_button = QPushButton("Group by File")
+        apply_fn_button.clicked.connect(self.group_by_subname)
+        apply_fn_button.setFixedWidth(150)
+
+        apply_gr_button = QPushButton("Apply Groups")
+        apply_gr_button.clicked.connect(self.apply_all_groups)
+        apply_gr_button.setFixedWidth(150)
+
+        datasets_rename_button = QPushButton("Rename Datasets")
+        datasets_rename_button.clicked.connect(self.tree.rename_all_tree_items)
+        datasets_rename_button.setFixedWidth(150)
+
+        datasets_concat_button = QPushButton("Combine Datasets")
+        datasets_concat_button.clicked.connect(self.tree.concat_items)
+        datasets_concat_button.setFixedWidth(150)
+
+        t_files_update_button = QPushButton("(Re)Load File List")
+        t_files_update_button.clicked.connect(self.update_files)
+        t_files_update_button.setFixedWidth(150)
+
+        convert_button = QPushButton("Convert")
+        convert_button.setFixedWidth(100)
+        convert_button.clicked.connect(self.load_files)
+
+        save_button = QPushButton("Save to File")
+        save_button.setFixedWidth(100)
+        save_button.clicked.connect(lambda: self.save_data(None, path=self.get_save_path(False)))
+
+        save_gr_button = QPushButton("Save to Folder")
+        save_gr_button.setFixedWidth(100)
+        save_gr_button.clicked.connect(lambda: self.save_data(None, path=self.get_save_path(True)))
+
+        save_settings_button = QPushButton("Save Settings")
+        save_settings_button.clicked.connect(self.save_settings)
+
+        load_settings_button = QPushButton("Load Settings")
+        load_settings_button.clicked.connect(self.load_settings)
+
+        # Line Edits
+        self.patterns_edit = QLineEdit()
+        self.patterns_edit.setPlaceholderText("pattern")
+        self.patterns_edit.returnPressed.connect(self.add_pattern)
+
+        # Combo Boxes
+        self.save_format_combo = QComboBox()
+        self.save_format_combo.addItems(
+            ["All Columns", "Selected Columns", "Freq, Real, & Imag"]
+        )
+        self.save_format_combo.setFixedWidth(150)
+
+        # Check Boxes
+        self.get_all_checkbox = QCheckBox("Get All")
+
+        # Tab Widgets
+        self.file_kw_tabs = QTabWidget()
+        self.group_tabs = QTabWidget()
+        self.add_grouping_tab()
+        self.data_tabs = QTabWidget()
+
+        # Frame and Layout Insertion
         central_widget = QWidget(self)
         layout = QVBoxLayout(central_widget)
 
@@ -130,10 +260,6 @@ class MFIAFileConverter(QMainWindow):
         max_width = 300
 
         # Input Path
-        self.in_path_label = QLabel("<b>Input Path:</b>")
-        in_path_button = QPushButton("Browse")
-        in_path_button.setFixedWidth(100)
-        in_path_button.clicked.connect(self.browse_in_path)
         in_path_layout = QHBoxLayout()
         in_path_layout.addWidget(self.in_path_label)
         in_path_layout.addWidget(in_path_button)
@@ -144,47 +270,27 @@ class MFIAFileConverter(QMainWindow):
 
         layout.addWidget(create_separator())
 
-        # File Patterns
-        self.patterns_list = QListWidget()
-        self.patterns_list.setMaximumWidth(max_width)
-        self.patterns_list.installEventFilter(self)
-        self.patterns_edit = QLineEdit()
-        self.patterns_edit.setPlaceholderText("pattern")
-        self.patterns_edit.returnPressed.connect(self.add_pattern)
+        # Patterns and Keywords Tab Widget
+        file_kw_layout = QVBoxLayout()
+        file_kw_layout.addWidget(QLabel("<b>File Patterns and Keywords:</b>"))
+        file_kw_layout.addWidget(self.file_kw_tabs)
+        file_kw_frame = QFrame()
+        file_kw_frame.setLayout(file_kw_layout)
+        file_kw_frame.setMaximumWidth(max_width)
 
-        patterns_layout = QVBoxLayout()
-        patterns_layout.addWidget(QLabel("<b>File Patterns:</b>"))
-        patterns_layout.addWidget(self.patterns_list)
+        self.file_kw_tabs.addTab(self.file_kw_and_list, "File Patterns")
+        self.file_kw_tabs.addTab(self.file_kw_or_list, "File Keywords")
 
+        # Entry Widget for Adding Patterns/Keywords
         patterns_edit_layout = QHBoxLayout()
         patterns_edit_layout.addWidget(QLabel("Add Item:"))
         patterns_edit_layout.addWidget(self.patterns_edit)
+        file_kw_layout.addLayout(patterns_edit_layout)
 
-        patterns_layout.addLayout(patterns_edit_layout)
+        # Grouping Iterations Tab Widget
+        # layout.addWidget(self.group_tabs)
 
-        patterns_frame = QFrame()
-        patterns_frame.setLayout(patterns_layout)
-        patterns_frame.setMaximumWidth(max_width)
-
-        # Tab Widget for Grouping Iterations
-        self.tab_widget = QTabWidget()
-        self.add_grouping_tab()
-
-        # List Widget for Columns
-        self.columns_list = QListWidget()
-        self.columns_list.setDragDropMode(
-            QAbstractItemView.InternalMove
-        )  # Enable drag-and-drop reordering
-        reset_columns_button = QPushButton("Reset")
-        reset_columns_button.clicked.connect(self.reset_columns_list)
-        reset_columns_button.setFixedWidth(75)
-        refresh_columns_button = QPushButton("Refresh")
-        refresh_columns_button.clicked.connect(self.refresh_columns_list)
-        refresh_columns_button.setFixedWidth(75)
-        sort_columns_button = QPushButton("Sort")
-        sort_columns_button.clicked.connect(self.sort_columns_list)
-        sort_columns_button.setFixedWidth(75)
-
+        # Columns List
         columns_layout = QVBoxLayout()
         columns_layout.addWidget(QLabel("<b>Columns:</b>"))
         columns_layout.addWidget(self.columns_list)
@@ -193,97 +299,41 @@ class MFIAFileConverter(QMainWindow):
         columns_buttons_layout.addWidget(refresh_columns_button)
         columns_buttons_layout.addWidget(sort_columns_button)
         columns_layout.addLayout(columns_buttons_layout)
-
         columns_frame = QFrame()
         columns_frame.setLayout(columns_layout)
         columns_frame.setMaximumWidth(max_width)
 
         grid1 = QGridLayout()
-        grid1.addWidget(patterns_frame, 0, 0)
-        grid1.addWidget(self.tab_widget, 0, 1)
+        grid1.addWidget(file_kw_frame, 0, 0)
+        grid1.addWidget(self.group_tabs, 0, 1)
         grid1.addWidget(columns_frame, 0, 2)
 
         layout.addLayout(grid1)
 
         layout.addWidget(create_separator())
 
-        self.files_datasets_tab_widget = QTabWidget()
-
-        # Files Table
-        self.files_table = QTableWidget()
-        self.files_table.setColumnCount(3)
-        self.files_table.setHorizontalHeaderLabels(
-            ["File Name", "Relative Path", "Path"]
-        )
-        self.files_table.setColumnWidth(0, 150)
-        self.files_table.setColumnWidth(1, 250)
-        self.files_table.setColumnWidth(2, 250)
-        files_update_button = QPushButton("Update Files")
-        files_update_button.clicked.connect(self.update_files)
-        files_update_button.setFixedWidth(150)
-        files_layout = QVBoxLayout()
-        files_layout.addWidget(self.files_table)
-        files_layout.addWidget(files_update_button)
-        files_frame = QFrame()
-        files_frame.setLayout(files_layout)
-        files_frame.setMinimumWidth(int(max_width * 1.5))
-
-        self.files_datasets_tab_widget.addTab(files_frame, "Loaded Files")
 
         # Tree View for Datasets
         datasets_layout = QVBoxLayout()
-
-        self.datasets_tree = QTreeWidget()
-        self.datasets_tree.setHeaderLabels(["Name", "Details"])
-        self.datasets_tree.setColumnWidth(0, 400)
-        self.datasets_tree.installEventFilter(self)
-        self.datasets_tree.itemDoubleClicked.connect(self.view_data)
-        datasets_layout.addWidget(self.datasets_tree)
+        datasets_layout.addWidget(self.tree)
 
         datasets_buttons = QHBoxLayout()
-
-        reset_gr_button = QPushButton("Reset")
-        reset_gr_button.clicked.connect(self.set_data_org)
-        reset_gr_button.setFixedWidth(150)
+        datasets_buttons.addWidget(reset_tree_button)
         datasets_buttons.addWidget(reset_gr_button)
-
-        apply_gr_button = QPushButton("Apply Groups")
-        apply_gr_button.clicked.connect(self.apply_all_groups)
-        apply_gr_button.setFixedWidth(150)
+        datasets_buttons.addWidget(apply_fn_button)
         datasets_buttons.addWidget(apply_gr_button)
-        
-        datasets_rename_button = QPushButton("Rename Datasets")
-        datasets_rename_button.clicked.connect(self.simplify_data_keys)
-        datasets_rename_button.setFixedWidth(150)
         datasets_buttons.addWidget(datasets_rename_button)
-
-        datasets_concat_button = QPushButton("Combine Datasets")
-        datasets_concat_button.clicked.connect(self.concat_data)
-        datasets_concat_button.setFixedWidth(150)
         datasets_buttons.addWidget(datasets_concat_button)
-
         datasets_layout.addLayout(datasets_buttons)
 
-        self.datasets_frame = QFrame()
-        self.datasets_frame.setLayout(datasets_layout)
-        self.datasets_frame.setMinimumWidth(int(max_width * 1.5))
-
-        self.files_datasets_tab_widget.addTab(self.datasets_frame, "Datasets")
+        datasets_frame = QFrame()
+        datasets_frame.setLayout(datasets_layout)
+        datasets_frame.setMinimumWidth(int(max_width * 1.5))
 
         # Tree Widget for t_files
         t_files_layout = QVBoxLayout()
-
-        self.t_files_tree = QTreeWidget()
-        self.t_files_tree.setHeaderLabels(["Name", "ID"])
-        t_files_layout.addWidget(self.t_files_tree)
-
-        t_files_update_button = QPushButton("Update Target Files")
-        t_files_update_button.clicked.connect(self.update_t_files)
-        t_files_update_button.setFixedWidth(150)
-        self.get_all_checkbox = QCheckBox("Get All")
-        convert_button = QPushButton("Convert")
-        convert_button.setFixedWidth(100)
-        convert_button.clicked.connect(self.convert_files)
+        # t_files_layout.addWidget(self.t_files_tree)
+        t_files_layout.addWidget(self.files_table)
 
         check_update_layout = QHBoxLayout()
         check_update_layout.addWidget(t_files_update_button)
@@ -291,49 +341,28 @@ class MFIAFileConverter(QMainWindow):
         check_update_layout.addWidget(convert_button)
         t_files_layout.addLayout(check_update_layout)
 
-        self.t_files_frame = QFrame()
-        self.t_files_frame.setLayout(t_files_layout)
-        self.t_files_frame.setMinimumWidth(int(max_width * 1.5))
+        t_files_frame = QFrame()
+        t_files_frame.setLayout(t_files_layout)
+        t_files_frame.setMinimumWidth(int(max_width * 1.5))
 
-        self.files_datasets_tab_widget.addTab(
-            self.t_files_frame, "Target Files"
-        )
-        self.files_datasets_tab_widget.setTabVisible(2, False)
+        # self.data_tabs.addTab(files_frame, "Loaded Files")
+        self.data_tabs.addTab(t_files_frame, "Files")
+        self.data_tabs.addTab(datasets_frame, "Datasets")
 
-        # layout.addLayout(grid2)
-        layout.addWidget(self.files_datasets_tab_widget)
+        layout.addWidget(self.data_tabs)
         layout.addWidget(create_separator())
 
         bottom_layout = QHBoxLayout()
-        # Save Format
-        self.save_format_combo = QComboBox()
-        self.save_format_combo.addItems(
-            ["Use Columns", "Use Freq, Real, Imag"]
-        )
-        self.save_format_combo.setFixedWidth(150)
-        save_button = QPushButton("Save")
-        save_button.setFixedWidth(100)
-        save_button.clicked.connect(self.save)
-
         save_format_layout = QHBoxLayout()
         save_format_layout.addWidget(QLabel("Save Format: "))
         save_format_layout.addWidget(self.save_format_combo)
         save_format_layout.addWidget(save_button)
+        save_format_layout.addWidget(save_gr_button)
         save_format_layout.setAlignment(Qt.AlignLeft)
 
-        # Add Buttons for Save and Load Settings
-        save_settings_button = QPushButton("Save Settings")
-        save_settings_button.clicked.connect(self.save_settings)
-        load_settings_button = QPushButton("Load Settings")
-        load_settings_button.clicked.connect(self.load_settings)
-        # load_all_settings_button = QPushButton("Load All Settings")
-        # load_all_settings_button.clicked.connect(self.load_all_settings)
-
-        # Add buttons to the layout
         settings_buttons_layout = QHBoxLayout()
         settings_buttons_layout.addWidget(save_settings_button)
         settings_buttons_layout.addWidget(load_settings_button)
-        # settings_buttons_layout.addWidget(load_all_settings_button)
         settings_buttons_layout.setAlignment(Qt.AlignRight)
 
         bottom_layout.addLayout(save_format_layout)
@@ -342,6 +371,35 @@ class MFIAFileConverter(QMainWindow):
         layout.addLayout(bottom_layout)
 
         self.setCentralWidget(central_widget)
+    
+    def eventFilter(self, source, event):
+        """Handles key press events for deleting items."""
+        if event.type() == QEvent.KeyPress and event.key() == Qt.Key_Delete:
+            if source is self.file_kw_and_list:
+                for item in self.file_kw_and_list.selectedItems():
+                    self.file_kw_and_list.takeItem(
+                        self.file_kw_and_list.row(item)
+                    )
+                return True
+            elif source is self.file_kw_or_list:
+                for item in self.file_kw_or_list.selectedItems():
+                    self.file_kw_or_list.takeItem(
+                        self.file_kw_or_list.row(item)
+                    )
+                return True
+            elif source is self.files_table:
+                rows_to_delete = set()
+                for item in self.files_table.selectedItems():
+                    rows_to_delete.add(item.row())
+                for row in sorted(rows_to_delete, reverse=True):
+                    self.files_table.removeRow(row)
+                return True
+        if event.type() == QEvent.ContextMenu and source is self.tree:
+            item = self.tree.selectedItems()
+            if item:
+                self.tree.show_tree_context_menu(event.globalPos(), item)
+                return True
+        return super().eventFilter(source, event)
 
     def add_grouping_tab(self, search_terms="", reject_terms="", keys=""):
         """
@@ -358,99 +416,75 @@ class MFIAFileConverter(QMainWindow):
             if isinstance(search_terms, list)
             else str(search_terms)
         )
-        if self.keywords_list is not None:
-            search_terms = (
-                search_terms if search_terms else self.keywords_list.text()
+
+        title = f"Group {self.group_tabs.count() + 1}"
+        reject_terms = (
+            ", ".join(reject_terms)
+            if isinstance(reject_terms, list)
+            else str(reject_terms)
+        )
+        keys = ", ".join(keys) if isinstance(keys, list) else str(keys)
+
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        form_layout = QFormLayout()
+        form_layout.addRow(QLabel("Search Terms"), QLineEdit(search_terms))
+        form_layout.addRow(QLabel("Reject Terms"), QLineEdit(reject_terms))
+        form_layout.addRow(QLabel("Keys"), QLineEdit(keys))
+        # Group buttons
+        use_group_button = QPushButton("Apply Group")
+        use_group_button.clicked.connect(self.group_by_tab)
+        use_group_button.setFixedWidth(100)
+        drop_group_button = QPushButton("Drop Group")
+        drop_group_button.setFixedWidth(100)
+        drop_group_button.clicked.connect(self.drop_grouping_tab)
+        add_group_button = QPushButton("Add Group")
+        add_group_button.setFixedWidth(100)
+        add_group_button.clicked.connect(self.add_grouping_tab)
+        
+        button_layout = QHBoxLayout()
+        button_layout.addWidget(use_group_button)
+        button_layout.addWidget(drop_group_button)
+        button_layout.addWidget(add_group_button)
+        
+        layout.addLayout(form_layout)
+        layout.addLayout(button_layout)
+
+        tab.setLayout(layout)
+        self.group_tabs.addTab(tab, title)
+
+        if self.group_tabs.count() > 1:
+            previous_tab = self.group_tabs.widget(
+                self.group_tabs.count() - 2
             )
-        if self.is_xlsx:
-            if (
-                self.tab_widget.count() > 0
-                and self.tab_widget.tabText(0) == "Parse Files Keywords"
-            ):
-                self.tab_widget.clear()
-            title = f"Group {self.tab_widget.count() + 1}"
-            reject_terms = (
-                ", ".join(reject_terms)
-                if isinstance(reject_terms, list)
-                else str(reject_terms)
+            previous_layout = previous_tab.layout().itemAt(
+                previous_tab.layout().count() - 1
             )
-            keys = ", ".join(keys) if isinstance(keys, list) else str(keys)
+            previous_layout.removeWidget(
+                previous_layout.itemAt(
+                    previous_layout.count() - 1
+                ).widget()
+            )
 
-            tab = QWidget()
-            layout = QVBoxLayout(tab)
-            form_layout = QFormLayout()
-            form_layout.addRow(QLabel("Search Terms"), QLineEdit(search_terms))
-            form_layout.addRow(QLabel("Reject Terms"), QLineEdit(reject_terms))
-            form_layout.addRow(QLabel("Keys"), QLineEdit(keys))
-            use_group_button = QPushButton("Apply Group")
-            use_group_button.clicked.connect(self.apply_group)
-            use_group_button.setFixedWidth(100)
-            # Add Group Button
-            add_group_button = QPushButton("Add Group")
-            add_group_button.setFixedWidth(100)
-            add_group_button.clicked.connect(self.add_grouping_tab)
-            button_layout = QHBoxLayout()
-            button_layout.addWidget(use_group_button)
-            button_layout.addWidget(add_group_button)
-            layout.addLayout(form_layout)
-            layout.addLayout(button_layout)
+    def drop_grouping_tab(self):
+        """Drops the current tab from the group_tabs widget."""
+        current_index = self.group_tabs.currentIndex()
+        
+        if n_tabs := self.group_tabs.count() > 1:
+            is_last_tab = current_index == n_tabs - 1
+            self.group_tabs.removeTab(current_index)
 
-            tab.setLayout(layout)
-            self.tab_widget.addTab(tab, title)
-
-            if self.tab_widget.count() > 1:
-                previous_tab = self.tab_widget.widget(
-                    self.tab_widget.count() - 2
+            if is_last_tab:
+                last_tab = self.group_tabs.widget(n_tabs - 1)
+                last_layout = last_tab.layout().itemAt(
+                    last_tab.layout().count() - 1
                 )
-                previous_layout = previous_tab.layout().itemAt(
-                    previous_tab.layout().count() - 1
-                )
-                previous_layout.removeWidget(
-                    previous_layout.itemAt(
-                        previous_layout.count() - 1
-                    ).widget()
-                )
-            else:
-                self.keywords_list = QLineEdit(search_terms)
-        else:
-            if self.tab_widget.count() > 0:
-                self.tab_widget.clear()
-            tab = QWidget()
-            # layout = QVBoxLayout(tab)
-            form_layout = QFormLayout()
-            self.keywords_list = QLineEdit(search_terms)
-            form_layout.addRow(QLabel("Keywords"), self.keywords_list)
-            tab.setLayout(form_layout)
-            self.tab_widget.addTab(tab, "Parse Files Keywords")
 
-    def eventFilter(self, source, event):
-        """Handles key press events for deleting items."""
-        if event.type() == QEvent.KeyPress and event.key() == Qt.Key_Delete:
-            if source is self.patterns_list:
-                for item in self.patterns_list.selectedItems():
-                    self.patterns_list.takeItem(self.patterns_list.row(item))
-                return True
-            elif source is self.datasets_tree:
-                selected_items = self.datasets_tree.selectedItems()
-                for item in selected_items:
-                    self.remove_dataset(item)
-                return True
-        return super().eventFilter(source, event)
-    
-    def view_data(self, item, column):
-        """View the data when a dataset is double-clicked."""
-        key_path = []
-        while item:
-            key_path.insert(0, item.text(0))
-            item = item.parent()
+                add_group_button = QPushButton("Add Group")
+                add_group_button.setFixedWidth(100)
+                add_group_button.clicked.connect(self.add_grouping_tab)
 
-        data = self.data_org
-        for key in key_path:
-            data = data[key]
-
-        if isinstance(data, pd.DataFrame):
-            self.data_viewer = DataViewer(data, self, name=" > ".join(key_path))
-
+                last_layout.addWidget(add_group_button)
 
     def browse_in_path(self):
         """Opens a dialog to browse for the input directory"""
@@ -461,16 +495,19 @@ class MFIAFileConverter(QMainWindow):
 
     def add_pattern(self):
         """Adds a pattern to the patterns list."""
-
         def add_worker(pattern):
-            check = Qt.Unchecked
-            if pattern.startswith("not "):
-                pattern = pattern.replace("not ", "")
-                check = Qt.Checked
-            item = QListWidgetItem(pattern.strip())
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(check)
-            self.patterns_list.addItem(item)
+            if self.file_kw_tabs.currentIndex() == 0:
+                check = Qt.Unchecked
+                if pattern.startswith("not "):
+                    pattern = pattern.replace("not ", "")
+                    check = Qt.Checked
+                item = QListWidgetItem(pattern.strip())
+                item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+                item.setCheckState(check)
+            else:
+                item = QListWidgetItem(pattern.strip())
+
+            self.file_kw_tabs.currentWidget().addItem(item)
             self.patterns_edit.clear()
 
         patterns = self.patterns_edit.text()
@@ -479,72 +516,186 @@ class MFIAFileConverter(QMainWindow):
                 add_worker(p)
 
     def update_files(self):
-        """Updates the files table with the selected patterns."""
-        is_xlsx = False
+        """Updates the files table with the selected patterns and linked to button."""
         patterns = []
-        for i in range(self.patterns_list.count()):
-            item = self.patterns_list.item(i)
+        for i in range(self.file_kw_and_list.count()):
+            item = self.file_kw_and_list.item(i)
             pattern = item.text()
             use_re_not = item.checkState() == Qt.Checked
             if use_re_not:
                 pattern = re_not(pattern)
             patterns.append(pattern)
-            if "xls" in pattern:
-                is_xlsx = True
+        try:
+            files = find_files(self.in_path, patterns=patterns) # loading of filenames
 
-        self.files = find_files(self.in_path, patterns=patterns)
+            keywords = ([
+                self.file_kw_or_list.item(i).text()
+                for i in range(self.file_kw_or_list.count())
+            ] if self.file_kw_or_list.count() else None)
+
+            get_all = self.get_all_checkbox.isChecked()
+
+            files = parse_file_info(
+                files, parse_mfia_files, keywords, get_all=get_all
+            )
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Error: {e}")
+            return
+        
+        self.files = files
+
+        # Insert the "relative path" column
+        self.files.insert(
+            self.files.columns.get_loc("path"),
+            "relative path",
+            self.files["path"].apply(lambda p: p.relative_to(self.in_path))
+        )
+
+        # # TODO: Test simpler Clear Table
+        # self.files_table.sortItems(-1)
+        # self.files_table.clear()
+
+        # Clear the table
+        self.files_table.clearContents()
+        # Reset the row and column counts
+        self.files_table.setRowCount(0)
+        self.files_table.setColumnCount(0)
+
+        # Clear the horizontal header labels
+        self.files_table.setHorizontalHeaderLabels([])
+
+        # Set the number of columns and their headers
+        self.files_table.setColumnCount(len(self.files.columns))
+        self.files_table.setHorizontalHeaderLabels(self.files.columns)
+
+        # Set the number of rows
         self.files_table.setRowCount(len(self.files))
-        for row, file in enumerate(self.files):
-            relative_path = str(file.relative_to(self.in_path))
-            self.files_table.setItem(row, 0, QTableWidgetItem(file.name))
-            self.files_table.setItem(row, 1, QTableWidgetItem(relative_path))
-            self.files_table.setItem(row, 2, QTableWidgetItem(str(file)))
-            if not is_xlsx and file.suffix == ".xlsx":
-                is_xlsx = True
 
-        if is_xlsx:
-            self.is_xlsx = True
-            # self.data_in = {
-            #     f.stem: load_file(f, header=[0, 1], index_col=0)[0]
-            #     for f in self.files
-            #     if f.suffix == ".xlsx"
-            # }
-            self.data_in = {
-                f.stem: load_file(f, index_col=0)[0]
-                for f in self.files
-                if f.suffix == ".xlsx"
-            }
-            self.set_data_org()
-        else:
-            self.files_datasets_tab_widget.setTabVisible(1, False)
-            self.files_datasets_tab_widget.setTabVisible(2, True)
-            self.is_xlsx = False
-            self.add_grouping_tab()
+        # Populate the table with data from the DataFrame
+        for row_idx, row in self.files.iterrows():
+            for col_idx, value in enumerate(row):
+                if "date" in self.files.columns[col_idx].lower():
+                    self.files_table.setItem(row_idx, col_idx, QTableWidgetItem(value.strftime("%Y-%m-%d")))
+                elif "time" in self.files.columns[col_idx].lower():
+                    self.files_table.setItem(row_idx, col_idx, QTableWidgetItem(value.strftime("%H:%M:%S")))
+                else:
+                    self.files_table.setItem(row_idx, col_idx, QTableWidgetItem(str(value)))
+    
+    def update_t_files(self):
+        """Updates the target files tree view."""
+        # Create a list to store the updated file indices
+        updated_files = []
 
-    def set_data_org(self):
-        """Sets the organized data."""
-        if self.is_xlsx:
-            if self.data_in is None and self.files is not None:
-                self.data_in = {
-                    f.stem: load_file(f, header=[0, 1], index_col=0)[0]
-                    for f in self.files
-                    if f.suffix == ".xlsx"
-                }
-            if self.data_in is not None:
-                self.data_org = flatten_dict(
-                    remove_duplicate_datasets(self.data_in.copy())
-                )
-                self.update_tree_view()
-                self.datasets_tree.setColumnWidth(0, 400)
+        self.t_files=None
+        name_idx = None
+        path_idx = None
+        name_str = ""
+        path_str = ""
+        for col in range(self.files_table.columnCount()):
+            header = self.files_table.horizontalHeaderItem(col).text()
+            if header.lower() == "name":
+                name_idx = col
+                name_str = self.files.columns[col]
+            elif header.lower() == "path":
+                path_idx = col
+                path_str = self.files.columns[col]
 
-    def apply_group(self, tab=None):
-        """Applies grouping logic to the data."""
-        if self.data_org is None:
+        # Ensure the id column is found
+        if name_idx is None or path_idx is None:
+            QMessageBox.warning(self, "Name Error", "Table must have a 'name' and 'path' column")
+            return
+
+        # Iterate through the rows of the table to get the current state
+        for row in range(self.files_table.rowCount()):
+            # Extract the name and path from the table
+            name_item = self.files_table.item(row, name_idx)
+            path_item = self.files_table.item(row, path_idx)
+
+            # Ensure the items are not None
+            if name_item and path_item:
+                name_val = name_item.text()
+                path_val = Path(path_item.text())
+
+                # Append the extracted data to the updated_files list
+                if self.files.apply(lambda x: x[name_str] == name_val and x[path_str] == path_val, axis=1).any():
+                    updated_files.append({name_str: name_val, path_str: path_val})
+        
+        # Check if updated_files is empty
+        if not updated_files:
+            QMessageBox.warning(self, "No Matching Files", "No matching files found in the table.")
+            return
+        
+        # Generate self.t_files based on the updated data
+        self.t_files = pd.DataFrame(updated_files)
+        
+    def load_files(self):
+        """Converts the files based on the selected patterns."""
+        # if self.t_files is None:
+        self.update_t_files()
+
+        self.worker = LoadDatasetsWorker(self.t_files, self.tree, self.get_all_checkbox.isChecked())
+        self.create_progress_dialog(
+            self, title="Load", label_text="Loading Files...", cancel="Cancel", maximum=0
+        )
+        self.run_in_thread(
+            self.io_finished,
+            self.on_worker_error,
+            progress_dialog=self.progress_dialog,
+        )
+
+        # # load the data
+        # name_str = self.t_files.columns[0]
+        # path_str = self.t_files.columns[1]
+        # self.loaded_data = {}
+        # for ind in self.t_files.index:
+        #     name = self.t_files[name_str][ind]
+        #     pth = self.t_files[path_str][ind]
+            
+        #     if ".h" in pth.suffix:
+        #         if self.get_all_checkbox.isChecked():
+        #             name = pth.parent.stem
+        #         raw_data = load_hdf(pth, key_sep=True)
+        #         self.loaded_data[name] = convert_mfia_data(
+        #             raw_data, flip=False, flatten=2
+        #         )
+        #     elif ".xls" in pth.suffix:
+        #         self.loaded_data[name] = load_file(pth, index_col=0)[0]
+
+        # self.loaded_data = flatten_dict(self.loaded_data)
+
+        # self.tree.set_all_data(self.loaded_data, True)
+        # self.tree.set_data_org()
+
+        self.data_tabs.setCurrentIndex(1)
+
+    def io_finished(self, loaded_data=None):
+        """Handle the completion of data I/O operations."""
+        if isinstance(loaded_data, dict):
+            self.tree.set_all_data(loaded_data, True)
+            self.tree.set_data_org()
+
+        self.progress_dialog.close()
+        self.progress_dialog.deleteLater()
+        self.kill_operation = False
+
+    def group_by_subname(self):
+        if not self.tree.data_org:
             QMessageBox.warning(self, "No Files", "Please load files first.")
             return
+        
+        self.tree.update_data_pathkeys(lambda k: tuple("/".join(k).split("/")))
+        self.grouping_history.append("grouped_by_subname")
+
+
+    def group_by_tab(self, tab=None, suppress_refresh=False):
+        """Applies grouping logic to the data."""
+        if not self.tree.data_org:
+            QMessageBox.warning(self, "No Files", "Please load files first.")
+            return
+
         # Iterate through the tabs and apply the grouping logic
         if tab is None or not tab:
-            tab = self.tab_widget.widget(self.tab_widget.currentIndex())
+            tab = self.group_tabs.widget(self.group_tabs.currentIndex())
         form_layout = tab.children()
         if form_layout[2].text():
             search_terms = form_layout[2].text().split(", ")
@@ -558,140 +709,80 @@ class MFIAFileConverter(QMainWindow):
                 if form_layout[6].text()
                 else None
             )
-            self.data_org = separate_dict(
-                self.data_org, search_terms, reject_terms, keys
-            )
+            # self.data_org = separate_dict(
+            #     self.data_org, search_terms, reject_terms, keys
+            # )
+            self.tree.eval_grouping(search_terms, reject_terms, keys, suppress_refresh)
 
-            self.update_tree_view()
+            # Log the grouping operation
+            self.grouping_history.append({
+                "search_terms": search_terms,
+                "reject_terms": reject_terms,
+                "keys": keys
+            })
+
+            # self.refresh_tree()
 
     def apply_all_groups(self):
         """Applies all grouping logic to the data."""
-        if self.data_org is None:
+        if not self.tree.data_org:
             QMessageBox.warning(self, "No Files", "Please load files first.")
             return
 
         # Iterate through the tabs and apply the grouping logic
-        for tab_index in range(self.tab_widget.count()):
-            tab = self.tab_widget.widget(tab_index)
-            self.apply_group(tab)
+        for tab_index in range(self.group_tabs.count()):
+            tab = self.group_tabs.widget(tab_index)
+            self.group_by_tab(tab, True)
+        
+        self.tree.refresh_tree()
 
-    def update_tree_view(self):
-        """Updates the tree view with the organized data."""
-        if self.is_xlsx:
-            self.datasets_tree.clear()
+    def reapply_groups(self):
+        """Reapplies all grouping logic from the history to the data."""
+        if not self.tree.data_org:
+            QMessageBox.warning(self, "No Files", "Please load files first.")
+            return
 
-            def add_items(parent, data):
-                for data_k, data_v in data.items():
-                    if isinstance(data_v, dict):
-                        if data_v:
-                            tree_item = QTreeWidgetItem([data_k])
-                            parent.addChild(tree_item)
-                            add_items(tree_item, data_v)
-                    elif isinstance(data_v, pd.DataFrame):
-                        tree_item = QTreeWidgetItem(
-                            [
-                                data_k,
-                                f"{data_v.shape[0]}x{data_v.shape[1]} DataFrame",
-                            ]
-                        )
-                        parent.addChild(tree_item)
+        # Flatten the data_org
+        # self.data_org = flatten_dict(self.data_org)
+        self.tree.set_data_org()
 
-            for key in self.data_org.keys():
-                item = QTreeWidgetItem([key])
-                self.datasets_tree.addTopLevelItem(item)
-                add_items(item, self.data_org[key])
+        # Reapply the grouping history
+        for group in self.grouping_history:
+            if group == "grouped_by_subname":
+                self.tree.update_data_pathkeys(lambda k: tuple("/".join(k).split("/")))
+            else:
+                self.tree.eval_grouping(group["search_terms"], group["reject_terms"], group["keys"])
 
-            self.datasets_tree.expandAll()
-        else:
-            self.t_files_tree.clear()
-            self.t_files_tree.setHeaderLabels(self.t_files.columns)
-            for index, row in self.t_files.iterrows():
-                item = QTreeWidgetItem([str(r) for r in row])
-                if index % 2 == 0:
-                    for col in range(item.columnCount()):
-                        item.setBackground(col, QBrush(QColor("#E2DDEF")))
-                self.t_files_tree.addTopLevelItem(item)
+        # self.refresh_tree()
+    
+    def remove_grouping(self):
+        """Removes all grouping while retaining other modifications."""
+        if not self.tree.data_org:
+            QMessageBox.warning(self, "No Files", "Please load files first.")
+            return
 
-    def update_t_files(self):
-        """Updates the target files tree view."""
-        if self.files is None:
-            self.update_files()
+        self.grouping_history = []
+        name_dict = {}
+        for key in self.tree.data_org.keys():
+            name_dict[key] = (key[-1],)
+        self.tree.update_data_pathkeys(name_dict)
+        # self.data_org = flatten_dict(self.data_org)
+        # self.tree.set_data_org()
 
-        keywords = (
-            [k.strip() for k in self.keywords_list.text().split(", ")]
-            if self.keywords_list.text()
-            else None
-        )
-        get_all = self.get_all_checkbox.isChecked()
-        self.t_files = parse_files(
-            self.files, parse_mfia_file, keywords, get_all=get_all
-        )
-        self.update_tree_view()
-
-    def convert_files(self):
-        """Converts the files based on the selected patterns."""
-        if self.t_files is None:
-            self.update_t_files()
-        get_all = self.get_all_checkbox.isChecked()
-        data = {}
-        for ind in self.t_files.index:
-            raw_data = load_hdf(self.t_files["id"][ind], key_sep=True)
-            data[self.t_files["name"][ind]] = convert_mfia_data(
-                raw_data, flip=False, flatten=2
-            )
-
-        self.data_in = {}
-        for ind in self.t_files.index:
-            data_attrs = pd.DataFrame(
-                {
-                    k2: v2.attrs
-                    for k2, v2 in data[self.t_files["name"][ind]].items()
-                }
-            ).T.infer_objects()
-            tmp = {**data[self.t_files["name"][ind]], **{"attrs": data_attrs}}
-            f_name = self.t_files["name"][ind]
-            if get_all:
-                f_name = self.t_files["id"][ind].parent.stem
-            self.data_in[f_name] = tmp
-
-        self.is_xlsx = True
-        self.files_datasets_tab_widget.setCurrentIndex(0)
-        self.files_datasets_tab_widget.setTabVisible(1, True)
-        self.files_datasets_tab_widget.setTabVisible(2, False)
-        self.add_grouping_tab()
-        self.set_data_org()
-
-    def remove_dataset(self, item):
-        """Removes a dataset from the organized data."""
-        key_path = []
-        while item:
-            key_path.insert(0, item.text(0))
-            item = item.parent()
-
-        # Remove the dataset from self.data_org
-        current_dict = self.data_org
-        for key in key_path[:-1]:
-            current_dict = current_dict.get(key, {})
-        current_dict.pop(key_path[-1], None)
-
-        self.update_tree_view()
 
     def reset_columns_list(self):
         """Populate the columns list with unique columns from the dataframes ignoring any checked list."""
-        if self.data_org is None:
+        if not self.tree.data_org:
             QMessageBox.warning(
                 self, "No Data", "Please load and group data first."
             )
             return
 
-        # Flatten the data organization dictionary
-        flattened_data = flatten_dict(self.data_org)
-
         # Collect all unique columns from the dataframes
         unique_columns = set()
-        for df in flattened_data.values():
-            if isinstance(df, pd.DataFrame):
-                unique_columns.update(df.columns)
+        for data in self.tree.data_org.values():
+            if isinstance(data.active.df, pd.DataFrame):
+                unique_columns.update(data.active.df.columns)
 
         check = Qt.Checked if len(unique_columns) < 10 else Qt.Unchecked
         # Populate the list widget with unique columns
@@ -706,13 +797,13 @@ class MFIAFileConverter(QMainWindow):
 
     def refresh_columns_list(self):
         """Populate the columns list with unique columns from the dataframes keeping any checked list."""
-        if self.data_org is None and self.checked_columns == []:
+        if not self.tree.data_org and self.checked_columns == []:
             QMessageBox.warning(
                 self, "No Data", "Please load and group data first."
             )
             return
 
-        if self.data_org is None:
+        if not self.tree.data_org:
             for col in self.checked_columns:
                 item = QListWidgetItem(str(col))
                 item.setFlags(
@@ -725,14 +816,11 @@ class MFIAFileConverter(QMainWindow):
         if self.columns_list.count() == 0:
             self.reset_columns_list()
 
-        # Flatten the data organization dictionary
-        flattened_data = flatten_dict(self.data_org)
-
         # Collect all unique columns from the dataframes
         unique_columns = set()
-        for df in flattened_data.values():
-            if isinstance(df, pd.DataFrame):
-                unique_columns.update(df.columns)
+        for data in self.tree.data_org.values():
+            if isinstance(data.active.df, pd.DataFrame):
+                unique_columns.update(data.active.df.columns)
 
         # Make sure checked columns match the unique columns
         clean_check = []
@@ -807,118 +895,129 @@ class MFIAFileConverter(QMainWindow):
             item.setCheckState(checkState)
             self.columns_list.addItem(item)
 
-    def concat_data(self):
-        """Concatenates the data."""
-        self.data_org = impedance_concat(self.data_org)
-        self.update_tree_view()
-        self.datasets_tree.setColumnWidth(0, 150)
-
-    def simplify_data_keys(self):
-        """Simplifies the data for fitting."""
-        def simplify(data):
-            if isinstance(data, dict):
-                new_data = {}
-                run = 1
-                for k, v in data.items():
-                    if isinstance(v, dict):
-                        new_data[k] = simplify(v)
-                    else:
-                        new_data[f"_r{run}"] = v
-                        run += 1
-                return new_data
-            return data
-
-        self.data_org = simplify(self.data_org)
-
-        self.update_tree_view()
-
-    def save(self):
-        """Saves the converted data."""
-        save_format = self.save_format_combo.currentText()
+    def parse_columns_for_save(self, save_format):
+        """Parses the columns list for saving."""
         columns = []
-        if save_format == "Use Columns":
-            num_cols = self.columns_list.count()
-            if num_cols == 0:
-                self.refresh_columns_list()
-                self.sort_columns_list()
-            for i in range(num_cols):
-                if self.columns_list.item(i).checkState() == Qt.Checked:
-                    columns.append(self.columns_list.item(i).text())
-            if not columns:
-                columns = [
-                    self.columns_list.item(i).text() for i in range(num_cols)
-                ]
-            columns = [
-                eval(tc) if tc[0] == "(" and tc[-1] == ")" else tc
-                for tc in columns
-            ]
+        num_cols = self.columns_list.count()
+        if num_cols == 0:
+            self.refresh_columns_list()
+            self.sort_columns_list()
+        for i in range(num_cols):
+            col = self.columns_list.item(i).text()
+            if col.startswith("(") and col.endswith(")"):
+                col = re.split(r'\s*,\s*', col[1:-1])
+                # Extract words that may or may not have quotes
+                col = [re.findall(r'\"(.*?)\"|\'(.*?)\'|(\S+)', word) for word in col]
+                # Flatten the list of tuples and filter out empty strings
+                col = tuple([item for sublist in col for group in sublist for item in group if item])
+            columns.append(col)
 
-        if self.t_files is not None and len(self.t_files["name"]) == len(
-            self.data_in
-        ):
-            out_path = QFileDialog.getExistingDirectory(
-                self,
+        if save_format == "Selected Columns":
+            sel_col = []
+            for i, col in enumerate(columns):
+                if self.columns_list.item(i).checkState() == Qt.Checked:
+                    sel_col.append(col)
+            if not sel_col:
+                return columns
+            return sel_col
+        elif save_format == "Freq, Real, and Imag":
+            sel_col = get_valid_keys(["freq", "real", "imag"], columns)
+            if not sel_col:
+                return columns
+            return sel_col
+        return columns
+    
+    def get_save_path(self, to_dir=None):
+        """
+        Get the save path for a file or directory.
+        
+        Parameters:
+        to_dir (bool): If True, select a directory. If False, select a file.
+        
+        Returns:
+        Path: The selected file or directory path.
+        """
+        if not isinstance(to_dir, bool):
+            dialog = RadioButtonDialog(
+                title="Select Save Option",
+                options=["Save to File", "Save to Directory"],
+                default_index=0
+            )
+            if dialog.exec_() == QDialog.Accepted:
+                selected_option = dialog.selected_option()
+                to_dir = selected_option == "Save to Directory"
+            else:
+                return None
+
+        if to_dir:
+            # Select a directory
+            dir_path = QFileDialog.getExistingDirectory(
+                None,
                 "Select Output Directory",
             )
-            out_path = Path(out_path)
-            get_all = self.get_all_checkbox.isChecked()
-
-            for ind in self.t_files.index:
-                f_name = self.t_files["name"][ind]
-                if get_all:
-                    f_name = self.t_files["id"][ind].parent.stem
-
-                tmp = flatten_dict(self.data_in[f_name])
-                if save_format == "Use Columns":
-                    for k, v in tmp.items():
-                        tmp[k] = simplify_multi_index(
-                            v[[c for c in columns if c in v.columns]]
-                        )
-                    save(
-                        tmp,
-                        out_path / self.t_files["id"][ind].parent.parent.stem,
-                        f_name + "_reduced",
-                        merge_cells=True,
-                    )
-                else:
-                    save(
-                        tmp,
-                        out_path / self.t_files["id"][ind].parent.parent.stem,
-                        f_name,
-                        merge_cells=True,
-                    )
+            if not dir_path:
+                return None
+            return Path(dir_path)
         else:
-            out_path, _ = QFileDialog.getSaveFileName(
-                self,
+            # Select a file
+            file_path, _ = QFileDialog.getSaveFileName(
+                None,
                 "Save File",
                 "Converted_Data",
                 "Excel files (*.xlsx);;CSV files (*.csv);;All files (*.*)",
             )
-            if not out_path:
-                return
-            flat_data = separate_dict(flatten_dict(self.data_org), ["resid"])[
-                "residuals"
-            ]
-            if save_format == "Use Columns":
-                for k, v in flat_data.items():
-                    flat_data[k] = simplify_multi_index(
-                        v[[c for c in columns if c in v.columns]]
-                    )
-            else:
-                flat_data = convert_mfia_df_for_fit(flat_data)
+            if not file_path:
+                return None
+            return Path(file_path)
 
-            save(
-                flat_data,
-                Path(out_path).parent,
-                name=Path(out_path).stem,
-                file_type=Path(out_path).suffix,
-            )
+    def save_data(self, data=None, path=None):
+        """Saves the converted data."""
+        if path is None:
+            path = self.get_save_path()
+            if not path:
+                return
+        
+        save_format = self.save_format_combo.currentText()
+
+        columns = self.parse_columns_for_save(save_format)
+
+        if data is None:
+            data = self.tree.get_flat_data_org()
+
+        flat_data = separate_dict(data, ["resid"])[
+            "residuals"
+        ]
+
+        self.worker = SaveDatasetsWorker(
+            path,
+            flat_data,
+            columns,
+            save_format,
+            self.t_files,
+            self.get_all_checkbox.isChecked(),
+        )
+        self.create_progress_dialog(
+            self,
+            title="Save Data",
+            label_text="Saving datasets...",
+            cancel="Cancel",
+            maximum=0,
+        )
+        self.run_in_thread(
+            self.io_finished,
+            self.on_worker_error,
+            progress_dialog=self.progress_dialog,
+        )
 
     def save_settings(self):
         """Saves the current settings."""
         patterns = [
-            self.patterns_list.item(i)
-            for i in range(self.patterns_list.count())
+            self.file_kw_and_list.item(i)
+            for i in range(self.file_kw_and_list.count())
+        ]
+        keywords = [
+            self.file_kw_or_list.item(i).text()
+            for i in range(self.file_kw_or_list.count())
         ]
         columns = [
             self.columns_list.item(i) for i in range(self.columns_list.count())
@@ -926,23 +1025,24 @@ class MFIAFileConverter(QMainWindow):
         settings = {
             "directory": str(self.in_path),
             "patterns": [[p.text(), p.checkState()] for p in patterns],
+            "keywords": keywords,
             "groups": [],
             "columns": [
                 c.text() for c in columns if c.checkState() == Qt.Checked
             ],
         }
-        if self.is_xlsx:
-            for tab_index in range(self.tab_widget.count()):
-                tab = self.tab_widget.widget(tab_index)
-                form_layout = tab.layout().itemAt(0).layout()
-                group = {
-                    "search_terms": form_layout.itemAt(1).widget().text(),
-                    "reject_terms": form_layout.itemAt(3).widget().text(),
-                    "keys": form_layout.itemAt(5).widget().text(),
-                }
-                settings["groups"].append(group)
-        else:
-            settings["groups"].append({"keywords": self.keywords_list.text()})
+        # if self.is_xlsx:
+        for tab_index in range(self.group_tabs.count()):
+            tab = self.group_tabs.widget(tab_index)
+            form_layout = tab.layout().itemAt(0).layout()
+            group = {
+                "search_terms": form_layout.itemAt(1).widget().text(),
+                "reject_terms": form_layout.itemAt(3).widget().text(),
+                "keys": form_layout.itemAt(5).widget().text(),
+            }
+            settings["groups"].append(group)
+        # else:
+        #     settings["groups"].append({"keywords": self.keywords_list.text()})
 
         settings_file = Path(__file__).parent / "settings.json"
         if settings_file.exists():
@@ -965,14 +1065,6 @@ class MFIAFileConverter(QMainWindow):
 
         with open(settings_file, "w", encoding="utf-8") as f:
             json.dump(all_settings, f, indent=4)
-
-    # def load_empty_settings(self):
-    #     """Loads empty settings."""
-    #     self.load_settings(full=False)
-
-    # def load_all_settings(self):
-    #     """Loads all settings."""
-    #     self.load_settings(full=True)
 
     def load_settings(self):
         """Loads the settings from a file."""
@@ -1007,7 +1099,7 @@ class MFIAFileConverter(QMainWindow):
 
         directory_checkbox = QCheckBox("Directory")
         directory_checkbox.setChecked(True)
-        patterns_checkbox = QCheckBox("Patterns")
+        patterns_checkbox = QCheckBox("Patterns/KWs")
         patterns_checkbox.setChecked(True)
         groups_checkbox = QCheckBox("Groups")
         groups_checkbox.setChecked(True)
@@ -1043,35 +1135,37 @@ class MFIAFileConverter(QMainWindow):
         if patterns_checkbox.isChecked():
             try:
                 if settings["patterns"]:
-                    self.patterns_list.clear()
-                for pattern in settings["patterns"]:
-                    pattern, check = (
-                        (pattern, False)
-                        if isinstance(pattern, str)
-                        else pattern
-                    )
-                    item = QListWidgetItem(pattern)
-                    item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-                    state = Qt.Checked if check else Qt.Unchecked
-                    item.setCheckState(state)
-                    self.patterns_list.addItem(item)
+                    self.file_kw_and_list.clear()
+                    for pattern in settings["patterns"]:
+                        pattern, check = (
+                            (pattern, False)
+                            if isinstance(pattern, str)
+                            else pattern
+                        )
+                        item = QListWidgetItem(pattern)
+                        item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+                        state = Qt.Checked if check else Qt.Unchecked
+                        item.setCheckState(state)
+                        self.file_kw_and_list.addItem(item)
+                if settings["keywords"]:
+                    self.file_kw_or_list.clear()
+                    for keywords in settings["keywords"]:
+                        item = QListWidgetItem(keywords)
+                        self.file_kw_or_list.addItem(item)
             except (KeyError, ValueError):
                 pass
 
         if groups_checkbox.isChecked():
             try:
                 if settings["groups"]:
-                    self.tab_widget.clear()
-                for group in settings["groups"]:
-                    if "keywords" in group:
-                        self.keywords_list.setText(group["keywords"])
-                        self.add_grouping_tab(group["keywords"])
-                    else:
-                        self.add_grouping_tab(
-                            group["search_terms"].split(", "),
-                            group["reject_terms"].split(", "),
-                            group["keys"].split(", "),
-                        )
+                    self.group_tabs.clear()
+                    for group in settings["groups"]:
+                        if "keywords" not in group:
+                            self.add_grouping_tab(
+                                group["search_terms"].split(", "),
+                                group["reject_terms"].split(", "),
+                                group["keys"].split(", "),
+                            )
             except (KeyError, ValueError):
                 pass
 
@@ -1089,3 +1183,4 @@ if __name__ == "__main__":
     main_window = MFIAFileConverter()
     main_window.show()
     sys.exit(app.exec_())
+

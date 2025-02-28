@@ -8,15 +8,19 @@ General function file
 """
 
 import sys
+import logging
+import warnings
+from pathlib import Path
 from IPython import get_ipython
+
 import numpy as np
 from matplotlib.backends.backend_qt5agg import (
     FigureCanvasQTAgg,
     NavigationToolbar2QT,
 )
-
-from PyQt5.QtCore import Qt, QThread, QEventLoop
-
+import sip
+from PyQt5.QtCore import pyqtSignal
+from PyQt5.QtCore import Qt, QEventLoop
 from PyQt5.QtWidgets import (
     QApplication,
     QWidget,
@@ -39,48 +43,93 @@ from PyQt5.QtWidgets import (
 
 from impedance.models.circuits.fitting import wrapCircuit
 
-from ..data_treatment import ConfidenceAnalysis, Statistics
+from ..system_utilities.log_config import setup_logging
+from ..data_treatment import ConfidenceAnalysis, Statistics, calculate_rc_freq
 from ..utils.plot_factory import GeneratePlot
 
+# from .gui_ipython import ipython_terminal
+from .gui_ipython import MainConsole
 from .gui_widgets import (
     AlignComboBox,
     MultiEntryManager,
 )
 from .gui_windows import (
-    create_progress_dialog,
+    # create_progress_dialog,
     DictWindow,
     DataTreeWindow,
-    CalcRCWindow,
+    # CalcRCWindow,
     PrintWindow,
     MultiEntryWindow,
     DataViewer,
+    DataHandlerWidgets,
+    JsonDictWindow,
 )
 from .gui_workers import (
-    DataHandler,
+    # DataHandler,
+    WorkerFunctions,
     FittingWorker,
     LoadDataWorker,
     SaveResultsWorker,
     SaveFiguresWorker,
 )
+# if get_ipython() is not None:
+#     get_ipython().run_line_magic("matplotlib", "inline")
+setup_logging()
 
-if get_ipython() is not None:
-    get_ipython().run_line_magic("matplotlib", "inline")
+logger = logging.getLogger('eis_analysis')
+logger.setLevel(logging.INFO)
+
+# Configure NumPy to raise exceptions on floating-point errors
+# np.seterr(all='call')
+# def handle_numpy_error(err, flag):
+#     logger.error("NumPy error: %s, with flag %s", err, flag)
+
+# def err_handler(type, flag):
+#     print("Floating point error (%s), with flag %s" % (type, flag))
+
+# orig_handler = np.seterrcall(err_handler)
+np.seterr(all='raise')
+
+# class Log:
+#     def write(self, msg):
+#         logger.error("NumPy error: %s", msg)
+#         # print("LOG: %s" % msg)
+
+# nplog = npLog()
+# np.seterrcall(nplog)
+# np.seterr(all='log')
 
 
-class GraphGUI:
+
+# # Configure warnings to display more detailed information
+# warnings.simplefilter('always', category=RuntimeWarning)
+
+# # Redirect NumPy warnings to the logger
+# def log_warning(message, category, filename, lineno, file=None, line=None):
+#     logger.warning('%s:%s: %s: %s', file, lineno, category.__name__, message)
+
+# warnings.showwarning = log_warning
+
+class GraphGUI(QMainWindow, WorkerFunctions):
     """Class to create a GUI for plotting graphs."""
-
-    def __init__(self, root):
-        self.root = root
-        self.root.closeEvent = self.closeEvent
-        self.root.setWindowTitle("EIS Fitting")
+    close_children = pyqtSignal()
+    def __init__(self):
+        super().__init__()
+        logger.info("Starting EIS Fitting GUI")
+        # self.log = Log()
+        # self.nphand = np.seterrcall(self.log)
+        # self.nperr = np.seterr(all='log')
+        
+        
+        # self.closeEvent = self.closeEvent
+        self.setWindowTitle("EIS Fitting")
 
         # Create a central widget and set it as the central widget of the main window
-        central_widget = QWidget(self.root)
-        self.root.setCentralWidget(central_widget)
+        central_widget = QWidget(self)
+        self.setCentralWidget(central_widget)
 
         # Initialize parameters
-        self.data = DataHandler()
+        self.data = DataHandlerWidgets(callback=self.update_graphs)
 
         self.plotted_data = None
         self.line = None
@@ -92,15 +141,17 @@ class GraphGUI:
         self.progress_dialog = None
         self.fit_results = None
         self.data_viewer = None
+        self.last_file_name = ""
 
-        self.options = DictWindow(self.root, self.data.option_inits)
+        self.options = JsonDictWindow(self, self.data.option_inits, "option_inits", "Options")
         self.quick_bound_vals = DictWindow(
-            self.root, {"low": 0.1, "high": 10}, "Quick Bounds"
+            self, {"low": 0.1, "high": 10}, "Quick Bounds"
         )
 
         # Windows and special classes
-        self.calculation_window = CalcRCWindow(self, None)
-        self.print_window = PrintWindow(None)
+        self.calculation_window = MainConsole(self, **globals())
+        self.calculation_window.console.push({"root": self, "np": np, "calculate_rc_freq": calculate_rc_freq})
+        # self.print_window = PrintWindow(None)
         self.pinned = DataTreeWindow(
             None,
             ["Name", "Dataset", "Model", "Show", "Comments"],
@@ -121,20 +172,12 @@ class GraphGUI:
             interval=self.options["simulation"]["interval"],
         )
         self.bounds = MultiEntryWindow(
-            self.root,
+            self,
             num_entries=2,
             callbacks=dict(
                 save=self.validate_bounds,
                 button_Quick_Bounds=self.quick_bounds,
                 button_Boundary_Options=self.quick_bound_vals.window,
-            ),
-        )
-        self.datasets = MultiEntryWindow(
-            None,
-            has_value=False,
-            callbacks=dict(
-                save=lambda x: self.update_graphs(),
-                clear=self.clear_datasets,
             ),
         )
 
@@ -178,29 +221,16 @@ class GraphGUI:
 
         button_layout = QHBoxLayout()
 
-        def interlock_comboboxes(sender):
-            top_type = self.top_type_var.currentText()
-            top_mode = self.top_mode_var.currentIndex()
-            bot_type = self.bot_type_var.currentText()
-            bot_mode = self.bot_mode_var.currentIndex()
-
-            if top_type == bot_type and top_mode == bot_mode:
-                if sender == self.top_type_var or sender == self.top_mode_var:
-                    ind = 1 if bot_mode in [0, 1] else 5
-                    self.bot_mode_var.setCurrentIndex(ind - bot_mode)
-                else:
-                    ind = 1 if top_mode in [0, 1] else 5
-                    self.top_mode_var.setCurrentIndex(ind - top_mode)
-
-        plot_types = [
-            "Z",
-            "Y",
-            "M",
-            "ε",
-            "εᵣ",
-            "σ",
-            "ρ",
-        ]
+        # plot_types = [
+        #     "Z",
+        #     "Y",
+        #     "M",
+        #     "C",
+        #     "ε",
+        #     "εᵣ",
+        #     "σ",
+        #     "ρ",
+        # ]
 
         plot_modes = [
             "Real",
@@ -215,49 +245,50 @@ class GraphGUI:
         # Create combo boxes
         self.ny_type_var = AlignComboBox(self.control_frame)
         self.ny_type_var.setTextAlignment(Qt.AlignCenter)
-        self.ny_type_var.addItems(plot_types)
+        self.ny_type_var.addItems(self.data.plot_types)
         self.ny_type_var.setCurrentIndex(
             0
         )  # Set the default value to "Z' & Z''"
 
         self.top_type_var = AlignComboBox(self.control_frame)
         self.top_type_var.setTextAlignment(Qt.AlignCenter)
-        self.top_type_var.addItems(plot_types)
+        self.top_type_var.addItems(self.data.plot_types)
         self.top_type_var.setCurrentIndex(0)
-        self.top_type_var.currentIndexChanged.connect(
-            lambda: interlock_comboboxes(self.top_type_var)
-        )
+        # self.top_type_var.currentIndexChanged.connect(
+        #     lambda: interlock_comboboxes(self.top_type_var)
+        # )
 
         self.top_mode_var = AlignComboBox(self.control_frame)
         self.top_mode_var.setTextAlignment(Qt.AlignCenter)
         self.top_mode_var.addItems(plot_modes)
         self.top_mode_var.setCurrentIndex(0)
-        self.top_mode_var.currentIndexChanged.connect(
-            lambda: interlock_comboboxes(self.top_mode_var)
-        )
+        # self.top_mode_var.currentIndexChanged.connect(
+        #     lambda: interlock_comboboxes(self.top_mode_var)
+        # )
 
         self.bot_type_var = AlignComboBox(self.control_frame)
         self.bot_type_var.setTextAlignment(Qt.AlignCenter)
-        self.bot_type_var.addItems(plot_types)
+        self.bot_type_var.addItems(self.data.plot_types)
         self.bot_type_var.setCurrentIndex(0)
-        self.bot_type_var.currentIndexChanged.connect(
-            lambda: interlock_comboboxes(self.bot_type_var)
-        )
+        # self.bot_type_var.currentIndexChanged.connect(
+        #     lambda: interlock_comboboxes(self.bot_type_var)
+        # )
 
         self.bot_mode_var = AlignComboBox(self.control_frame)
         self.bot_mode_var.setTextAlignment(Qt.AlignCenter)
         self.bot_mode_var.addItems(plot_modes)
         self.bot_mode_var.setCurrentIndex(1)
-        self.bot_mode_var.currentIndexChanged.connect(
-            lambda: interlock_comboboxes(self.bot_mode_var)
-        )
+        # self.bot_mode_var.currentIndexChanged.connect(
+        #     lambda: interlock_comboboxes(self.bot_mode_var)
+        # )
 
-        self.dataset_var = AlignComboBox(self.control_frame)
-        self.dataset_var.setTextAlignment(Qt.AlignCenter)
-        self.dataset_var.setFixedWidth(150)
-        self.dataset_var.addItems(["None"])
-        self.dataset_var.setCurrentText("None")
-        self.dataset_var.currentIndexChanged.connect(self.update_datasets)
+        self.data.var = AlignComboBox(self.control_frame)
+        self.data.var.setTextAlignment(Qt.AlignCenter)
+        self.data.var.setFixedWidth(150)
+        self.data.var.addItems(["None"])
+        self.data.var.setCurrentText("None")
+        # self.data.var.currentIndexChanged.connect(self.update_datasets)
+        self.data.var.currentIndexChanged.connect(self.update_graphs)
 
         self.cursor_var = AlignComboBox(self.control_frame)
         self.cursor_var.setTextAlignment(Qt.AlignCenter)
@@ -266,7 +297,7 @@ class GraphGUI:
 
         self.error_var = AlignComboBox(self.control_frame)
         self.error_var.addItems(self.data.error_methods.keys())
-        self.error_var.setCurrentText(list(self.data.error_methods.keys())[0])
+        self.error_var.setCurrentText(list(self.data.error_methods.keys())[1])
         self.error_var.currentIndexChanged.connect(self.update_graphs)
 
         # Create line edits
@@ -360,7 +391,7 @@ class GraphGUI:
             dataset_label, alignment=Qt.AlignCenter
         )
         self.control_frame_layout.addWidget(
-            self.dataset_var, alignment=Qt.AlignCenter
+            self.data.var, alignment=Qt.AlignCenter
         )
         self.control_frame_layout.addWidget(
             create_separator(self.control_frame)
@@ -385,6 +416,17 @@ class GraphGUI:
             create_separator(self.control_frame)
         )
 
+        # self.control_frame_layout.addWidget(error_frame)
+        self.control_frame_layout.addLayout(error_layout)
+        error_layout.addWidget(error_label, 0, 0)
+        error_layout.addWidget(self.error_var, 0, 1)
+        error_layout.addWidget(self.error_printout, 1, 0)
+
+        self.control_frame_layout.addWidget(
+            create_separator(self.control_frame)
+        )
+
+        # ------------------- Create the plot controls layout -------------------
         # self.control_frame_layout.addWidget(cols_frame)
         self.control_frame_layout.addLayout(cols_layout)
         # Add widgets to the grid layout
@@ -441,21 +483,6 @@ class GraphGUI:
             create_separator(self.control_frame)
         )
 
-        # self.control_frame_layout.addWidget(error_frame)
-        self.control_frame_layout.addLayout(error_layout)
-        error_layout.addWidget(error_label, 0, 0)
-        error_layout.addWidget(self.error_var, 0, 1)
-        error_layout.addWidget(self.error_printout, 1, 0)
-
-        self.control_frame_layout.addWidget(
-            create_separator(self.control_frame)
-        )
-
-        # # self.control_frame_layout.addWidget(freq_frame)
-        # self.control_frame_layout.addLayout(freq_layout)
-        # freq_layout.addWidget(cursor_label, 0, 0)
-        # freq_layout.addWidget(self.cursor_var, 0, 1)
-        # freq_layout.addWidget(self.cursor_printout, 1, 0)
 
         # self.control_frame_layout.addWidget(freq_frame)
         self.control_frame_layout.addLayout(freq_layout)
@@ -545,66 +572,74 @@ class GraphGUI:
 
     def create_menu(self):
         """Create the menu bar for the GUI."""
-        menu_bar = QMenuBar(self.root)
-        self.root.setMenuBar(menu_bar)
+        menu_bar = QMenuBar(self)
+        self.setMenuBar(menu_bar)
 
-        file_menu = QMenu("File", self.root)
+        file_menu = QMenu("File", self)
         menu_bar.addMenu(file_menu)
 
         file_menu.addAction("Load Data", self.load_data)
-        file_menu.addAction("Save Results", self.save_results)
-        file_menu.addAction("Save Figures", self.save_figures)
+        file_menu.addAction("Save", lambda: self.save_results(direct_save=True))
+        file_menu.addAction("Save As", lambda: self.save_results(direct_save=False))
+        file_menu.addAction("Export Figures", self.save_figures)
         file_menu.addSeparator()
-        file_menu.addAction("Close", self.root.close)
+        file_menu.addAction("Close", self.close)
 
-        data_menu = QMenu("Data", self.root)
+        data_menu = QMenu("Data", self)
         menu_bar.addMenu(data_menu)
 
         data_menu.addAction("Undo", self.undo)
         data_menu.addAction("View Std Values", self.parameters_std.show)
         
         data_menu.addSeparator()
-        data_menu.addAction("Dataset Data", self.edit_data)
-        data_menu.addAction("Dataset Visibility", self.datasets.show)
+        data_menu.addAction("Data List", self.data.show)
+        data_menu.addAction("Dataset Points", self.edit_data)
+        data_menu.addSeparator()
+        data_menu.addAction("Clear Data", self.clear_datasets)
 
-        fitting_menu = QMenu("Fitting", self.root)
+        fitting_menu = QMenu("Fitting", self)
         menu_bar.addMenu(fitting_menu)
         
         fitting_menu.addSeparator()
         fitting_menu.addAction("Quick Bounds", self.quick_bounds)
         fitting_menu.addAction("Modify Bounds", self.bounds.show)
         fitting_menu.addSeparator()
-        fitting_menu.addAction("Run Fit", self.run_fit)
-        fitting_menu.addAction("Run Bootstrap", self.run_bootstrap)
-        fitting_menu.addAction("Apply Results", self.apply_fit_results)
+        fitting_menu.addAction("Run Normal Fit", self.run_fit)
+        fitting_menu.addAction("Run Iterative Fit", self.run_iterative)
+        fitting_menu.addAction("Run Bootstrap Fit", self.run_bootstrap)
+        fitting_menu.addSeparator()
+        fitting_menu.addAction("View Last Results", self.apply_fit_results)
 
-        tools_menu = QMenu("Tools", self.root)
+        tools_menu = QMenu("Tools", self)
         menu_bar.addMenu(tools_menu)
 
         tools_menu.addAction("Pinned Results", self.pinned.show)
-        tools_menu.addAction("Print Window", self.print_window.show)
+        # tools_menu.addAction("Print Window", self.print_window.show)
         tools_menu.addSeparator()
-        tools_menu.addAction("Calculate RC", self.calculation_window.show)
+        tools_menu.addAction("IPython Terminal", self.calculation_window.show)
         tools_menu.addSeparator()
         tools_menu.addAction("Options", self.options.window)
 
-        # options_menu = QMenu("Options", self.root)
+        # options_menu = QMenu("Options", self)
         # menu_bar.addMenu(options_menu)
         
-    def close_all_windows(self):
-        """Close all windows associated with the GUI."""
-        if self.calculation_window.window:
-            self.calculation_window.window.close()
-        if self.print_window.window:
-            self.print_window.window.close()
-        if self.pinned.window:
-            self.pinned.window.close()
-        if self.datasets.window:
-            self.datasets.window.close()
+    # def close_all_windows(self):
+    #     """Close all windows associated with the GUI."""
+
+    #     # if self.data.window:
+    #     #     self.data.window.close()
+    #     # if self.datasets.window:
+    #     #     self.datasets.window.close()
 
     def closeEvent(self, event):
         """Catch the close event and close all windows."""
-        self.close_all_windows()
+        self.close_children.emit()
+        if self.calculation_window and not sip.isdeleted(self.calculation_window):
+            self.calculation_window.close()
+        # if self.print_window.window:
+        #     self.print_window.window.close()
+        if self.pinned.window:
+            self.pinned.window.close()
         event.accept()
 
     def update_model_frame(self, update_plots=True):
@@ -614,11 +649,10 @@ class GraphGUI:
 
         if self.data.model.lower() == "linkk":
             param_values = self.data.generate_linkk(
-                self.data.raw[self.dataset_var.currentText()].base_df(
-                    None, "frequency"
-                ),
+                self.data.base_df(self.data.primary(), None, "frequency", self.options["simulation"]["area (cm^2)"], self.options["simulation"]["thickness (cm)"]),# dx=self.options["simulation"]["dx"]),
                 area=self.options["simulation"]["area (cm^2)"],
                 thickness=self.options["simulation"]["thickness (cm)"],
+                # dx=self.options["simulation"]["dx"],
                 **self.options["linkk"],
             )
 
@@ -662,7 +696,7 @@ class GraphGUI:
             )
 
         self.ci_inputs = None
-        self.print_window.write("Model updated")
+        # self.print_window.write("Model updated")
         if update_plots:
             self.update_graphs()
 
@@ -671,74 +705,13 @@ class GraphGUI:
         self.parameters.undo_recent()
         self.parameters_std.undo_recent()
 
-    def run_in_thread(
-            self,
-            finished_slot,
-            error_slot,
-            progress_slot=None,
-            progress_dialog=None,
-    ):
-        """Helper function to run a worker in a separate thread with optional progress dialog."""
-        self.thread = QThread()
-        self.worker.moveToThread(self.thread)
-
-        self.thread.started.connect(self.worker.run)
-        self.worker.finished.connect(finished_slot)
-        self.worker.error.connect(error_slot)
-        self.worker.finished.connect(self.thread.quit)
-        self.worker.finished.connect(self.worker.deleteLater)
-        self.thread.finished.connect(self.thread.deleteLater)
-
-        # Connect progress signal if provided
-        if progress_slot:
-            self.worker.progress.connect(progress_slot)
-
-        self.thread.start()
-        return progress_dialog
-
-    def on_worker_error(self, error_message):
-        self.progress_dialog.close()
-        self.kill_operation = False
-        QMessageBox.critical(
-            self.root, "Error", f"Operation failed: {error_message}"
-        )
-
-    def update_progress(self, value):
-        """Update the progress bar."""
-        self.progress_dialog.setValue(value)
-
-    def cancel_operation(self):
-        """Cancel the bootstrap fit."""
-        self.kill_operation = True  # Set cancellation flag
-
-    def load_data(self):
-        """Load the data from a file."""
-        file_path, _ = QFileDialog.getOpenFileName(
-            None,
-            "Open File",
-            "",
-            "Excel files (*.xlsx);;CSV files (*.csv);;All files (*.*)",
-        )
-
-        if file_path:
-            self.worker = LoadDataWorker(file_path, self.options)
-            self.progress_dialog = create_progress_dialog(
-                self.root, title="Loading Data", label_text="Loading data..."
-            )
-            self.progress_dialog.show()
-            self.progress_dialog.setMaximum(0)
-            self.run_in_thread(
-                self.io_data_finished,
-                self.on_worker_error,
-                progress_dialog=self.progress_dialog,
-            )
 
     def edit_data(self):
         """Edit the data in a separate window."""
         if self.data.raw:
             form = self.data.var_val[self.ny_type_var.currentText()]
-            dataset = self.data.raw[self.dataset_var.currentText()].base_df(form, "frequency")
-            self.data_viewer = DataViewer(dataset, self.root, "Raw Data")
+            dataset = self.data.base_df(self.data.primary(), form, "frequency", self.options["simulation"]["area (cm^2)"], self.options["simulation"]["thickness (cm)"])# dx=self.options["simulation"]["dx"])
+            self.data_viewer = DataViewer(dataset, self, "Raw Data")
 
             # Create an event loop to block execution until the DataViewer is closed
             loop = QEventLoop()
@@ -747,42 +720,82 @@ class GraphGUI:
 
             if len(dataset) != len(self.data_viewer.data) or (dataset.to_numpy() != self.data_viewer.data.to_numpy()).any():
                 reply = QMessageBox.question(
-                    self.root,
+                    self,
                     "Apply Changes",
                     "The data has been modified. Do you want to apply?\n(Note: This will overwrite the original data)",
                     QMessageBox.Yes | QMessageBox.No,
                     QMessageBox.Yes,
                 )
                 if reply == QMessageBox.Yes:
-                    self.data.raw[self.dataset_var.currentText()].update(self.data_viewer.data, form=form)
+                    self.data.update_system(
+                        self.data.primary(),
+                        self.data_viewer.data,
+                        form=form,
+                        thickness=self.options["simulation"]["thickness (cm)"],
+                        area=self.options["simulation"]["area (cm^2)"],
+                        # dx=self.options["simulation"]["dx"],
+                        )
                     self.data_viewer = None
                     self.update_graphs()
 
-    def save_results(self):
-        """Save the fit results to a file."""
-        file_path, _ = QFileDialog.getSaveFileName(
-            self.root,
-            "Save File",
-            self.dataset_var.currentText(),
+    def load_data(self):
+        """Load the data from a file."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            None,
+            "Open File",
+            str(self.data.load_dir),
             "Excel files (*.xlsx);;CSV files (*.csv);;All files (*.*)",
         )
 
         if file_path:
+            # self.data.load_dir = Path(file_path).parent
+            self.data.save_settings(load_dir=Path(file_path).parent)
+            if not self.last_file_name:
+                self.last_file_name = Path(file_path).stem
+            self.worker = LoadDataWorker(file_path, self.options)
+            self.create_progress_dialog(
+                self, title="Loading Data", label_text="Loading data...", maximum=0
+            )
+            # self.progress_dialog.show()
+            # self.progress_dialog.setMaximum(0)
+            self.run_in_thread(
+                self.io_data_finished,
+                self.on_worker_error,
+                progress_dialog=self.progress_dialog,
+            )
+
+    def save_results(self, *_, direct_save=False):
+        """Save the fit results to a file."""
+        file_path = str(self.data.save_dir / (self.last_file_name or self.data.primary()))
+        
+        if not self.last_file_name or not direct_save or not Path(file_path).exists():
+            file_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Save File",
+                file_path,
+                "Excel files (*.xlsx);;CSV files (*.csv);;All files (*.*)",
+            )
+
+        if file_path:
+            # self.data.save_dir = Path(file_path).parent
+            self.data.save_settings(save_dir=Path(file_path).parent)
+            self.last_file_name = Path(file_path).stem
             self.worker = SaveResultsWorker(
                 file_path,
                 self.data,
                 self.options,
                 self.pinned,
                 self.parameters,
-                self.dataset_var,
+                self.data.var,
             )
-            self.progress_dialog = create_progress_dialog(
-                self.root,
-                title="Saving Results",
+            self.create_progress_dialog(
+                self,
+                title="Save Results",
                 label_text="Saving results...",
+                maximum=0,
             )
-            self.progress_dialog.show()
-            self.progress_dialog.setMaximum(0)
+            # self.progress_dialog.show()
+            # self.progress_dialog.setMaximum(0)
             self.run_in_thread(
                 self.io_data_finished,
                 self.on_worker_error,
@@ -792,21 +805,24 @@ class GraphGUI:
     def save_figures(self):
         """Save the figures to a file."""
         file_path, _ = QFileDialog.getSaveFileName(
-            self.root,
+            self,
             "Save Figures",
-            self.dataset_var.currentText(),
+            str(self.data.export_dir / self.data.primary()),
             "PNG files (*.png);;All files (*.*)",
         )
 
         if file_path:
+            # self.data.export_dir = Path(file_path).parent
+            self.data.save_settings(export_dir=Path(file_path).parent)
             self.worker = SaveFiguresWorker(file_path, self.fig1, self.fig2)
-            self.progress_dialog = create_progress_dialog(
-                self.root,
-                title="Saving Figures",
+            self.create_progress_dialog(
+                self,
+                title="Save Figures",
                 label_text="Saving figures...",
+                maximum=0,
             )
-            self.progress_dialog.show()
-            self.progress_dialog.setMaximum(0)
+            # self.progress_dialog.show()
+            # self.progress_dialog.setMaximum(0)
             self.run_in_thread(
                 self.io_data_finished,
                 self.on_worker_error,
@@ -816,38 +832,41 @@ class GraphGUI:
     def io_data_finished(self, valid_sheets=None, df_in=None):
         """Handle the completion of data I/O operations."""
         if valid_sheets is not None:
-            self.data.raw.update(valid_sheets)
-            self.datasets.update_entries(list(self.data.raw.keys()))
-            self.dataset_var.clear()
-            self.dataset_var.setCurrentText("")
-            self.dataset_var.addItems(list(self.data.raw.keys()) + ["None"])
-
-            if self.data.raw:
-                first_key = next(iter(self.data.raw))
-                self.dataset_var.setCurrentText(first_key)
-                self.datasets.highlight(
-                    self.dataset_var.currentText(), check=True
-                )
-                self.update_graphs()
-
+            for key, value in valid_sheets.items():
+                self.data.update_system(key, value)
+                # self.data*5
+            
+            self.data.update_var()
+            self.update_graphs()
         if df_in is not None:
             self.pinned.append_df(df_in)
 
         self.progress_dialog.close()
+        self.progress_dialog.deleteLater()
         self.kill_operation = False
 
     def clear_datasets(self):
         """Clear the current datasets."""
         self.data.raw = {}
-        self.datasets.clear()
-        self.dataset_var.clear()
-        self.dataset_var.setCurrentText("None")
+        # self.datasets.clear()
+                # self.data.var = AlignComboBox(self.control_frame)
+        # self.data.var.setTextAlignment(Qt.AlignCenter)
+        # self.data.var.setFixedWidth(150)
+        # self.data.var.addItems(["None"])
+        # self.data.var.setCurrentText("None")
+        # self.data.var.currentIndexChanged.connect(self.update_datasets)
+        # self.data.var.currentIndexChanged.connect(self.update_graphs)
+        self.data.var.clear()
+        self.data.var.addItems(["None"])
+        self.data.set_var("None")
         self.update_graphs()
 
     def update_datasets(self, update_plots=True):  # , *args
         """Update the scatter data based on the selected dataset."""
-        if self.data.raw and self.dataset_var.currentText() in self.data.raw:
-            self.datasets.highlight(self.dataset_var.currentText(), check=True)
+        current = self.data.primary()
+
+        if self.data.primary() in self.data.raw:
+            self.data.highlight(self.data.primary())
             if update_plots:
                 self.update_graphs()
 
@@ -855,7 +874,7 @@ class GraphGUI:
         """Add a new pinned result to the treeview."""
 
         # Get the current dataset name
-        dataset_name = self.dataset_var.currentText()
+        dataset_name = self.data.primary()
 
         # Determine the default name
         if not self.pinned.df.empty:
@@ -912,9 +931,8 @@ class GraphGUI:
         }
 
         # Update the dataset if available
-        if self.data.raw != {} and dataset in self.data.raw.keys():
-            self.dataset_var.setCurrentText(dataset)
-            self.update_datasets(False)
+        if dataset in self.data.raw:
+            self.data.set_var(dataset)
 
         # Update the model
         if hasattr(self, "model_entry"):
@@ -941,8 +959,10 @@ class GraphGUI:
         self.parameters_std.values = list(param_stds.values())
 
         self.ci_inputs = None
-        self.root.activateWindow()
-        self.update_datasets()
+        self.activateWindow()
+        if self.data.primary() in self.data.raw:
+            self.data.highlight(self.data.primary())
+            self.update_graphs()
 
     def validate_bounds(self, bounds):
         """Validate the bounds for the parameter values."""
@@ -978,14 +998,16 @@ class GraphGUI:
 
         if scatter_df is None:
             # Parse data
-            if (
-                    self.data.raw != {}
-                    and self.dataset_var.currentText() in self.data.raw.keys()
-            ):
-                system_data = self.data.raw[self.dataset_var.currentText()]
-                scatter_df = system_data.get_custom_df(
-                    "freq", bode_y1, bode_y2
-                )
+            if self.data.primary() in self.data.raw:
+                scatter_df = self.data.custom_df(
+                    self.data.primary(),
+                    "freq", 
+                    bode_y1,
+                    bode_y2, 
+                    area=self.options["simulation"]["area (cm^2)"], 
+                    thickness=self.options["simulation"]["thickness (cm)"],
+                    # dx=self.options["simulation"]["dx"],
+                    )
             else:
                 self.error_printout.setText("Error: N/A")
                 return
@@ -994,8 +1016,8 @@ class GraphGUI:
             generated_df = self.data.generate(
                 [entry.values[0] for entry in self.parameters],
                 freq=scatter_df["freq"].to_numpy(),
-                **self.options["simulation"],
-            ).get_custom_df("freq", bode_y1, bode_y2)
+                **{**self.options["simulation"], **{"interp": False}},
+            ).get_df("freq", bode_y1, bode_y2)
 
         if self.options["simulation"]["limit_error"]:
             # Retrieve f_min and f_max from options
@@ -1012,8 +1034,9 @@ class GraphGUI:
                 ]
 
             if scatter_df.empty:
+                logger.warning("Attempted error update: The specified frequency range resulted in an empty dataset.")
                 QMessageBox.warning(
-                    self.root,
+                    self,
                     "Warning",
                     "No data points within the specified frequency range.",
                 )
@@ -1024,7 +1047,7 @@ class GraphGUI:
                     [entry.values[0] for entry in self.parameters],
                     freq=scatter_df["freq"].to_numpy(),
                     **self.options["simulation"],
-                ).get_custom_df("freq", bode_y1, bode_y2)
+                ).get_df("freq", bode_y1, bode_y2)
 
         if len(scatter_df) != len(generated_df):
             self.error_printout.setText("Error: N/A")
@@ -1061,8 +1084,15 @@ class GraphGUI:
         self.plotted_data = {}
         self.parameters.update_interval(self.options["simulation"]["interval"])
         params_values = [entry.values[0] for entry in self.parameters]
+        
+        sim_freq=None
+        if self.data.raw and not self.options["simulation"]["sim_param_freq"]:
+            sim_freq = self.data.raw[self.data.primary()]["freq"]
+
         generated_df = self.data.generate(
-            params_values, **self.options["simulation"]
+            params_values,
+            freq=sim_freq,
+            **self.options["simulation"]
         )
 
         ny_x = f"{self.data.var_val[self.ny_type_var.currentText()]}.real"
@@ -1129,12 +1159,15 @@ class GraphGUI:
 
         # Parse data
         main_dataset = (
-            "Model" if self.data.raw == {} else self.dataset_var.currentText()
+            "Model" if not self.data.raw else self.data.primary()
         )
         checked_names = []
-        if self.data.raw != {}:
-            main_dataset = self.dataset_var.currentText()
-            checked_names = self.datasets.checked_names.copy()
+        if self.data.raw:
+            main_dataset = self.data.primary()
+            if not self.data.is_highlighted(main_dataset):
+                self.data.highlight(main_dataset)
+            # checked_names = self.datasets.checked_names.copy()
+            checked_names = self.data.get_checked()
 
             if main_dataset in checked_names:
                 checked_names.remove(main_dataset)
@@ -1224,7 +1257,7 @@ class GraphGUI:
 
         ### Begin Plots
         ## Begin Scatter plots
-        if self.data.raw != {}:
+        if self.data.raw:
             self.update_error()
             n_cmap = 0
             for key in checked_names:
@@ -1232,22 +1265,25 @@ class GraphGUI:
                 # Plot scatter
                 self.nyquist_plot.plot(
                     "scatter",
-                    system_data.get_custom_df(ny_x, ny_y, "freq"),
-                    label=f"_{key}",
+                    system_data.get_df(ny_x, ny_y, "freq"),
+                    # label=f"_{key}",
+                    label=self.data.get_label(key),
                     styling="freq",
                     marker=markers[n_cmap],
                     **GeneratePlot.DecadeCmapNorm(
                         system_data["freq"], cmap=cmaps[0][n_cmap]
                     ),
                 )
-                self.nyquist_plot.annotate(
-                    system_data.get_custom_df(ny_x, ny_y, "freq")
-                )
+                if self.data.get_mark(key):
+                    self.nyquist_plot.annotate(
+                        system_data.get_df(ny_x, ny_y, "freq")
+                    )
 
                 self.bode_plot.plot(
                     "scatter",
-                    system_data.get_custom_df("freq", bode_y1, bode_y2),
-                    label=f"_{key}",
+                    system_data.get_df("freq", bode_y1, bode_y2),
+                    # label=f"_{key}",
+                    label=self.data.get_label(key),
                     styling="freq",
                     marker=markers[n_cmap],
                     **GeneratePlot.DecadeCmapNorm(
@@ -1272,18 +1308,18 @@ class GraphGUI:
         # plot generated
         self.nyquist_plot.plot(
             "line",
-            generated_df.get_custom_df(ny_x, ny_y, "freq"),
+            generated_df.get_df(ny_x, ny_y, "freq"),
             label="_model",
             styling="r",
         )
 
         self.nyquist_plot.annotate(
-            generated_df.get_custom_df(ny_x, ny_y, "freq"), color="r"
+            generated_df.get_df(ny_x, ny_y, "freq"), color="r"
         )
 
         self.bode_plot.plot(
             "line",
-            generated_df.get_custom_df("freq", bode_y1, bode_y2),
+            generated_df.get_df("freq", bode_y1, bode_y2),
             label="_model",
             styling="r",
         )
@@ -1313,6 +1349,7 @@ class GraphGUI:
                 "target_form": ["freq", bode_y1, bode_y2],
                 "thickness": self.options["simulation"]["thickness (cm)"],
                 "area": self.options["simulation"]["area (cm^2)"],
+                "dx": self.options["simulation"]["dx"],
             }
             if self.ci_inputs is None:
                 self.ci_inputs = ci_inputs
@@ -1343,6 +1380,7 @@ class GraphGUI:
                     target_form=["freq", bode_y1, bode_y2],
                     thickness=self.options["simulation"]["thickness (cm)"],
                     area=self.options["simulation"]["area (cm^2)"],
+                    # dx=self.options["simulation"]["dx"],
                 )
                 self.ci_inputs["ci_df"] = ci_df
             else:
@@ -1393,13 +1431,13 @@ class GraphGUI:
                 # Plot pinned results using GeneratePlot objects
                 self.nyquist_plot.plot(
                     "line",
-                    pinned_df.get_custom_df(ny_x, ny_y, "freq"),
+                    pinned_df.get_df(ny_x, ny_y, "freq"),
                     styling=row["Show"],
                     label=name,
                 )
                 self.bode_plot.plot(
                     "line",
-                    pinned_df.get_custom_df("freq", bode_y1, bode_y2),
+                    pinned_df.get_df("freq", bode_y1, bode_y2),
                     styling=row["Show"],
                     label=name,
                 )
@@ -1418,8 +1456,13 @@ class GraphGUI:
         self.canvas2.draw()
 
         self.cursor_var.clear()
-        self.cursor_var.addItems(list(self.plotted_data.keys()))
-        self.print_window.write("Graphs updated")
+        # Get the list of items and remove "Model" if it exists
+        items = list(self.plotted_data.keys())
+        if "Model" in items:
+            items.remove("Model")
+            items.append("Model")  # Add "Model" to the end of the list
+        self.cursor_var.addItems(items)
+        # self.print_window.write("Graphs updated")
 
     def update_line_data(self):
         """Update the line data in real-time."""
@@ -1428,9 +1471,14 @@ class GraphGUI:
                 self.data.parse_parameters(self.data.model)
         ):
             return
+        
+        sim_freq=None
+        if self.data.raw and not self.options["simulation"]["sim_param_freq"]:
+            sim_freq = self.data.raw[self.data.primary()]["freq"]
 
         generated_df = self.data.generate(
             [entry.values[0] for entry in self.parameters],
+            freq=sim_freq,
             **self.options["simulation"],
         )
         self.parameters.update_history()
@@ -1445,7 +1493,7 @@ class GraphGUI:
 
         keys = [[ny_x, ny_y], ["freq", bode_y1], ["freq", bode_y2]]
         if self.line is not None:
-            if self.data.raw != {}:
+            if self.data.raw:
                 self.update_error()
             self.plotted_data["Model"] = generated_df
 
@@ -1458,14 +1506,14 @@ class GraphGUI:
                 self.nyquist_plot.scale()
                 self.nyquist_plot.square()
                 self.nyquist_plot.update_annotation(
-                    data=generated_df.get_custom_df(*keys[0], "freq"),
+                    data=generated_df.get_df(*keys[0], "freq"),
                     index=self.line_count - 1,
                     color="r",
                 )
 
             self.canvas1.draw()
             self.canvas2.draw()
-        self.print_window.write("Line data updated")
+        # self.print_window.write("Line data updated")
 
     def update_format(self):
         if self.nyquist_plot is not None:
@@ -1519,8 +1567,8 @@ class GraphGUI:
             elif ax == self.ax3:
                 y_col = f"{self.data.var_val[self.bot_type_var.currentText()]}.{self.data.var_val[self.bot_mode_var.currentText()]}"
             if y_col is not None:
-                x_arr = np.log10(df[x_col]) if ax.get_xscale() == "log" else df[x_col]
-                y_arr = np.log10(df[y_col]) if ax.get_yscale() == "log" else df[y_col]
+                x_arr = np.log10(abs(df[x_col])) if ax.get_xscale() == "log" else df[x_col]
+                y_arr = np.log10(abs(df[y_col])) if ax.get_yscale() == "log" else df[y_col]
                 xlim = np.diff(np.log10(ax.get_xlim()))[0] if ax.get_xscale() == "log" else np.diff(ax.get_xlim())[0]
                 ylim = np.diff(np.log10(ax.get_ylim()))[0] if ax.get_yscale() == "log" else np.diff(ax.get_ylim())[0]
                 
@@ -1544,7 +1592,7 @@ class GraphGUI:
             self.run_fit()
         else:
             iterations, ok = QInputDialog.getInt(
-                self.root,
+                self,
                 "Bootstrap Fit",
                 "Enter the number of iterations:",
                 500,  # Default value
@@ -1554,55 +1602,75 @@ class GraphGUI:
             )
 
             if ok:
-                self.run_fit(iterations=iterations)
+                self.run_fit(iterations=iterations, run_type="bootstrap")
+    
+    def run_iterative(self):
+        """Run the bootstrap fit based on the selected model."""
+        # Create a popup to get the number of desired iterations
+        if self.data.model.lower() == "linkk":
+            self.run_fit()
+        else:
+            iterations, ok = QInputDialog.getInt(
+                self,
+                "Iterative Fit",
+                "Enter the number of iterations:",
+                10,  # Default value
+                1,  # Minimum value
+                100000,  # Maximum value
+                1,  # Step
+            )
+
+            if ok:
+                self.run_fit(iterations=iterations, run_type="iterative")
 
     # Method to handle fitting and status updates
-    def run_fit(self, iterations=1):
+    def run_fit(self, iterations=1, run_type="fit"):
         """Run the circuit fit based on the selected model."""
-        if self.data.raw == {}:
-            QMessageBox.critical(self.root, "Error", "No data to fit.")
+        if not self.data.raw:
+            QMessageBox.critical(self, "Error", "No data to fit.")
             return
 
         if self.data.model.lower() == "linkk":
             param_values = self.data.generate_linkk(
-                self.data.raw[self.dataset_var.currentText()].base_df(
-                    None, "frequency"
-                ),
+                self.data.base_df(self.data.primary(), None, "frequency", self.options["simulation"]["area (cm^2)"], self.options["simulation"]["thickness (cm)"]),# dx=self.options["simulation"]["dx"]),
+
                 area=self.options["simulation"]["area (cm^2)"],
                 thickness=self.options["simulation"]["thickness (cm)"],
+                # dx=self.options["simulation"]["dx"],
                 **self.options["linkk"],
             )
             self.parameters.values = param_values
 
-            self.print_window.write("\n")
-            self.print_window.write(
-                "Completed Lin-KK Fit\nM = {:d}\nmu = {:.2f}".format(
-                    param_values[0], param_values[1]
-                )
-            )
+            # self.print_window.write("\n")
+            # self.print_window.write(
+            #     "Completed Lin-KK Fit\nM = {:d}\nmu = {:.2f}".format(
+            #         param_values[0], param_values[1]
+            #     )
+            # )
             self.update_graphs()
-            self.progress_dialog.close()
+            # self.progress_dialog.close()
             self.kill_operation = False
             return
 
         if iterations <= 1:
-            self.progress_dialog = create_progress_dialog(
-                self.root,
-                title="Running Fit",
+            self.create_progress_dialog(
+                self,
+                title="Running Single Fit",
                 label_text="Fitting data...",
+                cancel="Cancel Operation",
                 maximum=0,
             )
         else:
-            self.progress_dialog = create_progress_dialog(
+            self.create_progress_dialog(
                 None,
-                title="Running Fit",
+                title="Running Multiple Fits",
                 label_text="Fitting data...",
-                cancel="Cancel Bootstrap",
+                cancel="Cancel Operation",
             )
-        self.progress_dialog.canceled.connect(self.cancel_operation)
-        self.progress_dialog.show()
+        # self.progress_dialog.canceled.connect(self.cancel_operation)
+        # self.progress_dialog.show()
 
-        self.worker = FittingWorker(self, iterations)
+        self.worker = FittingWorker(self, iterations, run_type)
 
         self.run_in_thread(
             self.on_fitting_finished,
@@ -1613,7 +1681,12 @@ class GraphGUI:
 
     def on_fitting_finished(self, fit_results):
         """Handle the completion of the fitting operation."""
-
+        if fit_results is None:
+            self.progress_dialog.close()
+            self.progress_dialog.deleteLater()
+            self.kill_operation = False
+            return
+        
         if "mean" not in fit_results.index or "std" not in fit_results.index:
             fit_attrs = fit_results.attrs.copy()
             fit_results = fit_results.describe()
@@ -1621,46 +1694,87 @@ class GraphGUI:
 
         self.fit_results = fit_results
         self.progress_dialog.close()
+        self.progress_dialog.deleteLater()
         self.kill_operation = False
-        # Normal fit or parsed bootstrap fit
-        reply = QMessageBox.question(
-            self.root,
-            "Update Parameters",
-            "Do you want to update the parameters with the fit results?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
-        )
-        if reply == QMessageBox.Yes:
-            self.apply_fit_results()
+        self.apply_fit_results()
+
 
     def apply_fit_results(self):
         """Apply the fit results to the parameters."""
         if self.fit_results is None:
+            QMessageBox.warning(
+                    self,
+                    "Warning",
+                    "No fit results to apply.",
+                )
             return
+        try:
+            fit_vals = "\n".join(["{}: {:.2e} ± {:.2e}".format(name, self.fit_results.loc["mean", name], self.fit_results.loc["std", name]) for name in self.fit_results.columns])
+            reply = QMessageBox.question(
+                self,
+                "Update Parameters",
+                "<b>Do you want to update the parameters with the fit results?\nResults:</b>\n" + fit_vals,
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if reply == QMessageBox.Yes:
+                df_attrs = self.fit_results.attrs
+                if (
+                        self.data.model != df_attrs["model"]
+                        or self.data.primary() != df_attrs["dataset_var"]
+                ):
+                    self.data.model = df_attrs["model"]
+                    self.model_entry.setText(self.data.model)
+                    self.data.set_var(df_attrs["dataset_var"])
+                    self.update_model_frame(False)
 
-        df_attrs = self.fit_results.attrs
-        if (
-                self.data.model != df_attrs["model"]
-                or self.dataset_var.currentText() != df_attrs["dataset_var"]
-        ):
-            self.data.model = df_attrs["model"]
-            self.model_entry.setText(self.data.model)
-            self.dataset_var.setCurrentText(df_attrs["dataset_var"])
-            self.update_model_frame(False)
+                self.options["simulation"]["thickness (cm)"] = df_attrs["thickness"]
+                self.options["simulation"]["area (cm^2)"] = df_attrs["area"]
+                self.options["simulation"]["dx"] = df_attrs["dx"]
 
-        self.options["simulation"]["thickness (cm)"] = df_attrs["thickness"]
-        self.options["simulation"]["area (cm^2)"] = df_attrs["area"]
+                for name in self.fit_results.columns:
+                    self.parameters[name] = [self.fit_results.loc["mean", name]]
+                    self.parameters_std[name] = [self.fit_results.loc["std", name]]
 
-        for name in self.fit_results.columns:
-            self.parameters[name] = [self.fit_results.loc["mean", name]]
-            self.parameters_std[name] = [self.fit_results.loc["std", name]]
+                self.update_graphs()
+        
+        except (KeyError, IndexError, ValueError, TypeError) as exc:
+            QMessageBox.critical(self.root, "Error", f"Error in fit wrap-up: {exc}.")
 
-        self.update_graphs()
 
 # Main entry point for the application
 if __name__ == "__main__":
+    # from IPython import get_ipython
     app = QApplication(sys.argv)
-    main_window = QMainWindow()
-    ui = GraphGUI(main_window)
-    main_window.show()
-    sys.exit(app.exec_())
+    window = GraphGUI()
+    window.show()
+    shell = get_ipython()
+    if shell is not None:
+        try:
+            from IPython.lib.guisupport import is_event_loop_running_qt4, start_event_loop_qt4
+            if not is_event_loop_running_qt4():
+                print(f"'%gui' changed from {shell.active_eventloop} to 'qt'")
+                shell.run_line_magic("gui", "qt")
+            start_event_loop_qt4(app)
+        except ImportError:
+            sys.exit(app.exec_())
+    else:
+        sys.exit(app.exec_())
+
+    # print(str(get_ipython()))
+    # app = QApplication(sys.argv)
+    # main_window = GraphGUI()
+    # main_window.show()
+    # print(str(get_ipython()))
+    # if get_ipython() is not None:
+    #     try:
+    #         print("Starting event loop")
+    #         from IPython.lib.guisupport import start_event_loop_qt4
+    #         start_event_loop_qt4(app)
+    #     except ImportError:
+    #         sys.exit(app.exec_())
+    # else:
+    #     sys.exit(app.exec_())
+    # main_window = QMainWindow()
+    
+    # sys.exit(app.exec_())

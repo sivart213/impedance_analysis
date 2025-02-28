@@ -28,8 +28,18 @@ from ..string_ops import format_number
 class AlignComboBox(QComboBox):
     """Class to create a combobox with custom alignment."""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, items=None, init=None, width=None, alignment=None):
         super(AlignComboBox, self).__init__(parent)
+        if items is not None:
+            self.addItems(items)
+        if isinstance(init, (int, float)):
+            self.setCurrentIndex(init)
+        elif isinstance(init, str):
+            self.setCurrentText(init)
+        if width is not None:
+            self.setFixedWidth(width)
+        if alignment is not None:
+            self.setTextAlignment(alignment)
 
     def setTextAlignment(self, alignment):
         """Set the alignment of the combobox."""
@@ -732,6 +742,27 @@ class MultiEntryManager:
         if self._history:
             return True
         return False
+    
+    @property
+    def value_dict(self):
+        """Return a dictionary of the current values with the entry names as keys."""
+        if self.num_entries == 1:
+            return dict(zip(self.names, [val[0] for val in self.values]))
+        return dict(zip(self.names, self.values))
+    
+    @property
+    def checked_dict(self):
+        """Return a dictionary of the checked values with the entry names as keys."""
+        if self.num_entries == 1:
+            return dict(zip(self.checked_names, [val[0] for val in self.checked_values]))
+        return dict(zip(self.checked_names, self.checked_values))
+    
+    @property
+    def unchecked_dict(self):
+        """Return a dictionary of the unchecked values with the entry names as keys."""
+        if self.num_entries == 1:
+            return dict(zip(self.unchecked_names, [val[0] for val in self.unchecked_values]))
+        return dict(zip(self.unchecked_names, self.unchecked_values))
 
     def undo_recent(self):
         old_values = self.values.copy()

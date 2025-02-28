@@ -37,7 +37,7 @@
 - **Class**: MFIA
 - **Class**: MFIA_Freq_Sweep
 ### mfia_ops.py
-- **Function**: parse_mfia_file
+- **Function**: parse_labone_hdf5
 - **Function**: convert_mfia_data
 - **Function**: convert_mfia_time
 - **Function**: convert_mfia_df_for_fit

@@ -7,20 +7,88 @@ Created on Wed Apr 11 17:05:01 2018.
 General function file
 """
 
-import re
+# import re
+
+from collections import defaultdict, Counter
+from difflib import get_close_matches
+from copy import deepcopy
+
 import numpy as np
 import pandas as pd
 
-from collections import defaultdict
-
 from ..string_ops import (
-    common_substring,
-    str_in_list,
+    # common_substring,
+    find_common_str,
+    # str_in_list,
+    safe_eval,
     slugify,
-    re_not,
+    # re_not,
     compile_search_patterns,
 )
 from ..utils.decorators import handle_subdicts
+
+
+
+def safe_deepcopy(obj):
+    """Recursively perform a safe deepcopy for nested dictionaries, avoiding TypeError on unpicklable objects."""
+    try:
+        return deepcopy(obj)
+    except TypeError:
+        if isinstance(obj, dict):
+            return {key: safe_deepcopy(value) for key, value in obj.items()}
+        elif isinstance(obj, (list, set, tuple)):
+            return type(obj)(safe_deepcopy(item) for item in obj)
+        elif hasattr(obj, "__dict__"):
+            new_obj = obj.__class__()
+            new_obj.__dict__.update({key: safe_deepcopy(value) for key, value in obj.__dict__.items()})
+            return new_obj
+        return obj  # Return the object reference if it cannot be deepcopied
+
+def update_dict(base_dict, updater_dict):
+    """Recursively update the base dictionary with values from the update dictionary."""
+    if not base_dict or not updater_dict:
+        return
+
+    for key, value in updater_dict.items():
+        if isinstance(value, dict) and key in base_dict:
+            update_dict(base_dict[key], value)
+        else:
+            base_dict[key] = value
+        # return new_dict
+    
+def filter_dict(base_dict, filtering_dict):
+    """Recursively filter the base dictionary to keep only values present in the filter dictionary."""
+    if not filtering_dict:
+        return base_dict
+    
+    new_dict = {}        
+    for key, value in filtering_dict.items():
+        if key in base_dict:
+            if isinstance(value, dict) and isinstance(base_dict[key], dict):
+                new_dict[key] = filter_dict(base_dict[key], value)
+            else:
+                new_dict[key] = base_dict[key]
+
+    return new_dict                
+
+def check_dict(to_check_dict, base_dict):
+    """Recursively nest to_check_dict within base_dict if keys are not found at the top level."""
+    if not to_check_dict:
+        return to_check_dict
+
+    # Check if any keys of to_check_dict are in base_dict
+    keys_in_base = any(key in base_dict for key in to_check_dict)
+
+    if keys_in_base:
+        return to_check_dict
+    else:
+        # If no keys of to_check_dict are in base_dict, recurse through values of base_dict that are dicts
+        for key, value in base_dict.items():
+            if isinstance(value, dict):
+                nested_dict = check_dict(to_check_dict, value)
+                if nested_dict:
+                    return {key: nested_dict}
+        return {}
 
 def dict_level_ops(data, operation, level=1):
     """
@@ -46,8 +114,152 @@ def dict_level_ops(data, operation, level=1):
         return {k: dict_level_ops(v, operation, level - 1) for k, v in data.items()}
     else:
         return operation(data)
-    return data
+    # return data
 
+
+# def rename_from_internal_df(arg, level=0, name="name"):
+#     """
+#     Recursively renames keys in a nested dictionary based on the names found in internal DataFrames.
+
+#     Parameters:
+#     arg (dict): The nested dictionary to process.
+#     level (int, optional): The level of the dictionary to rename. Default is 0.
+#                            If -1, rename the key that contains the data.
+#     name (str, optional): The attribute name to use for renaming keys. Default is "name".
+
+#     Returns:
+#     dict: The dictionary with renamed keys based on the names found in internal DataFrames.
+#     """
+#     if not isinstance(arg, dict):
+#         return arg
+
+#     def parse_names(sub_dict):
+#         """Parse names from the internal DataFrames."""
+#         names = []
+#         for val in sub_dict.values():
+#             if isinstance(val, pd.DataFrame) and name in val.attrs.keys():
+#                 names.append(slugify(val.attrs[name], True, " "))
+#             else:
+#                 names.append(None)
+#         return names
+
+#     def rename_keys(d, names):
+#         """Rename keys in the dictionary based on the parsed names."""
+#         res = {}
+#         n_keys = list(d.keys())
+#         nvals = list(d.values())
+#         all_unique = len(names) == len(list(np.unique(names)))
+
+#         for n in range(len(d)):
+#             if names[n] is not None:
+#                 if all_unique:
+#                     res[names[n]] = nvals[n]
+#                 else:
+#                     res[n_keys[n] + "_" + names[n]] = nvals[n]
+#             else:
+#                 res[n_keys[n]] = nvals[n]
+#         return res
+    
+#     breakpoint()
+#     if level == 0:
+#         names = parse_names(arg)
+#         return rename_keys(arg, names)
+#     elif level == -1:
+#         for key, value in arg.items():
+#             if isinstance(value, dict):
+#                 names = parse_names(value)
+#                 arg[key] = rename_keys(value, names)
+#         return arg
+#     else:
+#         for key, value in arg.items():
+#             if isinstance(value, dict):
+#                 arg[key] = rename_from_internal_df(value, level - 1, name)
+#         return arg
+    
+
+def rename_from_internal_df(arg, level=0, name="name"):
+    """
+    Recursively renames keys in a nested dictionary based on the names found in internal DataFrames.
+
+    Parameters:
+    arg (dict): The nested dictionary to process.
+    level (int, optional): The level of the dictionary to rename. Default is 0.
+                           If -1, rename the key that contains the data.
+    name (str, optional): The attribute name to use for renaming keys. Default is "name".
+
+    Returns:
+    dict: The dictionary with renamed keys based on the names found in internal DataFrames.
+    """
+    if not isinstance(arg, dict):
+        return arg
+
+    def parse_names(arg_in, name="name"):
+        """Parse names from the internal DataFrames."""
+
+
+        names = []
+        if isinstance(arg_in, pd.DataFrame) and name in arg_in.attrs.keys():
+            names.append(slugify(arg_in.attrs[name], True, " "))
+        elif isinstance(arg_in, dict):
+            # names.extend([parse_names(val) for val in arg_in.values()])
+            for val in arg_in.values():
+                names.extend(parse_names(val))
+                # if isinstance(val, pd.DataFrame) and name in val.attrs.keys():
+                #     names.append(slugify(val.attrs[name], True, " "))
+                # if isinstance(val, dict):
+                # names.extend(parse_names(val))
+            # else:
+            #     names.append(None)
+        return names
+
+    # def rename_keys(d):
+    #     """Rename keys in the dictionary based on the parsed names."""
+    #     res = {}
+    #     # n_keys = list(d.keys())
+    #     # nvals = list(d.values())
+    #     # u_names = list(np.unique(names))
+    #     # all_unique = len(names) == len(list(np.unique(names)))
+    #     # if not all_unique and len(u_names) == len(d):
+    #     #     names = u_names
+    #     #     all_unique = True
+
+    #     for key, val in d.items():
+    #         names = list(np.unique(parse_names(val))) or [key]
+    #         if len(names) == 1:
+    #             name = names[0]# if len(names) == 1 else find_common_str(*names, sep=" ")
+    #         else:
+    #             name, resids = find_common_str(*names, sep=" ")
+    #             name = name + " " + max(resids, key=len)
+    #         res[name] = d[key]
+    #         # if names[n] is not None:
+    #         #     if all_unique:
+    #         #         res[names[n]] = nvals[n]
+    #         #     else:
+    #         #         res[n_keys[n] + "_" + names[n]] = nvals[n]
+    #         # else:
+    #         #     res[n_keys[n]] = nvals[n]
+    #     return res
+
+    if level == 0 or (level < 0 and not all(isinstance(v,  dict) for v in arg.values())):
+        # names = parse_names(arg)
+        # return rename_keys(arg, names)
+        res = {}
+        for key, val in arg.items():
+            names = list(np.unique(parse_names(val))) or [key]
+            if len(names) == 1:
+                name = names[0]# if len(names) == 1 else find_common_str(*names, sep=" ")
+            else:
+                name, resids = find_common_str(*names, sep=" ")
+                name = name + " " + max(resids, key=len)
+            res[name] = arg[key]
+        return res
+    else:
+        res = {}
+        for key, value in arg.items():
+            if isinstance(value, dict):
+                res[key] = rename_from_internal_df(value, level - 1, name)
+        return res
+    
 
 def rename_from_subset(arg, name="name", func=None):
     """
@@ -71,7 +283,7 @@ def rename_from_subset(arg, name="name", func=None):
         return arg
 
     if func is None:
-        func = lambda x: str(x).isnumeric()
+        func = lambda x: str(x).isnumeric() and len(str(x)) > 1
 
     # renaming is all or nothing
     if all(isinstance(v, dict) for v in arg.values()):
@@ -85,9 +297,8 @@ def rename_from_subset(arg, name="name", func=None):
                 if len(sub_names) != 0:
                     if len(sub_names) == 1:
                         sub_name = str(sub_names[0])
-
                     else:
-                        sub_name, resids = common_substring(sub_names, sep=" ")
+                        sub_name, resids = find_common_str(*sub_names, sep=" ")
                         sub_name = sub_name + " " + max(resids, key=len)
 
                     names.append(slugify(sub_name, True, " "))
@@ -103,11 +314,9 @@ def rename_from_subset(arg, name="name", func=None):
             else:
                 names.append(None)
     else:
-        names = ""
-        if name in arg.keys():
-            names = arg[name]
-        elif str_in_list(name, arg.keys()) in arg.keys():
-            names = str_in_list(name, arg.keys())
+        close_names = get_close_matches(name, list(arg.keys()))
+        if close_names:
+            names = close_names[0]
         else:
             return arg
 
@@ -128,16 +337,19 @@ def rename_from_subset(arg, name="name", func=None):
     all_unique = len(is_names) == len(list(np.unique(is_names)))
 
     for n in range(len(arg)):
-        if names[n] is not None:
-            if func(n_keys[n]):
-                if all_unique:
-                    res[names[n]] = nvals[n]
+        try:
+            if names[n] is not None:
+                if func(n_keys[n]):
+                    if all_unique:
+                        res[names[n]] = nvals[n]
+                    else:
+                        res[n_keys[n] + "_" + names[n]] = nvals[n]
                 else:
-                    res[n_keys[n] + "_" + names[n]] = nvals[n]
+                    res[n_keys[n]] = names[n]
             else:
-                res[n_keys[n]] = names[n]
-        else:
-            res[n_keys[n]] = nvals[n]
+                res[n_keys[n]] = nvals[n]
+        except IndexError as e:
+            print(e)
 
     return res
 
@@ -183,22 +395,21 @@ def dict_key_sep(data, sep="/"):
     """
     if not isinstance(data, dict):
         return data
+
     blank = {}
     for key, val in data.items():
-        pre = ""
-        if key[0] == sep:
-            pre = sep
         keys = key.split(sep)
-        subkey = pre + sep.join(keys[2:])
-        if len(subkey) > 1:
-            if keys[1] not in list(blank.keys()):
-                blank[keys[1]] = {}
-            blank[keys[1]][subkey] = val
+        if keys[0] == "":
+            keys = keys[1:]  # Discard the first empty key if the separator is the first character
+
+        if len(keys) > 1:
+            subkey = sep.join(keys[1:])
+            if keys[0] not in blank:
+                blank[keys[0]] = {}
+            blank[keys[0]][subkey] = val
         else:
-            try:
-                blank[keys[1]] = val
-            except IndexError:
-                blank[key] = val
+            blank[keys[0]] = val
+
     return {k: dict_key_sep(v) for k, v in blank.items()}
 
 
@@ -265,35 +476,7 @@ def separate_dict(data, search_terms, reject_terms=None, keys=None):
         keys = [str(term) for term in search_terms]
     keys.append("residuals")
 
-    search_terms = [
-        (
-            re_not(term.replace("not ", "").strip())
-            if term.startswith("not ")
-            else term.strip()
-        )
-        for term in search_terms
-    ]
-
-    if isinstance(reject_terms, (tuple, list)):
-        reject_terms = [
-            (
-                re_not(term.replace("not ", "").strip())
-                if term.startswith("not ")
-                else term.strip()
-            )
-            for term in reject_terms
-        ]
-        search_terms = [
-            (
-                [*t, *reject_terms]
-                if isinstance(t, (tuple, list))
-                else [t, *reject_terms]
-            )
-            for t in search_terms
-        ]
-
-    # Compile regex patterns for search terms
-    patterns = [re.compile(compile_search_patterns(term)) for term in search_terms]
+    patterns = compile_search_patterns(search_terms, reject_terms)
 
     # Initialize dictionaries for each search term
     grouped_dicts = [defaultdict(dict) for _ in search_terms]
@@ -329,6 +512,17 @@ def recursive_concat(data, drop_singles=False):
     Returns:
     pd.DataFrame: The concatenated DataFrame with a MultiIndex.
     """
+    def safe_append(current, new, sep=None, prevent_copy=True):
+        if current is None or (prevent_copy and current == new):
+            return new
+        else:
+            if isinstance(sep, str):
+                return str(current) + sep + str(new)
+            else:
+                if not isinstance(current, (list, tuple)):
+                    current = [current]
+                return [*current, new]
+
 
     if isinstance(data, dict):
         frames = []
@@ -343,7 +537,6 @@ def recursive_concat(data, drop_singles=False):
                     "The lowest level of the dictionary must contain DataFrames."
                 )
             keys.append(key)
-            # frames[-1].attrs = combine_attrs(attrs, frames[-1].attrs)
 
         if drop_singles and len(frames) == 1:
             res = frames[0].rename(
@@ -353,20 +546,16 @@ def recursive_concat(data, drop_singles=False):
                 }
             )
             return res
-
-        res = pd.concat(frames, keys=keys, axis=1)
-        for n, frame in enumerate(frames):
-            frame.attrs["df_names"] = (
-                str(res.attrs["df_names"]) + "; " + keys[n]
-                if "df_names" in res.attrs.keys()
-                else keys[n]
-            )
+        try:
+            res = pd.concat(frames, keys=keys, axis=1)
+        except AssertionError:
+            breakpoint()
+            pass
+        for frame in frames:
             for k, v in frame.attrs.items():
-                res.attrs[k] = (
-                    str(res.attrs[k]) + "; " + str(v)
-                    if k in res.attrs.keys() and res.attrs[k] != v
-                    else v
-                )
+                res.attrs[k] = safe_append(res.attrs.get(k), v)
+        res.attrs["df_names"] = keys
+        res.attrs["py_id"] = id(res)
 
         names = ["key" + str(n + 1) for n in range(len(res.columns.names) - 1)]
         names.append("cols")
@@ -501,8 +690,28 @@ def dict_df(data, single=True):
         print(e)
         return data
 
+def push_non_dict_items(d):
+    """
+    Ensure that only the deepest level of a multi-level nested dictionary has non-dict items.
+    If a level has both dicts and non-dicts, add the non-dict items to all dicts and continue the process.
+    """
+    if not isinstance(d, dict):
+        return d
 
-def dict_to_df(arg, columns=None, attrs=None):
+    # Separate dict and non-dict items
+    dict_items = {k: v for k, v in d.items() if isinstance(v, dict)}
+    non_dict_items = {k: v for k, v in d.items() if not isinstance(v, dict)}
+
+    # Recursively process each sub-dict
+    if dict_items:
+        for k, v in dict_items.items():
+            v.update(non_dict_items)
+            dict_items[k] = push_non_dict_items(v)
+    
+        return dict_items
+    return non_dict_items
+
+def dict_to_df(arg, columns=None, attrs=None, min_len=3):
     """
     Converts a nested dictionary into a Pandas DataFrame, handling attributes and column specifications.
 
@@ -527,15 +736,19 @@ def dict_to_df(arg, columns=None, attrs=None):
     if attrs is None:
         attrs = {}
 
-    # parse attrs
+    # if all values are dicts, modify and pass in to self
     if all((isinstance(a, dict) for a in arg.values())):
-        attrs = {**{k: {} for k in arg.keys()}, **attrs}
+        attrs = {k: attrs.get(k,{}) for k in arg.keys()}
+        # ensure columns is a dict
         if isinstance(columns, dict) and any(k in arg.keys() for k in columns.keys()):
             columns = {**{k: {} for k in arg.keys()}, **columns}
         else:
             columns = {k: columns for k in arg.keys()}
         res = {k: dict_to_df(v, columns[k], attrs[k]) for k, v in arg.items()}
-        return res
+        res = {k: v for k, v in res.items() if v is not None}
+        if res:
+            return res
+        return
 
     sort_func = True
     if isinstance(columns, dict) and len(columns) == 1:
@@ -544,14 +757,21 @@ def dict_to_df(arg, columns=None, attrs=None):
         columns = list(arg.keys())
         sort_func = False
 
-    unique, counts = np.unique([
-            len(v)
-            for v in arg.values()
-            if isinstance(v, (tuple, list, np.ndarray, set, dict))
-        ], return_counts=True)
+    # unique, counts = np.unique([
+    #         len(v)
+    #         for v in arg.values()
+    #         if isinstance(v, (tuple, list, np.ndarray, set, dict))
+    #     ], return_counts=True)
 
-    target_len = int(unique[np.argmax(counts)])
+    # target_len = int(unique[np.argmax(counts)])
 
+    # Determine the most common length of the array-like objects within arg
+    lengths = [len(v) for v in arg.values() if isinstance(v, (tuple, list, np.ndarray, set, dict))]
+    target_len = int(Counter(lengths).most_common(1)[0][0])
+    
+    if target_len < min_len:
+        return None
+    
     attrs = {
         **attrs,
         **{
@@ -575,8 +795,8 @@ def dict_to_df(arg, columns=None, attrs=None):
                 **{
                     k: v
                     for k, v in val.items()
-                    if (isinstance(v, (int, float)) and v != 0)
-                    or (isinstance(v, (str, bytes)))
+                    # if (isinstance(v, (int, float, complex, str, bytes)) and v)
+                    if (v and (isinstance(v, (str, bytes)) or not hasattr(v, "__iter__")))
                 },
             }
         elif (isinstance(val, (int, float)) and val != 0) or isinstance(
@@ -594,10 +814,19 @@ def dict_to_df(arg, columns=None, attrs=None):
         columns=cols,
         dtype=float,
     )
-    df.attrs = attrs
+    
+
+    df.attrs = {k: safe_eval(v) for k, v in attrs.items()}
+
+    # Add a UUID to the DataFrame attributes
+    df.attrs['py_id'] = id(df)
 
     if sort_func:
         df = df.sort_values(by=cols[0]).reset_index(drop=True)
     df = df.dropna(how="all").fillna(0)
 
-    return df.loc[(df != 0).any(axis=1)]
+    df = df.loc[(df != 0).any(axis=1)]
+    
+    if len(df) < min_len:
+        return None
+    return df

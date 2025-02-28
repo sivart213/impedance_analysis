@@ -1,10 +1,10 @@
-# # -*- coding: utf-8 -*-
-# """
-# Insert module description/summary.
+# -*- coding: utf-8 -*-
+"""
+Insert module description/summary.
 
-# @author: j2cle
-# Created on Thu Sep 19 11:17:48 2024
-# """
+@author: j2cle
+Created on Thu Sep 19 11:17:48 2024
+"""
 # from .plotters import (
 # 	measured_data_bode,
 # 	measured_data_nyquist,

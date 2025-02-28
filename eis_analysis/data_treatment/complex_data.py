@@ -18,7 +18,7 @@ from .data_ops import convert_val
 class Complexer(object):
     """Calculate. generic discription."""
 
-    data: InitVar[np.ndarray] = np.array(0)
+    data: InitVar[np.ndarray] = np.array([complex(0,0)])
     name: str = "Z"
     sign: int = 1
     long_name: str = "impedance"
@@ -27,6 +27,8 @@ class Complexer(object):
 
     def __post_init__(self, data):
         """Calculate. generic discription."""
+        self._sign = 1
+        self._array = None
         self.array = data
 
     def __add__(self, other):
@@ -101,36 +103,55 @@ class Complexer(object):
     @property
     def array(self):
         """Calculate. generic discription."""
+        if self._array is None:
+            return np.array([complex(0,0)])
         return self._array
 
     @array.setter
-    def array(self, arr):
-        if isinstance(arr, np.ndarray):
-            self._array = arr
-        if isinstance(arr, type(self)):
-            self._array = arr.array
+    def array(self, value):
+        # if isinstance(arr, np.ndarray):
+        #     arr = arr
+        if isinstance(value, type(self)):
+            arr = value.array
         else:
-            self._array = np.array(arr).squeeze()
+            arr = np.array(value).squeeze()
+        
+            if not arr.shape and arr != complex(0,0):
+                arr = np.array(value)
+        
+        if arr.shape:
+            if arr.dtype == "complex128":
+                if len(arr.shape) == 2 and arr.shape[1] >= 2:
+                    arr = arr[:, 0]
+                self._array = arr
+                self._set_sign()
 
-        if not self._array.dtype == "complex128":
-            if len(self._array.shape) == 2 and self._array.shape[1] >= 2:
-                if "pol" in self.name.lower():
-                    if (abs(self._array[:, 1]) > np.pi / 2).any():
-                        self._array[:, 1] = np.deg2rad(self._array[:, 1])
-
-                    self._array = self._array[:, 0] * (
-                        np.cos(self._array[:, 1]) + 1j * np.sin(self._array[:, 1])
-                    )
-                else:
-                    self._array = self._array[:, 0] + 1j * self._array[:, 1]
             else:
-                self._array = self._array + 1j * 0
-        elif len(self._array.shape) == 2 and self._array.shape[1] >= 2:
-            self._array = self._array[:, 0]
+                if len(arr.shape) == 2 and arr.shape[1] >= 2:
+                    if "pol" in self.name.lower():
+                        if (abs(arr[:, 1]) > np.pi / 2).any():
+                            arr[:, 1] = np.deg2rad(arr[:, 1])
 
-        self._sign = (
-            1 if np.sum(self.sign * self._array.imag > 0) > len(self._array) / 2 else -1
-        )
+                        self._array = arr[:, 0] * (
+                            np.cos(arr[:, 1]) + 1j * np.sin(arr[:, 1])
+                        )
+                        self._set_sign()
+                    else:
+                        self._array = arr[:, 0] + 1j * arr[:, 1]
+                        self._set_sign()
+                else:
+                    self._array = arr + 1j * 0
+                    self._set_sign()
+        
+
+        # self._sign = (
+        #     1 if np.sum(self.sign * arr.imag > 0) > len(arr) / 2 else -1
+        # )
+    def _set_sign(self):
+        if self._array is not None:
+            self._sign = (
+                1 if np.sum(self.sign * self._array.imag > 0) > len(self._array) / 2 else -1
+            )
 
     @property
     def real(self):
@@ -192,22 +213,22 @@ class Complexer(object):
         vals = [
             self.real,
             self.imag,
-            -1 * self.imag,
+            # -1 * self.imag,
             self.mag,
             self.phase,
-            -1 * self.phase,
+            # -1 * self.phase,
             self.tan,
-            -1 * self.tan,
+            # -1 * self.tan,
         ]
         columns = [
             "real",
             "imag",
-            "inv_imag",
+            # "inv_imag",
             "mag",
             "phase",
-            "inv_phase",
+            # "inv_phase",
             "tan",
-            "inv_tan",
+            # "inv_tan",
         ]
         # self._data = pd.DataFrame(dict(zip(columns, vals)))
         return pd.DataFrame(dict(zip(columns, vals)))
@@ -219,6 +240,7 @@ class Complexer(object):
 
 class ComplexSystem:
     aliases = {
+        "f": "frequency",
         "freq": "frequency",
         "w": "angular_frequency",
         "ω": "angular_frequency",
@@ -231,13 +253,20 @@ class ComplexSystem:
         "c₀": "characteristic_capacitance",
         "vacuum_capacitance": "characteristic_capacitance",
         "z": "impedance",
+        "imp": "impedance",
         "y": "admittance",
+        "adm": "admittance",
+        "c": "capacitance",
+        "cap": "capacitance",
         "m": "modulus",
+        "mod": "modulus",
         "e": "permittivity",
         "ε": "permittivity",
         "epsilon": "permittivity",
         "perm": "permittivity",
         "e_r": "relative_permittivity",
+        "e_r0": "relative_permittivity_0",
+        "e_rinf": "relative_permittivity_inf",
         "ε_r": "relative_permittivity",
         "εᵣ": "relative_permittivity",
         "epsilon_r": "relative_permittivity",
@@ -245,45 +274,107 @@ class ComplexSystem:
         "permittivity_r": "relative_permittivity",
         "cond": "conductivity",
         "sigma": "conductivity",
+        "σ": "conductivity",
+        "sigma_dc": "dc_conductivity",
+        "σ_dc": "dc_conductivity",
         "resis": "resistivity",
         "rho": "resistivity",
         "ρ": "resistivity",
     }
 
     def __init__(self, data, frequency=None, thickness=1.0, area=1.0, form=None):
+        self._area=None
+        self._thickness=None
+        self._frequency=None
+        self.complexer= Complexer()
+
         self.thickness = thickness
         self.area = area
+        
+        
 
         if isinstance(data, type(self)):
             self.frequency = data.frequency
             self.complexer = data.complexer
             self.update(data)
         else:
-            if frequency is not None:
-                self.frequency = frequency
-            elif isinstance(data, pd.DataFrame):
-                if "freq" in data.columns:
-                    self.frequency = data["freq"].values
-                    data = data.drop(columns=["freq"])
-                elif "frequency" in data.columns:
-                    self.frequency = data["frequency"].values
-                    data = data.drop(columns=["frequency"])
-            elif isinstance(data, np.ndarray):
-                if data.ndim == 2:
-                    if np.all(data[:, 0] >= 0) and not np.iscomplexobj(data[:, 0]):
-                        self.frequency = data[:, 0]
-                        data = data[:, 1:]
-                    elif np.all(data[:, -1] >= 0) and not np.iscomplexobj(data[:, -1]):
-                        self.frequency = data[:, -1]
-                        data = data[:, :-1]
-            else:
-                self.frequency = np.ones(len(data))
-
+            freq = frequency
+            if freq is None:
+                if isinstance(data, pd.DataFrame):
+                    if "freq" in data.columns:
+                        freq = data["freq"].values
+                        data = data.drop(columns=["freq"])
+                    elif "frequency" in data.columns:
+                        freq = data["frequency"].values
+                        data = data.drop(columns=["frequency"])
+                elif isinstance(data, np.ndarray):
+                    if data.ndim == 2:
+                        if np.all(data[:, 0] >= 0) and not np.iscomplexobj(data[:, 0]):
+                            freq = data[:, 0]
+                            data = data[:, 1:]
+                        elif np.all(data[:, -1] >= 0) and not np.iscomplexobj(data[:, -1]):
+                            freq = data[:, -1]
+                            data = data[:, :-1]
             self.complexer = Complexer(data)
+            if freq is not None:
+                freq, data = self.ensure_frequency_order(freq, self.complexer.array)
+                self._frequency = freq
+                self.complexer.array = data
+            
         
         if isinstance(form, str) and self[form] != self.complexer:
             self.complexer = self[form]
+    
+    def update(self, data=None, frequency=None, thickness=None, area=None, form="impedance"):
+        """Update the ComplexSystem with new data or parameters."""
+        if isinstance(data, self.__class__):
+            frequency = data.frequency
+            thickness = data.thickness if data.thickness != 1.0 else thickness
+            area = data.area if data.area != 1.0 else area
+            data = data[form].array
 
+        if data is not None:
+            new_system = self.__class__(data, frequency, self.thickness, self.area)
+            if all(new_system.frequency == 1) and len(data) == len(self.frequency):
+                new_system.frequency = self.frequency
+            self.__dict__.update(new_system.__dict__)
+        elif frequency is not None and len(frequency) == len(self.frequency):
+            self._frequency = self.ensure_frequency_order(frequency)[0]
+        
+        if form != "impedance" or self[form] != self.complexer:
+            self.complexer = self[form]
+
+        if thickness is not None:
+            self.thickness = float(thickness)
+        if area is not None:
+            self.area = float(area)
+
+    
+    def ensure_frequency_order(self, frequency=None, data=None):
+        """Ensure frequency is ordered and data is aligned."""
+        try:
+            freq = frequency if frequency is not None else self._frequency
+            if freq is None:
+                return freq, data
+
+            b_freq = [freq[i] <= freq[i+1] for i in range(len(freq)-1)] # True if ascending
+            # ratio = sum(b_freq) / len(b_freq)
+            freq_is_incr = sum(b_freq) / len(b_freq) >= 0.5
+            if self._frequency is not None:
+                # b_old = [self.frequency[i] <= self.frequency[i+1] for i in range(len(self.frequency)-1)]
+                freq_is_incr = all([self.frequency[i] <= self.frequency[i+1] for i in range(len(self.frequency)-1)])
+            if data is not None:
+                # Data needs to be updated and frequency is not ordered
+                sorted_indices = np.argsort(freq) if freq_is_incr else np.argsort(freq)[::-1]
+                freq = freq[sorted_indices]
+                data = data[sorted_indices]
+            else:
+                freq = np.array(sorted(freq, reverse=not freq_is_incr))
+            return freq, data
+        except IndexError as e:
+            breakpoint()
+            raise e
+        
     def __setattr__(self, name, value):
         name = self.aliases.get(name, name)
         object.__setattr__(self, name, value)
@@ -317,10 +408,27 @@ class ComplexSystem:
                     )
         else:
             raise TypeError("Index must be a string")
+    
+    def __len__(self):
+        return len(self.complexer)
+
+    @property
+    def frequency(self):
+        """Calculate. generic discription."""
+        if self._frequency is None:
+            return np.ones(len(self.complexer.array))
+        return self._frequency
+
+    @frequency.setter
+    def frequency(self, value):
+        if value is not None:
+            self._frequency = self.ensure_frequency_order(np.array(value))[0]
 
     @property
     def thickness(self):
         """Calculate. generic discription."""
+        if self._thickness is None:
+            return 1.0
         return self._thickness
 
     @thickness.setter
@@ -337,6 +445,8 @@ class ComplexSystem:
     @property
     def area(self):
         """Calculate. generic discription."""
+        if self._area is None:
+            return 1.0
         return self._area
 
     @area.setter
@@ -354,9 +464,6 @@ class ComplexSystem:
     def array(self):
         return self.complexer.array
 
-    @property
-    def df(self):
-        return self.complexer.df
 
     @property
     def angular_frequency(self):
@@ -390,6 +497,12 @@ class ComplexSystem:
         return Complexer(arr)
 
     @property
+    def capacitance(self):
+        """Calculate the capacitance. (C-jC) generic discription."""
+        arr = 1 / (1j * self.angular_frequency * self.array)
+        return Complexer(arr, sign=-1)
+
+    @property
     def modulus(self):
         """Calculate the modulus. (M+jM) generic discription."""
         arr = self.array * self.angular_frequency * self.C_0 * 1j
@@ -398,7 +511,7 @@ class ComplexSystem:
     @property
     def permittivity(self):
         """Calculate the complex permittivity. (e-je) generic discription."""
-        arr = 1 / self.M * self.e_0
+        arr = self.e_0 / self.M
         return Complexer(arr, sign=-1)
 
     @property
@@ -426,34 +539,22 @@ class ComplexSystem:
     def loss_factor(self):
         """Calculate complex resistivity. (rho - jrho) generic discription."""
         return -1 * self.relative_permittivity.imag
+    
+    @property
+    def dc_conductivity(self):
+        """Calculate the DC conductivity."""
+        return self.val_towards_zero(self.conductivity.real)
+    
+    @property
+    def relative_permittivity_0(self):
+        """Calculate the relative permittivity at 0 Hz."""
+        return self.val_towards_zero(self.relative_permittivity.real)
+    
+    @property
+    def relative_permittivity_inf(self):
+        """Calculate the relative permittivity at infinite Hz."""
+        return self.val_towards_infinity(self.relative_permittivity.real)
 
-    def update(self, data=None, frequency=None, thickness=None, area=None, form="impedance"):
-        """Update the ComplexSystem with new data or parameters."""
-        if isinstance(data, ComplexSystem):
-            data = data[form].array
-            frequency = data.frequency
-            thickness = data.thickness if data.thickness != 1.0 else thickness
-            area = data.area if data.area != 1.0 else area
-
-        if thickness is not None:
-            self.thickness = float(thickness)
-        else:
-            thickness = self.thickness
-        if area is not None:
-            self.area = float(area)
-        else:
-            area = self.area
-
-        if data is not None:
-            new_system = ComplexSystem(data, frequency, thickness, area)
-            if all(new_system.frequency == 1) and len(data) == len(self.frequency):
-                new_system.frequency = self.frequency
-            self.__dict__.update(new_system.__dict__)
-        elif frequency is not None and len(frequency) == len(self.frequency):
-            self.frequency = frequency
-        
-        if form != "impedance" or self[form] != self.complexer:
-            self.complexer = self[form]
 
 
     def base_df(self, complex_str: str = None, x_axis: str = None) -> pd.DataFrame:
@@ -464,12 +565,12 @@ class ComplexSystem:
         data = {
             "real": self[f"{complex_str}.real"],
             "imag": self[f"{complex_str}.imag"],
-            "inv_imag": self[f"{complex_str}.imag"] * -1,
+            # "inv_imag": self[f"{complex_str}.imag"] * -1,
             "mag": self[f"{complex_str}.mag"],
             "phase": self[f"{complex_str}.phase"],
-            "inv_phase": self[f"{complex_str}.phase"] * -1,
+            # "inv_phase": self[f"{complex_str}.phase"] * -1,
             "tan": self[f"{complex_str}.tan"],
-            "inv_tan": self[f"{complex_str}.tan"] * -1,
+            # "inv_tan": self[f"{complex_str}.tan"] * -1,
         }
 
         df = pd.DataFrame(data)
@@ -491,7 +592,7 @@ class ComplexSystem:
 
         return df
 
-    def get_custom_df(self, *args) -> pd.DataFrame:
+    def get_df(self, *args, cartesian:bool=True, as_complex:bool=False) -> pd.DataFrame:
         """
         Create a DataFrame with specified non-complex value components.
 
@@ -501,144 +602,189 @@ class ComplexSystem:
         Returns:
         pd.DataFrame: The resulting DataFrame.
         """
-        if len(args) == 2 and hasattr(self, args[1]):
-            return self.base_df(args[1], args[0])
+        # if len(args) == 2 and hasattr(self, args[1]):
+        #     return self.base_df(args[1], args[0])
+        if not args:
+            args = ("impedance",)
 
         data = {}
-
+        sub_keys = ["real", "imag"] if cartesian else ["mag", "phase"]
         # Parse the arguments to get the target columns
         for arg in args:
             value = self[arg]
-            data[arg] = value
+            if not as_complex and isinstance(value, Complexer):
+                data[f"{arg}.{sub_keys[0]}"] = value[sub_keys[0]]
+                data[f"{arg}.{sub_keys[1]}"] = value[sub_keys[1]]
+            else:
+                data[arg] = value
+        df = pd.DataFrame(data)
+        # for col in df.columns:
+        #     parts = re.split(r'[./]', col)
+        #     if parts[0].lower() in ["z", "imp", "impedance"]:
+        #         df = df.rename(columns={col: parts[-1]})
+        
 
-        return pd.DataFrame(data)
-
-    def supplement_df(self) -> pd.DataFrame:
-        """Create a DataFrame with residuals: freq, omega, loss_factor, and loss_tangent."""
-        data = {
-            "freq": self.frequency,
-            "omega": self.angular_frequency,
-            "loss_factor": self.loss_factor,
-            "loss_tangent": self.loss_tangent,
+        df.attrs = {
+            "area": self.area,
+            "thickness": self.thickness,
+            "a_d": self.area_over_thickness,
+            "c_0": self.characteristic_capacitance,
+            "e_0": self.permittivity_constant,
+            # "dc_cond": self.dc_conductivity,
+            # "e_r0": self.relative_permittivity_0,
+            # "e_rinf": self.relative_permittivity_inf,
         }
+        return df
 
-        return pd.DataFrame(data)
 
-
-@dataclass
-class Complex_Imp(Complexer):
-
-    def __post_init__(self, data):
-        if isinstance(data, (pd.DataFrame, pd.Series)):
-            if data.columns.isin(["theta"]).any() and "pol" not in self.name:
-                self.name = "polar"
-            if data.iloc[:, 0].name == "Y" and "Y" not in self.name:
-                self.name = "Y"
-        self.array = data
-        if "Y" in self.name:
-            self.array = 1 / self.array
-
-    def __getitem__(self, item):
-        """Return sum of squared errors (pred vs actual)."""
-        if hasattr(self, item.upper()):
-            return getattr(self, item.upper())
-        elif hasattr(self, item.lower()):
-            return getattr(self, item.lower())
-        elif "y" in item.lower() and "real" in item.lower():
-            return self.Y.real
-        elif "y" in item.lower() and "imag" in item.lower():
-            return self.Y.imag
-        elif "real" in item.lower():
-            return self.real
-        elif "imag" in item.lower():
-            return self.imag
-        elif "y" in item.lower() and "mag" in item.lower():
-            return np.abs(self.Y)
-        elif "y" in item.lower() and "phase" in item.lower():
-            return np.angle(self.Y, deg=True)
-        elif "mag" in item.lower():
-            return self.mag
-        elif "phase" in item.lower():
-            return self.phase
+    def val_towards_zero(self, array, perc=5):
+        """
+        Returns the average value of the array close to the lower end of self.frequency.
+        """
+        # Determine the number of elements to consider based on the percentage
+        num_elements = max(1, int(len(array) * perc / 100))
+        
+        # Determine which end of the array corresponds to the lower end of self.frequency
+        if self.frequency[0] < self.frequency[-1]:
+            # Lower end is at the beginning of the array
+            return np.mean(array[:num_elements])
         else:
-            return None
+            # Lower end is at the end of the array
+            return np.mean(array[-num_elements:])
 
-    @property
-    def Z(self):
-        """Calculate. generic discription."""
-        return self.array
-
-    @Z.setter
-    def Z(self, _):
-        pass
-
-    @property
-    def R(self):
-        """Calculate. generic discription."""
-        return self.Z.real
-
-    @R.setter
-    def R(self, _):
-        pass
-
-    @property
-    def X(self):
-        """Calculate. generic discription."""
-        return self.Z.imag
-
-    @X.setter
-    def X(self, _):
-        pass
-
-    @property
-    def Y(self):
-        """Calculate. generic discription."""
-        return 1 / self.array
-
-    @Y.setter
-    def Y(self, _):
-        pass
-
-    @property
-    def G(self):
-        """Calculate. generic discription."""
-        return self.Y.real
-
-    @G.setter
-    def G(self, _):
-        pass
-
-    @property
-    def B(self):
-        """Calculate. generic discription."""
-        return self.Y.imag
-
-    @B.setter
-    def B(self, _):
-        pass
+    def val_towards_infinity(self, array, perc=5):
+        """
+        Returns the average value of the array close to the higher end of self.frequency.
+        """
+        # Determine the number of elements to consider based on the percentage
+        num_elements = max(1, int(len(array) * perc / 100))
+        
+        # Determine which end of the array corresponds to the higher end of self.frequency
+        if self.frequency[0] > self.frequency[-1]:
+            # Higher end is at the beginning of the array
+            return np.mean(array[:num_elements])
+        else:
+            # Higher end is at the end of the array
+            return np.mean(array[-num_elements:])
 
 
-# def extendspace(start, stop, num=50, ext=0, logscale=True, as_exp=False):
-#     if logscale:
-#         start = np.log10(start)
-#         stop = np.log10(stop)
 
-#     delta = np.diff(np.linspace(start, stop, num)).mean()
+# class ComplexSystemDx:
+#     """Class to handle complex system with derivative calculations."""
 
-#     new_start = start - delta * ext
-#     new_stop = stop + delta * ext
+#     def __init__(self, data, frequency=None, thickness=1.0, area=1.0, form=None, dx=0):
+#         self.complex_system = ComplexSystem(data, frequency, thickness, area, form)
+#         self.derivative_calculator = DerivativeCalculator(dx)
 
-#     if logscale and not as_exp:
-#         return 10**new_start, 10**new_stop, int(num + 2 * ext)
+#     def transform(self):
+#         """Transform the data using ComplexSystem and calculate derivatives."""
+#         data = self.complex_system.array
+#         frequency = self.complex_system.frequency
+#         transformed_data = self.derivative_calculator.calculate_derivative(data, frequency)
+#         return Complexer(transformed_data)
 
-#     return new_start, new_stop, int(num + 2 * ext)
 
 
-# def range_maker(start, stop, points_per_decade=24, ext=0, is_exp=False):
-#     if not is_exp:
-#         start = np.log10(start)
-#         stop = np.log10(stop)
-#     count = int(1 + points_per_decade * abs(start - stop))
-#     start, stop, count = extendspace(start, stop, count, ext, False, True)
-#     return {"start": 10**start, "stop": 10**stop, "samplecount": count}
 
+# class ComplexSystemDx(ComplexSystem):
+#     def __init__(self, *args, dx=0, **kwargs):
+#         super().__init__(*args, **kwargs)
+#         self.dx = dx
+
+
+#     def calculate_derivative(self, data, level=None):
+#         """Calculate the derivative of the data based on the specified level."""
+#         level = level or self.dx
+#         if level == 0:
+#             return data
+        
+#         # df = pd.DataFrame({'freq': self.frequency, 'data': data})
+#         # df = df.groupby('freq').mean().reset_index()
+#         # data = df['data'].values
+#         epsilon = 1e-10
+#         freq = []
+#         for f in self.frequency:
+#             if f not in freq:
+#                 freq.append(f)
+#             else:
+#                 freq.append(freq[-1]+f*epsilon)
+
+#         data = np.log10(data)
+#         freq = np.log10(freq)
+#         for _ in range(level):
+#             try:
+#                 data = np.gradient(data, freq, edge_order=2)
+#                 # data = np.diff(data) / np.diff(freq)
+#                 # data = np.diff(data)
+#                 # data = np.append(data, data[-1])
+#             except FloatingPointError as e:
+#                 breakpoint()
+#                 raise FloatingPointError from e
+        
+        
+#         return data
+#         # if level == 1:
+#         #     return np.gradient(data, self.frequency, edge_order=2)
+#         # elif level == 2:
+#         #     return np.gradient(np.gradient(data, self.frequency, edge_order=2), edge_order=2)
+#         # elif level == 3:
+#         #     return np.gradient(np.gradient(np.gradient(data, self.frequency, edge_order=2), edge_order=2), edge_order=2)
+#         # return data
+    
+    
+
+#     @property
+#     def impedance(self):
+#         """Calculate. generic description."""
+#         data = super().impedance.array
+#         data = self.calculate_derivative(data, self.dx)
+#         return Complexer(data)
+
+#     @property
+#     def admittance(self):
+#         """Calculate. generic description."""
+#         data = super().admittance.array
+#         data = self.calculate_derivative(data, self.dx)
+#         return Complexer(data)
+
+#     @property
+#     def capacitance(self):
+#         """Calculate the capacitance. (C-jC) generic description."""
+#         data = super().capacitance.array
+#         data = self.calculate_derivative(data, self.dx)
+#         return Complexer(data, sign=-1)
+
+#     @property
+#     def modulus(self):
+#         """Calculate the modulus. (M+jM) generic description."""
+#         data = super().modulus.array
+#         data = self.calculate_derivative(data, self.dx)
+#         return Complexer(data)
+
+#     @property
+#     def permittivity(self):
+#         """Calculate the complex permittivity. (e-je) generic description."""
+#         data = super().permittivity.array
+#         data = self.calculate_derivative(data, self.dx)
+#         return Complexer(data, sign=-1)
+
+#     @property
+#     def relative_permittivity(self):
+#         """Calculate the complex permittivity. (e-je) generic description."""
+#         data = super().relative_permittivity.array
+#         data = self.calculate_derivative(data, self.dx)
+#         return Complexer(data, sign=-1)
+
+#     @property
+#     def conductivity(self):
+#         """Calculate complex conductivity. (sigma + jsigma) generic description."""
+#         data = super().conductivity.array
+#         data = self.calculate_derivative(data, self.dx)
+#         return Complexer(data)
+
+#     @property
+#     def resistivity(self):
+#         """Calculate complex resistivity. (rho - jrho) generic description."""
+#         data = super().resistivity.array
+#         data = self.calculate_derivative(data, self.dx)
+#         return Complexer(data, sign=-1)

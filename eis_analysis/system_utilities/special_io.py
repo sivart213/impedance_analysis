@@ -16,7 +16,7 @@ from pathlib import Path
 import pandas as pd
 import sympy as sp
 
-def parse_files(
+def parse_file_info(
     paths,
     parser,
     keywords=None,
@@ -42,11 +42,13 @@ def parse_files(
     """
     res = []
     for pth in paths:
-
-        res.append(parser(pth))
-
+        try:
+            res.append(parser(pth))
+        except ValueError:
+            print(f"Error parsing file: {pth}")
+            continue
     res_all = pd.DataFrame(
-        res, columns=["name", "date", "time", "counter", "sub counter", "id"]
+        res, columns=["name", "date", "time", "counter", "sub counter", "path"], dtype=None
     )
     if get_all or all(
         not b for b in [by_date, by_time, by_count, by_sub_count]

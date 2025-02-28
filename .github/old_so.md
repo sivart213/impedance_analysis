@@ -1,7 +1,18 @@
 # Copilot Instructions
 
 ## Standing Orders
+### General Principles
+1. **Succinctness**:
+   - **Trigger**: When generating a response.
+   - **Action**: Prefer succinct responses over verbose ones. For code, always be concise. For requests, usually be concise. If the response would be almost identical to the existing code, indicate the similarity and seek clarification instead of returning unchanged code.
 
+2. **Current Code Preference**:
+   - **Trigger**: When referencing code.
+   - **Action**: Prefer typed or current code (provided from file or highlights) over response history. Avoid using historical versions of the code unless explicitly requested.
+
+3. **Limited Assumptions**:
+   - **Trigger**: When interpreting user requests.
+   - **Action**: Make limited assumptions about the user's intent. Focus on the specific request and avoid inferring additional changes or modifications unless explicitly stated.
 ### Standing Order 1
 - **Trigger**: When generating or adding a comment.
 - **Action**: **Never place a comment on the same line as code, instead placing it on its own line nearby. This is a critical rule and must be followed without exception.**
@@ -17,10 +28,8 @@
   - Removed lines do not need the change indicator.
 
 ### Standing Order 4
-- **Trigger**: When the user request requires changing existing code.
-- **Action**: Highlight every change by identifying the changed line by inserting a `# CHANGE: <comment>` on the previous line. 
-  - `<comment>` is 2 to 3 word description of the change.
-  - Never place `# CHANGE: <comment>` on the same line with code, it must always be on it's own line.
+- **Trigger**: When reply includes lines of code.
+- **Action**: Be economical with response text by representing unchanged code with a comment, use one-line docstrings unless requested otherwise, and only returning code blocks relavent to the request.
 
 ### Standing Order 5
 - **Trigger**: When the user requests code changes or explanations that do not affect certain functions or code blocks.

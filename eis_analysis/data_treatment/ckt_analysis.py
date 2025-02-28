@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import sympy as sp
 from scipy.optimize import Bounds
-
+from dataclasses import dataclass
 from impedance.models.circuits import CustomCircuit
 
 from ..utils.plotters import (
@@ -16,7 +16,7 @@ from ..utils.plotters import (
     bode,
 )
 from .dataset_ops import hz_label
-from .complex_data import Complex_Imp
+from .complex_data import Complexer
 
 
 # from ..string_ops import str_in_list, eng_not
@@ -256,6 +256,124 @@ def ode_bounds(f=None, x=None, ind=0, dep=0, deg=0, **kwargs):
                     res = {**res, **ode_bounds(f, x, *bnd[:3])}
             return res
     return None
+
+@dataclass
+class Complex_Imp(Complexer):
+
+    def __post_init__(self, data):
+        if isinstance(data, (pd.DataFrame, pd.Series)):
+            if data.columns.isin(["theta"]).any() and "pol" not in self.name:
+                self.name = "polar"
+            if data.iloc[:, 0].name == "Y" and "Y" not in self.name:
+                self.name = "Y"
+        self.array = data
+        if "Y" in self.name:
+            self.array = 1 / self.array
+
+    def __getitem__(self, item):
+        """Return sum of squared errors (pred vs actual)."""
+        if hasattr(self, item.upper()):
+            return getattr(self, item.upper())
+        elif hasattr(self, item.lower()):
+            return getattr(self, item.lower())
+        elif "y" in item.lower() and "real" in item.lower():
+            return self.Y.real
+        elif "y" in item.lower() and "imag" in item.lower():
+            return self.Y.imag
+        elif "real" in item.lower():
+            return self.real
+        elif "imag" in item.lower():
+            return self.imag
+        elif "y" in item.lower() and "mag" in item.lower():
+            return np.abs(self.Y)
+        elif "y" in item.lower() and "phase" in item.lower():
+            return np.angle(self.Y, deg=True)
+        elif "mag" in item.lower():
+            return self.mag
+        elif "phase" in item.lower():
+            return self.phase
+        else:
+            return None
+
+    @property
+    def Z(self):
+        """Calculate. generic discription."""
+        return self.array
+
+    @Z.setter
+    def Z(self, _):
+        pass
+
+    @property
+    def R(self):
+        """Calculate. generic discription."""
+        return self.Z.real
+
+    @R.setter
+    def R(self, _):
+        pass
+
+    @property
+    def X(self):
+        """Calculate. generic discription."""
+        return self.Z.imag
+
+    @X.setter
+    def X(self, _):
+        pass
+
+    @property
+    def Y(self):
+        """Calculate. generic discription."""
+        return 1 / self.array
+
+    @Y.setter
+    def Y(self, _):
+        pass
+
+    @property
+    def G(self):
+        """Calculate. generic discription."""
+        return self.Y.real
+
+    @G.setter
+    def G(self, _):
+        pass
+
+    @property
+    def B(self):
+        """Calculate. generic discription."""
+        return self.Y.imag
+
+    @B.setter
+    def B(self, _):
+        pass
+
+
+# def extendspace(start, stop, num=50, ext=0, logscale=True, as_exp=False):
+#     if logscale:
+#         start = np.log10(start)
+#         stop = np.log10(stop)
+
+#     delta = np.diff(np.linspace(start, stop, num)).mean()
+
+#     new_start = start - delta * ext
+#     new_stop = stop + delta * ext
+
+#     if logscale and not as_exp:
+#         return 10**new_start, 10**new_stop, int(num + 2 * ext)
+
+#     return new_start, new_stop, int(num + 2 * ext)
+
+
+# def range_maker(start, stop, points_per_decade=24, ext=0, is_exp=False):
+#     if not is_exp:
+#         start = np.log10(start)
+#         stop = np.log10(stop)
+#     count = int(1 + points_per_decade * abs(start - stop))
+#     start, stop, count = extendspace(start, stop, count, ext, False, True)
+#     return {"start": 10**start, "stop": 10**stop, "samplecount": count}
+
 
 class IS_Ckt(object):
     """

@@ -19,6 +19,8 @@ from .path_finders import (
 	my_filter,
 )
 
+# from .log_config import logger
+
 __all__ = [
 	"find_path",
 	"find_files",
@@ -28,4 +30,5 @@ __all__ = [
 	"load_hdf",
 	"my_walk",
 	"my_filter",
+    # "logger",
 ]

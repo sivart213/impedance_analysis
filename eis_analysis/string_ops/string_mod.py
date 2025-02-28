@@ -11,6 +11,60 @@ import unicodedata
 from pathlib import Path
 import numpy as np
 
+eval_vars = {
+    "np": np,
+    "inf": np.inf,
+    "nan": np.nan,
+    "pi": np.pi,
+    "e": np.e,
+    "ln": np.log,
+    "log": np.log,
+    "log10": np.log10,
+    "true": True,
+    "false": False,
+    "none": None,
+}
+
+eng_dict = {
+    -15: "f",
+    -12: "p",
+    -9: "n",
+    -6: "u",
+    -3: "m",
+    0: "",
+    3: "k",
+    6: "M",
+    9: "G",
+    12: "T",
+}
+
+def safe_eval(value):
+    """Safely evaluate a string expression and return the result."""
+    if not isinstance(value, str):
+        return value
+
+    try:
+        return eval(value, {}, eval_vars)
+    except (SyntaxError, TypeError, ValueError, NameError):
+        # Check if the value is a list, tuple, or dict
+        if re.match(r'^[\[\(\{].*[\]\)\}]$', value):
+            # Remove the outer brackets, parentheses, or braces and split the parts
+            parts = re.findall(r'[^,\s]+', value[1:-1])
+            # Determine the container type and return the evaluated parts
+            if value.startswith('['):
+                return [safe_eval(part) for part in parts]
+            elif value.startswith('('):
+                return tuple(safe_eval(part) for part in parts)
+            elif value.startswith('{'):
+                if ":" in parts[0]:
+                    return {safe_eval(k): safe_eval(v) for k, v in (part.split(':') for part in parts)}
+                else:
+                    return set(safe_eval(part) for part in parts)
+        elif value.strip() != value:
+            return safe_eval(value.strip())
+        else:
+            # If none of the above, return the original value
+            return value
 
 def sci_note(num, prec=2):
     """Return formatted text version of value."""
@@ -62,7 +116,8 @@ def slugify(value, allow_unicode=False, sep="-"):
         )
     value = re.sub(r"[^\w\s-]", "", value.lower())
     # return re.sub(r"[-\s]+", "-", value).strip("-_")
-    return re.sub(r"[-\s]+", sep, value).strip("-_")
+    # return re.sub(r"[-\s]+", sep, value).strip("-_")
+    return re.sub(f"[{sep}]+", sep, value).strip("-_")
 
 def eng_not(num, precision=2, kind="eng", space=""):
     """
@@ -92,18 +147,6 @@ def eng_not(num, precision=2, kind="eng", space=""):
         fmt = "{:.%de}" % int(precision)
         return fmt.format(num)
 
-    eng_dict = {
-        -15: "f",
-        -12: "p",
-        -9: "n",
-        -6: "u",
-        -3: "m",
-        0: "",
-        3: "k",
-        6: "M",
-        9: "G",
-        12: "T",
-    }
 
     if isinstance(space, bool) and space:
         space = " "
@@ -133,8 +176,55 @@ def format_number(num, precision=2, upper_exponent=3, lower_exponent=None):
         return f"{num:.{max(0, precision-exponent)}f}".rstrip("0").rstrip('.')
     else:
         return f"{num/10**exponent:.{precision}f}".rstrip("0").rstrip('.') + f"e{exponent}"
-    
-def compile_search_patterns(term):
+
+
+def compile_search_patterns(search_terms, reject_terms=None):
+    """
+    Separates a dictionary into multiple dictionaries based on search terms.
+
+    Parameters:
+    - data (dict): The original dictionary to be separated.
+    - search_terms (list): A list of search terms (strings or tuples of strings).
+    - reject_terms (list): A list of common reject terms (strings).
+    - keys (list): Optional list of keys for the result dictionary.
+
+    Returns:
+    - dict: A dictionary containing the desired groupings and residuals.
+    """
+
+    search_terms = [
+        (
+            re_not(term.replace("not ", "").strip())
+            if term.startswith("not ")
+            else term.strip()
+        )
+        for term in search_terms
+    ]
+
+    if isinstance(reject_terms, (tuple, list)):
+        reject_terms = [
+            (
+                re_not(term.replace("not ", "").strip())
+                if term.startswith("not ")
+                else term.strip()
+            )
+            for term in reject_terms
+        ]
+        search_terms = [
+            (
+                [*t, *reject_terms]
+                if isinstance(t, (tuple, list))
+                else [t, *reject_terms]
+            )
+            for t in search_terms
+        ]
+
+    # Compile regex patterns for search terms
+    patterns = [re.compile(combine_search_patterns(term), re.IGNORECASE) for term in search_terms]
+
+    return patterns
+
+def combine_search_patterns(term):
     """
     Compiles search patterns into a single regex string.
 
@@ -168,7 +258,7 @@ def compile_search_patterns(term):
                     compiled_patterns.append(
                         "("
                         + "|".join(
-                            compile_search_patterns(part) for part in pattern.split("|")
+                            combine_search_patterns(part) for part in pattern.split("|")
                         )
                         + ")"
                     )

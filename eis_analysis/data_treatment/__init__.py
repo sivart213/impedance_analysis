@@ -11,8 +11,9 @@ Created on Thu Sep 19 11:17:44 2024
 
 from .complex_data import (
 	# Complexer,
-	Complex_Imp,
+	# Complex_Imp,
     ComplexSystem,
+    # ComplexSystemDx,
 )
 from .data_ops import (
 	sanitize_types,
@@ -22,9 +23,12 @@ from .data_ops import (
 
 from .dataset_ops import (
 	most_frequent,
+    get_valid_keys,
 	insert_inverse_col,
 	modify_sub_dfs,
 	remove_duplicate_datasets,
+	find_duplicate_datasets,
+    drop_common_index_key,
 	simplify_multi_index,
 	impedance_concat,
 	# moving_average,
@@ -33,6 +37,7 @@ from .dataset_ops import (
 )
 
 from .data_analysis import (
+	calculate_rc_freq,
 	ConfidenceAnalysis,
 	Statistics,
 	FittingMethods,
@@ -43,7 +48,8 @@ __all__ = [
 	# .complex_data
 	# "Complexer",
 	"ComplexSystem",
-	"Complex_Imp",
+	# "ComplexSystemDx",
+	# "Complex_Imp",
 
 	# .data_ops
 	"sanitize_types",
@@ -52,9 +58,12 @@ __all__ = [
 
 	# .dataset_ops
 	"most_frequent",
+    "get_valid_keys",
 	"insert_inverse_col",
 	"modify_sub_dfs",
 	"remove_duplicate_datasets",
+	"find_duplicate_datasets",
+    "drop_common_index_key",
 	"simplify_multi_index",
 	"impedance_concat",
 	# "moving_average",
@@ -62,6 +71,7 @@ __all__ = [
 	"TypeList",
 
 	# .data_analysis
+	"calculate_rc_freq",
 	"ConfidenceAnalysis",
 	"Statistics",
 	"FittingMethods",

@@ -1,9 +1,9 @@
-# # -*- coding: utf-8 -*-
-# """
-# Created on Wed Sep 21 16:54:59 2022
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Sep 21 16:54:59 2022
 
-# @author: j2cle
-# """
+@author: j2cle
+"""
 # # Import everything from submodules
 # from .data_treatment.data_analysis import *
 # from .data_treatment.data_ops import *
@@ -63,7 +63,7 @@
 #     "ComplexSystem",
 
 #     # equipment.mfia_ops
-#     "parse_mfia_file",
+#     "parse_labone_hdf5",
 #     "convert_mfia_data",
 #     "convert_mfia_time",
 #     "convert_mfia_df_for_fit",
@@ -92,7 +92,7 @@
 
 #     # system_utilities.file_parsers
 #     "parse_path_str",
-# 	"parse_files",
+# 	"parse_file_info",
 #     "my_walk",
 #     "my_filter",
 #     "get_config",

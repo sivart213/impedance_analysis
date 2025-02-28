@@ -16,12 +16,26 @@ Created on Thu Oct  3 15:05:23 2024
 from abc import ABC, abstractmethod
 import numpy as np
 import pandas as pd
-
+import logging
 import matplotlib.pyplot as plt
 from matplotlib.ticker import ScalarFormatter
 from matplotlib.collections import PathCollection, PolyCollection
 
 from impedance.models.circuits.fitting import wrapCircuit
+
+logger = logging.getLogger(__name__)
+
+np.seterr(all="raise")
+
+def log_exceptions(func):
+    """Decorator to log exceptions in a function."""
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except (FloatingPointError, RuntimeWarning) as e:
+            logger.error("Error in %s: %s", func.__name__, e)
+    return wrapper
+
 
 class RCCircuit:
     """Class to create a test dataset for RC circuit fitting."""
@@ -796,31 +810,60 @@ class TwoAxisFormatter(AbstractFormatter):
 
 
 class LogScaler(AbstractScaler):
+    @log_exceptions
     def scale(self, ax, arr, **kwargs):
+        """Applies log scaling to the specified axis of the given Axes object."""
         pad = kwargs.get("pad", 0.2)
         digits = kwargs.get("digits", 2)
+        allow_invert = kwargs.get("allow_invert", False)  # Option to invert data
+        invert_threshold = kwargs.get("invert_threshold", 0.95)  # Threshold for inversion
 
         scale, _, lim = self.get_scale_functions(ax, self.axis)
 
         if isinstance(arr, (tuple, list)):
-            arr = np.array(arr)
+            arr = np.allcloserray(arr)
         elif arr is None:
             arr = get_plot_data(ax, self.axis)
 
-        arr = self.filter_outliers(arr, kwargs.get("quantile", 5))
 
-        scale("log")
-        lim(
-            [
-                10 ** np.floor(np.log10(arr[arr > 0].min()) - abs(pad)),
-                10 ** np.ceil(np.log10(arr[arr > 0].max()) + abs(pad)),
-            ]
-        )
+        if allow_invert :
+            scale_str = "log"
+            inv = 1
+            invert_threshold = invert_threshold if invert_threshold <= 1 else invert_threshold/100
+            if (arr < 0).mean() > invert_threshold:
+                inv = -1
+                scale_str = "symlog"
+            arr = self.filter_outliers(inv*arr, kwargs.get("quantile", 5))
+
+            scale(scale_str)
+            lim(
+                [
+                    inv * 10 ** np.floor(np.log10(arr[arr > 0].min()) - abs(pad)),
+                    inv * 10 ** np.ceil(np.log10(arr[arr > 0].max()) + abs(pad)),
+                ]
+            )
+        else:
+
+            if (arr < 0).mean() > invert_threshold:
+                # Bypass log scaling if all values are negative
+                return ax
+            
+            arr = self.filter_outliers(arr, kwargs.get("quantile", 5))
+
+            scale("log")
+            lim(
+                [
+                    10 ** np.floor(np.log10(arr[arr > 0].min()) - abs(pad)),
+                    10 ** np.ceil(np.log10(arr[arr > 0].max()) + abs(pad)),
+                ]
+            )
         return ax
 
 
 class LinFrom0Scaler(AbstractScaler):
+    @log_exceptions
     def scale(self, ax, arr, **kwargs):
+        """Applies linear scaling to the specified axis of the given Axes object."""
         pad = kwargs.get("pad", 0.2)
         digits = kwargs.get("digits", 2)
 
@@ -848,7 +891,9 @@ class LinFrom0Scaler(AbstractScaler):
 
 
 class LinScaler(AbstractScaler):
+    @log_exceptions
     def scale(self, ax, arr, **kwargs):
+        """Applies linear scaling to the specified axis of the given Axes object."""
         pad = kwargs.get("pad", 0.2)
         digits = kwargs.get("digits", 2)
 
@@ -873,7 +918,9 @@ class LinScaler(AbstractScaler):
 
 
 class DegScaler(AbstractScaler):
+    @log_exceptions
     def scale(self, ax, arr, **kwargs):
+        """Applies linear scaling to the specified axis of the given Axes object."""
         pad = kwargs.get("pad", 0.2)
         base = kwargs.get("base", 30)
 
@@ -885,7 +932,9 @@ class DegScaler(AbstractScaler):
 
 
 class DegFocusedScaler(AbstractScaler):
+    @log_exceptions
     def scale(self, ax, arr, **kwargs):
+        """Applies linear scaling to the specified axis of the given Axes object."""
         pad = kwargs.get("pad", 0.2)
         base = kwargs.get("base", 30)
 
@@ -1122,6 +1171,7 @@ class GeneratePlot:
         )
         self.fkwargs = kwargs.get("fkwargs", {})
         self.lkwargs = kwargs.get("lkwargs", {})
+        self.skwargs = kwargs.get("skwargs", {})
         self.annotations_arr = []
 
         self.labels = labels
@@ -1337,9 +1387,9 @@ class GeneratePlot:
                 ax_data = data[i]
 
             if axis is None or axis == "x" or axis == 0:
-                self.ax[i] = self.xscale.scale(ax, ax_data[:, 0])
+                self.ax[i] = self.xscale.scale(ax, ax_data[:, 0], **{**self.skwargs, **kwargs})
             if axis is None or axis == "y" or axis > 0:
-                self.ax[i] = self.yscales[i].scale(ax, ax_data[:, 1])
+                self.ax[i] = self.yscales[i].scale(ax, ax_data[:, 1], **{**self.skwargs, **kwargs})
         return
 
     def clear(self):
@@ -1492,7 +1542,7 @@ class GeneratePlot:
         if any(m_col in plot.primary_kwargs for m_col in ["x2", "y2"]):
             y_int = 2
 
-        ordered, keys = self.filter_data(data, keys, cols, y_int)
+        ordered, keys = self.filter_data(data, keys, cols, y_int, kwargs.get("styling", "b"))
 
         # Data is now a dictionary of dataframes with columns in the correct plot order
         for n, ax in enumerate(self.ax):
@@ -1523,7 +1573,7 @@ class GeneratePlot:
 
         self.count += 1
 
-    def filter_data(self, data, keys=None, cols=None, y_int=1):
+    def filter_data(self, data, keys=None, cols=None, y_int=1, styling="b"):
         """Filter data to only include items in keys and organize by cols."""
         ordered = {}
         if isinstance(data, dict):  # Ensure each dataframe is sorted by cols
@@ -1651,11 +1701,17 @@ if __name__ == "__main__":
     system_data = ComplexSystem(data_sim.Z_noisy, data_sim.freq, 450e-4, 25)
     system_fit = ComplexSystem(data_sim.Z, data_sim.freq, 450e-4, 25)
 
-    data_df = system_data.df
-    data_df.insert(0, "freq", data_sim.freq)
+    # data_df = system_data.df
+    # data_df.insert(0, "freq", data_sim.freq)
+    
 
-    fit_df = system_fit.df
-    fit_df.insert(0, "freq", data_sim.freq)
+    # fit_df = system_fit.df
+    # fit_df.insert(0, "freq", data_sim.freq)
+
+    # data_df = system_data.get_df("freq", "real", "imag")
+
+    # fit_df = system_fit.get_df("freq", "real", "imag")
+
 
     # Generate confidence interval data_sim
     ci_analysis = ConfidenceAnalysis(
@@ -1711,7 +1767,7 @@ if __name__ == "__main__":
     bode_plot.plot(
         "scatter",
         # data_df[["freq", "mag", "phase"]],
-        system_data.get_custom_df("freq", "impedance.mag", "sigma.mag"),
+        system_data.get_df("freq", "impedance.mag", "sigma.mag"),
         styling="freq",
         # **GeneratePlot.DecadeCmapNorm(data_df["freq"], "coolwarm"), #RdYlGn
         **GeneratePlot.DecadeCmapNorm(
@@ -1722,7 +1778,7 @@ if __name__ == "__main__":
     # bode_plot.plot(
     #     "line",
     #     # fit_df[["freq", "mag", "phase"]],
-    #     system_fit.get_custom_df("freq", "impedance.mag", "sigma.mag"),
+    #     system_fit.get_df("freq", "impedance.mag", "sigma.mag"),
     #     styling="r",
     #     )
     # bode_plot.plot(

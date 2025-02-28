@@ -9,9 +9,12 @@ General function file
 import re
 import sys
 
+from copy import deepcopy
+
 import numpy as np
 import pandas as pd
 
+import sip
 from PyQt5.QtCore import Qt, QEvent
 from PyQt5.QtWidgets import (
     QApplication,
@@ -37,13 +40,16 @@ from PyQt5.QtWidgets import (
     QProgressDialog,
     QListWidget,
     QListWidgetItem,
+    QInputDialog,
 )
 from PyQt5.QtGui import QBrush, QColor, QFontMetrics
 
-from ..string_ops import format_number
+# from ..string_ops import format_number, common_substring
+from ..string_ops import format_number, find_common_str, safe_eval
 
 from .gui_widgets import MultiEntryManager
 
+from .gui_workers import DataHandler, JSONSettings
 
 def create_progress_dialog(
     parent,
@@ -194,41 +200,61 @@ class PrintWindow:
         if self.text_area:
             self.text_area.ensureCursorVisible()
 
-
-class DictWindow(dict):
+class DictWindow:
     """Class to create an options window."""
 
-    def __init__(self, parent, options, name=None):
+    def __init__(self, parent, options, name=None, title=None):
         self.parent = parent
-        if isinstance(options, (dict, DictWindow)) and all(
-            isinstance(value, (dict, DictWindow)) for value in options.values()
-        ):
-            super().__init__({k: v.copy() for k, v in options.items()})
-            self._defaults = {k: v.copy() for k, v in options.items()}
-        elif isinstance(options, (dict, DictWindow)):
-            super().__init__(options.copy())
-            self._defaults = options.copy()
-        else:
-            super().__init__({})
-            self._defaults = {}
-
-        self.name = self._format_name(name)
-        self.entries = {}
+        self._items = deepcopy(options) if isinstance(options, dict) else {}
+        self._defaults = deepcopy(self._items)
+        self.name = name
+        self.title = self._format_name(title or name)
+        self.entries = []
         self.qt_window = None
-        self.tabs = None
 
+    def __getitem__(self, key):
+        return self._items[key]
+
+    def __setitem__(self, key, value):
+        self._items[key] = value
+
+    def __delitem__(self, key):
+        del self._items[key]
+
+    def __contains__(self, key):
+        return key in self._items
+
+    def items(self):
+        return self._items.items()
+
+    def keys(self):
+        return self._items.keys()
+
+    def values(self):
+        return self._items.values()
+
+    def update(self, *args, **kwargs):
+        self._items.update(*args, **kwargs)
+
+    def clear(self):
+        self._items.clear()
+        
     @property
     def defaults(self):
         """Get the default options."""
         return self._defaults
+    
 
     def window(self):
         """Create the options window."""
+        self.entries = []
         self.destroy()
 
         self.qt_window = QDialog(self.parent)
-        self.qt_window.setWindowTitle(self.name)
+        self.qt_window.setWindowTitle(self.title)
+        self.qt_window.finished.connect(lambda: self.update_internal_dict(None))  # Update internal dict on close
         self.qt_window.finished.connect(self.destroy)
+
         layout = QVBoxLayout()
 
         def conv_items(key, value):
@@ -243,122 +269,157 @@ class DictWindow(dict):
 
             return label, entry
 
-        if all(
-            isinstance(value, (dict, DictWindow)) for value in self.values()
-        ):
-            self.tabs = QTabWidget()
-            layout.addWidget(self.tabs)
+        if all(isinstance(value, dict) for value in self._items.values()):
+            tabs = QTabWidget()
+            layout.addWidget(tabs)
 
-            for key, sub_dict in self.items():
+            self.previous_tab_index = 0  # Initialize previous tab index
+
+            for index, (key, sub_dict) in enumerate(self._items.items()):
                 tab = QWidget()
                 tab_layout = QVBoxLayout()
                 form_layout = QFormLayout()
-                self.entries[key] = {}
+                entries = {}
 
                 for sub_key, sub_value in sub_dict.items():
                     label, entry = conv_items(sub_key, sub_value)
                     form_layout.addRow(label, entry)
-                    self.entries[key][sub_key] = entry
+                    entries[sub_key] = entry
 
                 tab_layout.addLayout(form_layout)
+
+                # Add tab-specific buttons to each tab
+                tab_button_layout = QHBoxLayout()
+                self.add_tab_buttons(tab_button_layout, index)
+                tab_layout.addLayout(tab_button_layout)
+
                 tab.setLayout(tab_layout)
-                self.tabs.addTab(tab, key)
+                tabs.addTab(tab, key)
+
+                self.entries.append([key, entries])
+
         else:
             form_layout = QFormLayout()
-            self.entries = {}
+            entries = {}
 
-            for key, value in self.items():
+            for key, value in self._items.items():
                 label, entry = conv_items(key, value)
                 form_layout.addRow(label, entry)
-                self.entries[key] = entry
+                entries[key] = entry
 
             layout.addLayout(form_layout)
 
-        button_layout = QHBoxLayout()
+            self.entries.append([None, entries]) 
 
+        # Add global buttons
+        global_button_layout = QHBoxLayout()
+        self.add_global_buttons(global_button_layout)
+        layout.addLayout(global_button_layout)
+
+        self.qt_window.setLayout(layout)
+        self.qt_window.resize(800, 400)
+
+        self.qt_window.exec_()
+    
+    def add_tab_buttons(self, layout, index):
+        """Add tab-specific buttons to the layout."""
         save_button = QPushButton("Save")
-        save_button.clicked.connect(self.save)
-        button_layout.addWidget(save_button)
+        save_button.clicked.connect(lambda: self.save(index))
+        layout.addWidget(save_button)
 
         add_button = QPushButton("Add")
-        add_button.clicked.connect(self.add_option)
-        button_layout.addWidget(add_button)
+        add_button.clicked.connect(lambda: self.add_option(index))
+        layout.addWidget(add_button)
 
         reset_button = QPushButton("Reset")
-        reset_button.clicked.connect(self.reset)
-        button_layout.addWidget(reset_button)
+        reset_button.clicked.connect(lambda: self.reset(index))
+        layout.addWidget(reset_button)
 
-        layout.addLayout(button_layout)
-        self.qt_window.setLayout(layout)
-        self.qt_window.exec_()
+    def add_global_buttons(self, layout):
+        """Add global buttons to the layout."""
+        save_all_button = QPushButton("Save All")
+        save_all_button.clicked.connect(lambda: self.save(None))
+        layout.addWidget(save_all_button)
 
-    def add_option(self):
+        if len(self.entries) == 1:
+            add_button = QPushButton("Add")
+            add_button.clicked.connect(lambda: self.add_option(None))
+            layout.addWidget(add_button)
+
+        reset_all_button = QPushButton("Reset All")
+        reset_all_button.clicked.connect(lambda: self.reset(None))
+        layout.addWidget(reset_all_button)
+
+    def update_internal_dict(self, tab_key=None):
+        """Update the internal dictionary with the current values from the window."""
+        if not self.entries:
+            return
+        if tab_key is None:
+            if len(self.entries) == 1:
+                # Update self._items as there are no sub-dicts
+                entries = self.entries[0][1]
+                self._items.update({key: safe_eval(val.text()) for key, val in entries.items()})
+            else:
+                # Update all sub-dicts
+                for i in range(len(self.entries)):
+                    self.update_internal_dict(i)
+        else:
+            # Update the specific sub-dict
+            super_key, entries = self.entries[tab_key]
+            self._items[super_key] = {key: safe_eval(val.text()) for key, val in entries.items()}
+            
+    def add_option(self, index=None):
         """Add a new option to the window."""
         dialog = CustomSimpleDialog(
             self.parent, "Add Option", "Enter the key:", width=50
         )
         if dialog.exec_() == QDialog.Accepted:
-            key = dialog.result
-            if key:
-                if self.tabs is not None:
-                    current_tab = self.tabs.tabText(self.tabs.currentIndex())
-                    if current_tab:
-                        self[current_tab][key] = ""
+            sub_key = dialog.result
+            if sub_key:
+                if len(self.entries) == 1:
+                    self._items[sub_key] = ""
                 else:
-                    self[key] = ""
+                    if index is None:
+                        index = self.qt_window.layout().itemAt(0).widget().currentIndex()
+                    self._items[self.entries[index][0]][sub_key] = ""
+
                 self.window()
 
-    def save(self):
-        """Save the options to the dictionary."""
+    def save(self, index=None):
+        """Save the options of the current tab to the local JSON and update _defaults."""
+        if index is None:
+            self.update_internal_dict()
+            self._defaults = deepcopy(self._items)
+        else:
+            key = self.entries[index][0]
+            self.update_internal_dict(index)
+            self._defaults[key] = deepcopy(self._items[key])
 
-        def eval_value(value):
-            if value.lower() == "none":
-                return None
-            elif value.lower() == "true":
-                return True
-            elif value.lower() == "false":
-                return False
-            else:
-                try:
-                    val = eval(value, {}, {"inf": np.inf})
-                    if isinstance(val, float) and val.is_integer():
-                        return int(val)
-                    return val
-                except (NameError, SyntaxError):
-                    return value
 
-        for key, entry in self._get_dict(self.entries).items():
-            value = entry.text()
-            to_update = self._get_dict(self)
-            if "," in value:
-                to_update[key] = [
-                    eval_value(v.strip()) for v in value.split(",")
-                ]
-            else:
-                to_update[key] = eval_value(value)
-
-        self.qt_window.accept()
-
-    def reset(self):
+    def reset(self, index=None):
         """Reset the options to the default values."""
         reply = QMessageBox.question(
             self.parent,
             "Confirm Reset",
-            "Are you sure you want to reset to default options?",
+            "Are you sure you want to reset the options to their initial values?",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
-
         if reply == QMessageBox.Yes:
-            to_reset = self._get_dict(self)
-            to_reset.clear()
-            to_reset.update(self._get_dict(self._defaults.copy()))
+            if index is None:
+                self._items.clear()
+                self._items.update(deepcopy(self._defaults))
+            else:
+                key = self.entries[index][0]
+                self._items[key].clear()
+                self._items[key].update(deepcopy(self._defaults[key]))
             self.window()  # Recreate the window to reflect the reset options
 
     def destroy(self):
         """Destroy the options window."""
         if self.qt_window is not None and self.qt_window.isVisible():
             self.qt_window.close()
+            self.qt_window.deleteLater()
 
     def _format_name(self, name):
         """Format the name of the options window."""
@@ -369,11 +430,527 @@ class DictWindow(dict):
         else:
             return "Options"
 
-    def _get_dict(self, source):
-        if self.tabs is not None:
-            return source[self.tabs.tabText(self.tabs.currentIndex())]
-        else:
-            return source
+class JsonDictWindow(DictWindow):
+    """Subclass of DictWindow with JSON handling."""
+
+    def __init__(self, parent, options, name=None, title=None, json_settings=None):
+        super().__init__(parent, options, name, title)
+        self.json_settings = json_settings if json_settings else JSONSettings()
+
+    def add_tab_buttons(self, layout, index):
+        """Add tab-specific buttons to the layout."""
+        super().add_tab_buttons(layout, index)
+
+        restore_defaults_button = QPushButton("Restore Defaults")
+        restore_defaults_button.clicked.connect(lambda: self.restore_defaults(index))
+        layout.addWidget(restore_defaults_button)
+
+    def add_global_buttons(self, layout):
+        """Add global buttons to the layout."""
+        super().add_global_buttons(layout)
+
+        restore_all_defaults_button = QPushButton("Restore All Defaults")
+        restore_all_defaults_button.clicked.connect(lambda: self.restore_defaults(None))
+        layout.addWidget(restore_all_defaults_button)
+
+    def save(self, index=False):
+        """Save the options of the current tab to the local JSON and update _defaults."""
+        super().save(index)
+        self.json_settings.save_settings(**{self.name: self._defaults})
+
+    def restore_defaults(self, index=None):
+        """Restore the default settings from the local JSON and update _defaults and current values."""
+        reply = QMessageBox.question(
+            self.parent,
+            "Confirm Reset",
+            "Are you sure you want to reset the options to default?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply == QMessageBox.Yes:
+            if index is None:
+                # Restore all defaults
+                defaults = self.json_settings.restore_defaults(**{self.name: {}})
+                self._defaults = defaults[self.name].copy()
+                self._items.clear()
+                self._items.update(deepcopy(self._defaults))
+            else:
+                # Restore defaults for the specified tab
+                key = self.entries[index][0]
+                restore_dict = {self.name: {key: {}}}
+                defaults = self.json_settings.restore_defaults(**restore_dict)
+                self._defaults[key] = defaults[self.name][key].copy()
+                self._items[key].clear()
+                self._items[key].update(deepcopy(self._defaults[key]))
+            self.window()  # Recreate the window to reflect the restored options
+
+# class DictWindow(dict):
+#     """Class to create an options window."""
+
+#     def __init__(self, parent, options, name=None, title=None):
+#         self.parent = parent
+#         if isinstance(options, (dict, DictWindow)) and all(
+#             isinstance(value, (dict, DictWindow)) for value in options.values()
+#         ):
+#             super().__init__({k: v.copy() for k, v in options.items()})
+#             self._defaults = {k: v.copy() for k, v in options.items()}
+#         elif isinstance(options, (dict, DictWindow)):
+#             super().__init__(options.copy())
+#             self._defaults = options.copy()
+#         else:
+#             super().__init__({})
+#             self._defaults = {}
+
+#         self.name = name
+#         self.title = self._format_name(title or name)
+#         self.entries = []  
+#         self.qt_window = None
+
+#     @property
+#     def defaults(self):
+#         """Get the default options."""
+#         return self._defaults
+
+#     @property
+#     def current_index(self):
+#         """Get the current index of the tab or default to 0."""
+#         if self.qt_window is not None and isinstance(self.qt_window.layout().itemAt(0).widget(), QTabWidget):
+#             return self.qt_window.layout().itemAt(0).widget().currentIndex()
+#         return 0
+
+#     def window(self):
+#         """Create the options window."""
+#         self.destroy()
+
+#         self.qt_window = QDialog(self.parent)
+#         self.qt_window.setWindowTitle(self.title)
+#         self.qt_window.finished.connect(self.update_internal_dict)  # Update internal dict on close
+#         self.qt_window.finished.connect(self.destroy)
+
+#         layout = QVBoxLayout()
+
+#         def conv_items(key, value):
+#             label = QLabel(key)
+#             entry = QLineEdit()
+#             if isinstance(value, list):
+#                 entry.setText(", ".join([format_number(v, 5) for v in value]))
+#             elif isinstance(value, (int, float)):
+#                 entry.setText(format_number(value, 5))
+#             else:
+#                 entry.setText(str(value))
+
+#             return label, entry
+
+#         if all(
+#             isinstance(value, (dict, DictWindow)) for value in self.values()
+#         ):
+#             tabs = QTabWidget()
+#             layout.addWidget(tabs)
+
+#             # Create tab-specific buttons
+#             save_button = QPushButton("Save")
+#             save_button.clicked.connect(lambda: self.save(False))
+
+#             reset_button = QPushButton("Reset")
+#             reset_button.clicked.connect(lambda: self.reset(False))
+
+#             restore_defaults_button = QPushButton("Restore Defaults")
+#             restore_defaults_button.clicked.connect(lambda: self.restore_defaults(False))
+
+#             for key, sub_dict in self.items():
+#                 tab = QWidget()
+#                 tab_layout = QVBoxLayout()
+#                 form_layout = QFormLayout()
+#                 entries = {}
+
+#                 for sub_key, sub_value in sub_dict.items():
+#                     label, entry = conv_items(sub_key, sub_value)
+#                     form_layout.addRow(label, entry)
+#                     entries[sub_key] = entry
+
+#                 tab_layout.addLayout(form_layout)
+
+#                 # Add tab-specific buttons to each tab
+#                 tab_button_layout = QHBoxLayout()
+#                 tab_button_layout.addWidget(save_button)
+#                 tab_button_layout.addWidget(reset_button)
+#                 tab_button_layout.addWidget(restore_defaults_button)
+#                 tab_layout.addLayout(tab_button_layout)
+
+#                 tab.setLayout(tab_layout)
+#                 tabs.addTab(tab, key)
+
+#                 self.entries.append([key, entries])  # CHANGE: Append to entries list
+#         else:
+#             form_layout = QFormLayout()
+#             entries = {}
+
+#             for key, value in self.items():
+#                 label, entry = conv_items(key, value)
+#                 form_layout.addRow(label, entry)
+#                 entries[key] = entry
+
+#             layout.addLayout(form_layout)
+
+
+
+#             self.entries.append([None, entries])  # CHANGE: Append to entries list
+
+#         # Add global buttons
+#         global_button_layout = QHBoxLayout()
+
+#         save_all_button = QPushButton("Save All")
+#         save_all_button.clicked.connect(lambda: self.save(True))
+#         global_button_layout.addWidget(save_all_button)
+
+#         reset_all_button = QPushButton("Reset All")
+#         reset_all_button.clicked.connect(lambda: self.reset(True))
+#         global_button_layout.addWidget(reset_all_button)
+
+#         restore_all_defaults_button = QPushButton("Restore All Defaults")
+#         restore_all_defaults_button.clicked.connect(lambda: self.restore_defaults(True))
+#         global_button_layout.addWidget(restore_all_defaults_button)
+
+#         layout.addLayout(global_button_layout)
+
+#         self.qt_window.setLayout(layout)
+#         self.qt_window.resize(800, 400)
+
+#         self.qt_window.exec_()
+
+#     def update_internal_dict(self, tab_key=None):
+#         """Update the internal dictionary with the current values from the window."""
+#         index = self.current_index if tab_key is None else tab_key
+#         entries = self.entries[index][1]
+#         if super_key := self.entries[index][0] is not None:
+#             to_update = self[super_key]
+#         else:
+#             to_update = self
+
+#         for key, entry in entries.items():
+#             value = entry.text()
+#             to_update[key] = safe_eval(value)
+        
+#         return super_key
+            
+
+#     def add_option(self):
+#         """Add a new option to the window."""
+#         dialog = CustomSimpleDialog(
+#             self.parent, "Add Option", "Enter the key:", width=50
+#         )
+#         if dialog.exec_() == QDialog.Accepted:
+#             key = dialog.result
+#             if key:
+#                 index = self.current_index
+#                 if self.entries[index][0] is not None:
+#                     self[self.entries[index][0]][key] = ""
+#                 else:
+#                     self[key] = ""
+#                 self.window()
+
+#     def save(self, bulk=False):
+#         """Save the options of the current tab to the local JSON and update _defaults."""
+#         if len(self.entries) == 1:
+#             self.update_internal_dict()
+#             self._defaults = self.copy()
+#         else:
+#             index = range(len(self.entries)) if bulk else [self.current_index]
+#             for i in index:
+#                 key = self.update_internal_dict(i)
+#                 self._defaults[key] = self[key].copy()
+        
+#         self.parent.data.save_local_settings(**{"option_inits": self._defaults})
+
+#     def reset(self, bulk=False):
+#         """Reset the options to the default values."""
+#         reply = QMessageBox.question(
+#             self.parent,
+#             "Confirm Reset",
+#             "Are you sure you want to reset the options to their initial values?",
+#             QMessageBox.Yes | QMessageBox.No,
+#             QMessageBox.No,
+#         )
+#         if reply == QMessageBox.Yes:
+#             if len(self.entries) == 1:
+#                 self.clear()
+#                 self.update(self._defaults.copy())
+#             else:
+#                 index = range(len(self.entries)) if bulk else [self.current_index]
+#                 for i in index:
+#                     key = self.entries[i][0]
+#                     self[key].clear()
+#                     self[key].update(self._defaults[key].copy())
+#             self.window()  # Recreate the window to reflect the reset options
+
+#     def restore_defaults(self, bulk=False):
+#         """Restore the default settings from the local JSON and update _defaults and current values."""
+#         reply = QMessageBox.question(
+#             self.parent,
+#             "Confirm Reset",
+#             "Are you sure you want to reset the options to default?",
+#             QMessageBox.Yes | QMessageBox.No,
+#             QMessageBox.No,
+#         )
+#         if reply == QMessageBox.Yes:
+            
+#             if len(self.entries) == 1:
+#                 self._defaults = self.parent.option_inits.copy()
+#                 self.update_internal_dict()
+#             else:
+#                 index = range(len(self.entries)) if bulk else [self.current_index]
+#                 key_dict = {self.entries[i][0]: None for i in index}
+#                 self.parent.data.restore_option_defaults(key_dict)
+                
+#                 for i in index:
+#                     key = self.entries[i][0]
+#                     self._defaults[key] = self.parent.option_inits[key].copy()
+#                     self.update_internal_dict(i)
+
+#             self.parent.restore_option_defaults()
+#             self.window()  # Recreate the window to reflect the restored options
+
+
+        
+#     def destroy(self):
+#         """Destroy the options window."""
+#         if self.qt_window is not None and self.qt_window.isVisible():
+#             self.qt_window.close()
+#             self.qt_window.deleteLater()
+
+#     def _format_name(self, name):
+#         """Format the name of the options window."""
+#         if isinstance(name, str):
+#             return (
+#                 name if "option" in name.lower() else f"{name.title()} Options"
+#             )
+#         else:
+#             return "Options"
+
+            # # Add tab-specific buttons
+            # tab_button_layout = QHBoxLayout()
+            # save_button = QPushButton("Save")
+            # save_button.clicked.connect(lambda: self.save(False))
+            # tab_button_layout.addWidget(save_button)
+
+            # reset_button = QPushButton("Reset")
+            # reset_button.clicked.connect(lambda: self.reset(False))
+            # tab_button_layout.addWidget(reset_button)
+
+            # restore_defaults_button = QPushButton("Restore Defaults")
+            # restore_defaults_button.clicked.connect(lambda: self.restore_defaults(False))
+            # tab_button_layout.addWidget(restore_defaults_button)
+
+            # layout.addLayout(tab_button_layout)
+
+    # def _get_dict(self, source): **{"option_inits": self._defaults}
+    #     if self.tabs is not None:
+    #         return source[self.tabs.tabText(self.tabs.currentIndex())]
+    #     else:
+    #         return source
+
+        # self.update_internal_dict(index)
+        # key = self.entries[index][0]
+        # self.parent.save_local_settings(**{key: self[key]})
+        # self._defaults[key] = self[key].copy()
+        
+        # current_tab = self.tabs.tabText(self.tabs.currentIndex())
+        # self.update_internal_dict(current_tab)
+        # self.parent.save_local_settings(**{current_tab: self[current_tab]})
+        # self._defaults[current_tab] = self[current_tab].copy()
+
+    # def save_all(self):
+    #     """Save all options to the local JSON and update _defaults."""
+    #     self.update_internal_dict()
+    #     self.parent.save_local_settings(**self)
+    #     self._defaults = {k: v.copy() for k, v in self.items()}
+        
+
+# class DictWindow(dict):
+#     """Class to create an options window."""
+
+#     def __init__(self, parent, options, name=None):
+#         self.parent = parent
+#         if isinstance(options, (dict, DictWindow)) and all(
+#             isinstance(value, (dict, DictWindow)) for value in options.values()
+#         ):
+#             super().__init__({k: v.copy() for k, v in options.items()})
+#             self._defaults = {k: v.copy() for k, v in options.items()}
+#         elif isinstance(options, (dict, DictWindow)):
+#             super().__init__(options.copy())
+#             self._defaults = options.copy()
+#         else:
+#             super().__init__({})
+#             self._defaults = {}
+
+#         self.name = self._format_name(name)
+#         self.entries = {}
+#         self.qt_window = None
+#         self.tabs = None
+
+#     @property
+#     def defaults(self):
+#         """Get the default options."""
+#         return self._defaults
+
+#     def window(self):
+#         """Create the options window."""
+#         self.destroy()
+
+#         self.qt_window = QDialog(self.parent)
+#         self.qt_window.setWindowTitle(self.name)
+#         self.qt_window.finished.connect(self.destroy)
+        
+#         layout = QVBoxLayout()
+
+#         def conv_items(key, value):
+#             label = QLabel(key)
+#             entry = QLineEdit()
+#             if isinstance(value, list):
+#                 entry.setText(", ".join([format_number(v, 5) for v in value]))
+#             elif isinstance(value, (int, float)):
+#                 entry.setText(format_number(value, 5))
+#             else:
+#                 entry.setText(str(value))
+
+#             return label, entry
+
+#         if all(
+#             isinstance(value, (dict, DictWindow)) for value in self.values()
+#         ):
+#             self.tabs = QTabWidget()
+#             layout.addWidget(self.tabs)
+
+#             for key, sub_dict in self.items():
+#                 tab = QWidget()
+#                 tab_layout = QVBoxLayout()
+#                 form_layout = QFormLayout()
+#                 self.entries[key] = {}
+
+#                 for sub_key, sub_value in sub_dict.items():
+#                     label, entry = conv_items(sub_key, sub_value)
+#                     form_layout.addRow(label, entry)
+#                     self.entries[key][sub_key] = entry
+
+#                 tab_layout.addLayout(form_layout)
+#                 tab.setLayout(tab_layout)
+#                 self.tabs.addTab(tab, key)
+#         else:
+#             form_layout = QFormLayout()
+#             self.entries = {}
+
+#             for key, value in self.items():
+#                 label, entry = conv_items(key, value)
+#                 form_layout.addRow(label, entry)
+#                 self.entries[key] = entry
+
+#             layout.addLayout(form_layout)
+
+#         button_layout = QHBoxLayout()
+
+#         save_button = QPushButton("Save")
+#         save_button.clicked.connect(self.save)
+#         button_layout.addWidget(save_button)
+
+#         add_button = QPushButton("Add")
+#         add_button.clicked.connect(self.add_option)
+#         button_layout.addWidget(add_button)
+
+#         reset_button = QPushButton("Reset")
+#         reset_button.clicked.connect(self.reset)
+#         button_layout.addWidget(reset_button)
+
+#         layout.addLayout(button_layout)
+#         self.qt_window.setLayout(layout)
+#         self.qt_window.resize(800, 400)
+
+#         self.qt_window.exec_()
+
+#     def add_option(self):
+#         """Add a new option to the window."""
+#         dialog = CustomSimpleDialog(
+#             self.parent, "Add Option", "Enter the key:", width=50
+#         )
+#         if dialog.exec_() == QDialog.Accepted:
+#             key = dialog.result
+#             if key:
+#                 if self.tabs is not None:
+#                     current_tab = self.tabs.tabText(self.tabs.currentIndex())
+#                     if current_tab:
+#                         self[current_tab][key] = ""
+#                 else:
+#                     self[key] = ""
+#                 self.window()
+
+#     def save(self):
+#         """Save the options to the dictionary."""
+
+#         def eval_value(value):
+#             if value.lower() == "none":
+#                 return None
+#             elif value.lower() == "true":
+#                 return True
+#             elif value.lower() == "false":
+#                 return False
+#             else:
+#                 try:
+#                     val = eval(value, {}, {"inf": np.inf})
+#                     if isinstance(val, float) and val.is_integer():
+#                         return int(val)
+#                     return val
+#                 except (NameError, SyntaxError):
+#                     return value
+
+#         for key, entry in self._get_dict(self.entries).items():
+#             value = entry.text()
+#             to_update = self._get_dict(self)
+#             if "," in value and "{" in value:
+#                 to_update[key] = eval_value(value)
+#             elif "," in value:
+#                 to_update[key] = [
+#                     eval_value(v.strip()) for v in value.split(",")
+#                 ]
+#             else:
+#                 to_update[key] = eval_value(value)
+
+#         # self.qt_window.accept()
+
+#     def reset(self):
+#         """Reset the options to the default values."""
+#         reply = QMessageBox.question(
+#             self.parent,
+#             "Confirm Reset",
+#             "Are you sure you want to reset to default options?",
+#             QMessageBox.Yes | QMessageBox.No,
+#             QMessageBox.No,
+#         )
+
+#         if reply == QMessageBox.Yes:
+#             to_reset = self._get_dict(self)
+#             to_reset.clear()
+#             to_reset.update(self._get_dict(self._defaults.copy()))
+#             self.window()  # Recreate the window to reflect the reset options
+
+#     def destroy(self):
+#         """Destroy the options window."""
+#         if self.qt_window is not None and self.qt_window.isVisible():
+#             self.qt_window.close()
+#             self.qt_window.deleteLater()
+
+#     def _format_name(self, name):
+#         """Format the name of the options window."""
+#         if isinstance(name, str):
+#             return (
+#                 name if "option" in name.lower() else f"{name.title()} Options"
+#             )
+#         else:
+#             return "Options"
+
+#     def _get_dict(self, source):
+#         if self.tabs is not None:
+#             return source[self.tabs.tabText(self.tabs.currentIndex())]
+#         else:
+#             return source
 
 
 class DataTreeWindow:
@@ -1442,432 +2019,726 @@ class DataViewer(QMainWindow):
                     del self.data[key]
                 self.refresh_table()
 
+from dataclasses import dataclass, field
+from typing import List, Dict
 
 
-class ListWindow(QMainWindow):
+@dataclass
+class StrItem:
+    string: str
+    index: int = 0
+    sub_strings: List[str] = field(default_factory=list)
+    info: Dict = field(default_factory=dict)
+
+    def __post_init__(self):
+        if isinstance(self.sub_strings, str):
+            self.sub_strings = [self.sub_strings]
+        elif not isinstance(self.sub_strings, (list, tuple)):
+            self.sub_strings = []
+        
+        if not self.sub_strings:
+            self.sub_strings = [self.string]
+
+        if not isinstance(self.info, dict):
+            self.info = {}
+
+# needs update_entries, highlight, clear, checked_names, show
+class ListFrame(QFrame):
     """
-    A class to convert MFIA files using a GUI.
-    Attributes:
-        is_xlsx (bool): Flag to indicate if the files are in xlsx format.
-        files (list): List of files to be processed.
-        in_path (Path): Input directory path.
-        t_files (DataFrame): DataFrame containing target files information.
-        data_in (dict): Dictionary to store input data.
-        data_org (dict): Dictionary to store organized data.
-        keywords_list (QLineEdit): Line edit for keywords.
-        checked_columns (list): List of checked columns.
-        tab_widget (QTabWidget): Tab widget for grouping iterations.
-        patterns_list (QListWidget): List widget for file patterns.
-        columns_list (QListWidget): List widget for columns.
-        files_table (QTableWidget): Table widget for files.
-        datasets_tree (QTreeWidget): Tree widget for datasets.
-        t_files_tree (QTreeWidget): Tree widget for target files.
-        files_datasets_tab_widget (QTabWidget): Tab widget for files and datasets.
-        save_format_combo (QComboBox): Combo box for save format.
-        get_all_checkbox (QCheckBox): Checkbox to get all files.
-    Methods:
-        initUI(): Initializes the user interface.
-        add_grouping_tab(search_terms="", reject_terms="", keys=""): Adds a grouping tab.
-        eventFilter(source, event): Handles key press events for deleting items.
-        browse_in_path(): Opens a dialog to browse for input directory.
-        add_pattern(): Adds a pattern to the patterns list.
-        update_files(): Updates the files table with the selected patterns.
-        set_data_org(): Sets the organized data.
-        apply_group(tab=None): Applies grouping logic to the data.
-        apply_all_groups(): Applies all grouping logic to the data.
-        update_tree_view(): Updates the tree view with the organized data.
-        update_t_files(): Updates the target files tree view.
-        convert_files(): Converts the files based on the selected patterns.
-        remove_dataset(item): Removes a dataset from the organized data.
-        reset_columns_list(): Resets the columns list with unique columns from the dataframes.
-        refresh_columns_list(): Refreshes the columns list keeping any checked list.
-        sort_columns_list(): Sorts the columns list.
-        concat_data(): Concatenates the data.
-        simplify_data(): Simplifies the data for fitting.
-        save(): Saves the converted data.
-        save_settings(): Saves the current settings.
-        load_empty_settings(): Loads empty settings.
-        load_all_settings(): Loads all settings.
-        load_settings(full=True): Loads the settings from a file.
+    A class to provide list interaction via a QListWidget.
     """
 
-    def __init__(self):
-        super().__init__()
-        self.is_xlsx = True
-        self.files = None
-        self.in_path = None
-        self.t_files = None
-        self.data_in = None
-        self.data_org = None
-        self.keywords_list = None
-        self.checked_columns = []
+    def __init__(self, data, parent=None):
+        super().__init__(parent)
+        self.strings = []
+        self.special_items = []
+        self.checked_items = []
+        self.str_index = 0
+        self.changed = False
+        self.set_strings(data, False, False)
 
-        self.setWindowTitle("MFIA File Conversion")
+        self.initUI()
 
-        central_widget = QWidget(self)
-        layout = QVBoxLayout(central_widget)
+    def initUI(self):
 
+        self.layout = QVBoxLayout()
+        
+        self.setLayout(self.layout)
+
+        # List Widget for items
+        self.items_list = QListWidget()
+        self.items_list.setDragDropMode(QAbstractItemView.InternalMove)  # Enable drag-and-drop reordering
+        self.items_list.installEventFilter(self)
+        self.items_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.items_list.setEditTriggers(QAbstractItemView.DoubleClicked)
+        self.items_list.itemChanged.connect(self.on_item_changed)
+        self.items_list.itemDoubleClicked.connect(lambda item: self.highlight(item.text()))
+
+        self.layout.addWidget(self.items_list)
+
+        self.combine_button = QPushButton("Combine")
+        self.combine_button.clicked.connect(self.combine_items)
+        self.combine_button.setFixedWidth(75)
+
+        self.rename_button = QPushButton("Rename")
+        self.rename_button.clicked.connect(self.rename_item)
+        self.rename_button.setFixedWidth(75)
+
+        self.save_button = QPushButton("Save")
+        self.save_button.clicked.connect(self.save)
+        self.save_button.setFixedWidth(75)
+
+        self.buttons_layout = QHBoxLayout()
+        self.buttons_layout.addWidget(self.combine_button)
+        self.buttons_layout.addWidget(self.rename_button)
+        self.buttons_layout.addWidget(self.save_button)
+
+        self.layout.addLayout(self.buttons_layout)
+
+        if self.items_list.count() == 0:
+            self.populate_list()
+
+    def eventFilter(self, source, event):
+        """Handles key press events for deleting items."""
+        if event.type() == QEvent.KeyPress and event.key() == Qt.Key_Delete:
+            if source is self.items_list:
+                for item in self.items_list.selectedItems():
+                    self.items_list.takeItem(self.items_list.row(item))
+                return True
+        return super().eventFilter(source, event)
+    
+    def initialize(self, parent=None):
+        """Initialize the list widget."""
+        if sip.isdeleted(self):
+            super().__init__(parent)
+            self.initUI()
+        else:
+            self.setParent(parent)
+
+    def on_item_changed(self, item):
+        self.changed = True
+
+    def get_strings(self):
+        """Return the strings of the entries in the list widget."""
+        return [self.items_list.item(i).text() for i in range(self.items_list.count())]
+        
+    def set_strings(self, data=None, append=False, run_update_entries=True):
+        """Update the entries in the list widget."""
+        if data is None:
+            return
+        data = [data] if not isinstance(data, (list, tuple, set)) else data
+        new_strings = []
+        for ds in data:
+            s = ds.string if isinstance(ds, StrItem) else str(ds)
+            new_strings.append(StrItem(s, self.str_index))
+            self.str_index += 1
+        
+        self.strings = self.strings + new_strings if append else new_strings
+
+        if run_update_entries:
+            self.populate_list()
+
+    def get_checked(self):
+        """Return the strings of the checked entries."""
+        res = []
+        for i in range(self.items_list.count()):
+            if self.items_list.item(i).checkState() == Qt.Checked:
+                res.append(self.items_list.item(i).text())
+        if not res:
+            return self.special_items
+        return res
+
+    def set_checked(self, strings):
+        """Set the checked entries in the list widget."""
+        strings = [str(string) for string in strings] if isinstance(strings, (tuple, list, set)) else [str(strings)]
+        if self.items_list.count() == 0:
+            self.populate_list()
+        for i in range(self.items_list.count()):
+            item = self.items_list.item(i)
+            if item.text() in strings:
+                item.setCheckState(Qt.Checked)
+            else:
+                item.setCheckState(Qt.Unchecked)
+
+    def set_highlight(self, item, strings=None):
+        """Set the highlight for the selected item."""
+        strings = strings if strings is not None else self.special_items
+        font = item.font()
+        bold = True if item.text() in strings else False
+        font.setBold(bold)
+        item.setFont(font)
+        if bold:
+            item.setCheckState(Qt.Checked)
+
+    def highlight(self, strings, reset=False):
+        """Highlight the selected entry in the list widget."""
+        old_highlight = self.special_items.copy()
+        self.special_items = [str(string) for string in strings] if isinstance(strings, (tuple, list, set)) else [str(strings)]
+        if self.items_list.count() == 0:
+            self.populate_list()
+        self.items_list.blockSignals(True)
+        for i in range(self.items_list.count()):
+            item = self.items_list.item(i)
+            self.set_highlight(item, None)
+            if item.text() in self.special_items:
+                item.setCheckState(Qt.Checked)
+            elif item.text() in old_highlight:
+                item.setCheckState(Qt.Unchecked)
+        self.items_list.blockSignals(False)
+
+    def populate_list(self, data=None, append=False):
+        """Update the entries in the list widget."""
+        if data is not None:
+            self.set_strings(data, append, False)
+
+        if sip.isdeleted(self):
+            self.initialize()
+
+        if self.items_list.count() != 0:
+            checked_str = self.get_checked()
+        else:
+            checked_str = self.special_items
+        self.items_list.blockSignals(True)
+        self.items_list.clear()
+        for col in self.strings:
+            item = QListWidgetItem(str(col.string))
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)  # Allow item to be checkable
+            if str(col.string) in checked_str:
+                item.setCheckState(Qt.Checked)
+            else:
+                item.setCheckState(Qt.Unchecked)  # Default to unchecked
+            self.set_highlight(item)
+            self.items_list.addItem(item)
+        self.items_list.blockSignals(False)
+    
+    def save(self):
+        self.checked_items = self.get_checked()
+        self.destroy()
+
+    def clear(self):
+        """Clear the list widget."""
+        self.items_list.clear()
+        self.checked_items = []
+    
+    def combine_items(self):
+        """Combine the selected entries in the list widget."""
+        selected_items = self.items_list.selectedItems()
+        if len(selected_items) < 2:
+            QMessageBox.warning(self, "Warning", "Select at least two items.")
+            return None, None
+        strings = [item.text() for item in selected_items]
+        # autoname, _ = common_substring(strings)
+        autoname, _ = find_common_str(*strings)
+        new_name, ok = QInputDialog.getText(
+            self, "Combine items", "Enter the new name:", text=autoname
+        )
+        if ok:
+            new_list = []
+            substrings = []
+            inserted = False
+            for item in self.strings:
+                if item.string not in strings:
+                    new_list.append(item)
+                elif not inserted:
+                    new_list.append(StrItem(new_name, self.str_index, substrings))
+                    substrings.extend(item.sub_strings)
+                    inserted = True
+                else:
+                    substrings.extend(item.sub_strings)
+            self.strings = new_list
+            self.str_index += 1
+            self.populate_list()
+            return new_name, strings
+        return None, None
+
+    def rename_item(self):
+        """Rename the selected entry in the list widget."""
+        selected_items = self.items_list.selectedItems()
+        if len(selected_items) != 1:
+            QMessageBox.warning(self, "Warning", "Select one item to rename.")
+            return
+        item = selected_items[0]
+        name = item.text()
+        new_name, ok = QInputDialog.getText(
+            self, "Rename item", "Enter the new name:", text=name
+        )
+        if ok:
+            loc = self.items_list.row(item)
+            item.setText(new_name)
+            if name in self.strings[loc].sub_strings:
+                substrings = self.strings[loc].sub_strings
+            else:
+                substrings = self.strings[loc].sub_strings + [name]
+            
+            self.strings[loc] = StrItem(new_name, self.str_index, substrings)
+            self.str_index += 1
+            return new_name, substrings
+        return None, None
+
+class TableFrame(QFrame):
+    """
+    A class to provide table interaction via a QTableWidget.
+    """
+
+    def __init__(self, data, parent=None):
+        super().__init__(parent)
+        self.table_info = {}  
+        self.special_items = []
+        self.checked_items = []
+        self.str_index = 0
+        self.changed = False
+        self.items_table = None
+        self.set_info(data, False, False)
+
+        self.initUI()
+
+    def initUI(self):
+        self.layout = QVBoxLayout()
+        self.setLayout(self.layout)
+
+        # Table Widget for items
+        self.items_table = QTableWidget()
+        self.items_table.setColumnCount(5)
+        self.items_table.setHorizontalHeaderLabels(["Plot", "Dataset", "Shape", "Mark", "Label"])
+        self.items_table.installEventFilter(self)
+        self.items_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.items_table.setEditTriggers(QAbstractItemView.DoubleClicked)
+        self.items_table.itemChanged.connect(self.on_item_changed)
+        self.items_table.itemDoubleClicked.connect(lambda item: self.highlight(self.items_table.item(item.row(), 1).text()))
+        self.items_table.setColumnWidth(0, 20)
+        self.items_table.setColumnWidth(1, 100)
+        self.items_table.setColumnWidth(2, 75)
+        self.items_table.setColumnWidth(3, 20)
+        self.items_table.setColumnWidth(4, 100)
+
+
+        self.layout.addWidget(self.items_table)
+
+        self.combine_button = QPushButton("Combine")
+        self.combine_button.clicked.connect(self.combine_items)
+        self.combine_button.setFixedWidth(75)
+
+        self.rename_button = QPushButton("Rename")
+        self.rename_button.clicked.connect(self.rename_item)
+        self.rename_button.setFixedWidth(75)
+
+        self.save_button = QPushButton("Save")
+        self.save_button.clicked.connect(self.save)
+        self.save_button.setFixedWidth(75)
+
+        self.buttons_layout = QHBoxLayout()
+        self.buttons_layout.addWidget(self.combine_button)
+        self.buttons_layout.addWidget(self.rename_button)
+        self.buttons_layout.addWidget(self.save_button)
+
+        self.layout.addLayout(self.buttons_layout)
+
+        if self.items_table.rowCount() == 0:
+            self.populate_table()
+
+    def eventFilter(self, source, event):
+        """Handles key press events for deleting items."""
+        if event.type() == QEvent.KeyPress and event.key() == Qt.Key_Delete:
+            if source is self.items_table:
+                rows_to_delete = set()
+                for item in self.items_table.selectedItems():
+                    rows_to_delete.add(item.row())
+                for row in sorted(rows_to_delete, reverse=True):
+                    self.items_table.removeRow(row)
+                return True
+        return super().eventFilter(source, event)
+    
+    def initialize(self, parent=None):
+        """Initialize the table widget."""
+        if sip.isdeleted(self):
+            super().__init__(parent)
+            self.initUI()
+        else:
+            self.setParent(parent)
+
+    def on_item_changed(self, item):
+        self.changed = True
+
+    def get_info(self):
+        """Return the strings of the entries in the table widget."""
+        return [self.items_table.item(row, 1).text() for row in range(self.items_table.rowCount())]
+        
+    def set_info(self, data=None, append=False, run_update_entries=True):
+        """Update the entries in the table widget."""
+        if data is None:
+            return
+        data = [data] if not isinstance(data, (list, tuple, set)) else data
+        data = [(ds, "") if not isinstance(ds, (list, tuple)) else ds for ds in data]
+        checked_str = self.get_checked() if self.items_table is not None and self.items_table.rowCount() != 0 else self.special_items
+        new_table_info = {}
+        for ds, shp in data:
+            s = ds.string if isinstance(ds, StrItem) else str(ds)
+            new_table_info[s] = {
+                "Plot": True if s in checked_str else False,
+                "Dataset": StrItem(s, self.str_index),
+                "Shape": str(shp),
+                "Mark": True if s in self.special_items else False,
+                "Label": f"_{s}" if s in self.special_items else s,
+            }
+            self.str_index += 1
+        
+        if append:
+            self.table_info.update(new_table_info) 
+        else:
+            self.table_info = new_table_info
+
+        if run_update_entries:
+            self.populate_table()
+
+    def get_checked(self, column=0):
+        """Return the strings of the checked entries."""
+        column = column if column in (0, 3) else 0
+        res = []
+        for row in range(self.items_table.rowCount()):
+            if self.items_table.item(row, column).checkState() == Qt.Checked:
+                res.append(self.items_table.item(row, 1).text())
+        if not res:
+            return self.special_items
+        return res
+
+    def set_checked(self, strings):
+        """Set the checked entries in the table widget."""
+        strings = [str(string) for string in strings] if isinstance(strings, (tuple, list, set)) else [str(strings)]
+        if self.items_table.rowCount() == 0:
+            self.populate_table()
+        for row in range(self.items_table.rowCount()):
+            item = self.items_table.item(row, 1)
+            if item.text() in strings:
+                self.items_table.item(row, 0).setCheckState(Qt.Checked)
+            else:
+                self.items_table.item(row, 0).setCheckState(Qt.Unchecked)
+
+    def set_highlight(self, row, strings=None):
+        """Set the highlight for the selected row."""
+        strings = strings if strings is not None else self.special_items
+        font = self.items_table.item(row, 1).font()
+        bold = True if self.items_table.item(row, 1).text() in strings else False
+        font.setBold(bold)
+        self.items_table.item(row, 1).setFont(font)
+        if bold:
+            self.items_table.item(row, 0).setCheckState(Qt.Checked)
+            self.items_table.item(row, 3).setCheckState(Qt.Checked)
+
+    def highlight(self, strings, reset=False):
+        """Highlight the selected entry in the table widget."""
+        if isinstance(strings, int):
+            strings = [self.items_table.item(strings, 1).text()]
+        old_highlight = self.special_items.copy()
+        self.special_items = [str(string) for string in strings] if isinstance(strings, (tuple, list, set)) else [str(strings)]
+        if self.items_table.rowCount() == 0:
+            self.populate_table()
+        self.items_table.blockSignals(True)
+        for row in range(self.items_table.rowCount()):
+            self.set_highlight(row, None)
+            if self.items_table.item(row, 1).text() in self.special_items:
+                self.items_table.item(row, 0).setCheckState(Qt.Checked)
+                self.items_table.item(row, 3).setCheckState(Qt.Checked)
+            elif self.items_table.item(row, 1).text() in old_highlight:
+                self.items_table.item(row, 0).setCheckState(Qt.Unchecked)
+                self.items_table.item(row, 3).setCheckState(Qt.Unchecked)
+        self.items_table.blockSignals(False)
+
+    def populate_table(self, data=None, append=False):
+        """Update the entries in the table widget."""
+        # if data is not None:
+        self.set_info(data, append, False)
+
+        if sip.isdeleted(self):
+            self.initialize()
+
+        checked_str = self.get_checked() if self.items_table.rowCount() != 0 else self.special_items
+        self.items_table.blockSignals(True)
+        self.items_table.setRowCount(0)
+        for key, value in self.table_info.items():
+            row_position = self.items_table.rowCount()
+            self.items_table.insertRow(row_position)
+            check_item = QTableWidgetItem()
+            check_item.setFlags(check_item.flags() | Qt.ItemIsUserCheckable)
+            check_item.setCheckState(Qt.Checked if key in checked_str else Qt.Unchecked)
+            self.items_table.setItem(row_position, 0, check_item)
+            dataset_item = QTableWidgetItem(value["Dataset"].string)
+            dataset_item.setFlags(dataset_item.flags() & ~Qt.ItemIsEditable)  # Make dataset_item un-editable
+            self.items_table.setItem(row_position, 1, dataset_item)
+            shape_item = QTableWidgetItem(value["Shape"])
+            self.items_table.setItem(row_position, 2, shape_item)
+            mark_item = QTableWidgetItem()
+            mark_item.setFlags(mark_item.flags() | Qt.ItemIsUserCheckable)
+            mark_item.setCheckState(Qt.Checked if value["Mark"] else Qt.Unchecked)
+            self.items_table.setItem(row_position, 3, mark_item)
+            label_item = QTableWidgetItem(value["Label"])
+            self.items_table.setItem(row_position, 4, label_item)
+            self.set_highlight(row_position)
+        self.items_table.blockSignals(False)
+    
+    def save(self):
+        self.checked_items = self.get_checked()
+        self.destroy()
+
+    def clear(self):
+        """Clear the table widget."""
+        self.items_table.setRowCount(0)
+        self.checked_items = []
+    
+    def combine_items(self):
+        """Combine the selected entries in the table widget."""
+        selected_items = self.items_table.selectedItems()
+        if len(selected_items) < 2:
+            QMessageBox.warning(self, "Warning", "Select at least two items.")
+            return None, None
+        # strings = [self.items_table.item(item.row(), 1).text() for item in selected_items]
+        selected_rows = list(set(item.row() for item in selected_items))
+        strings = [self.items_table.item(row, 1).text() for row in selected_rows]
+        # autoname, _ = common_substring(strings)
+        autoname, _ = find_common_str(*strings)
+        new_name, ok = QInputDialog.getText(
+            self, "Combine items", "Enter the new name:", text=autoname
+        )
+        if ok:
+            new_table_info = {}
+            substrings = []
+            inserted = False
+            for key, value in self.table_info.items():
+                if key not in strings:
+                    new_table_info[key] = value
+                elif not inserted:
+                    new_table_info[new_name] = {
+                        "Plot": Qt.Unchecked,
+                        "Dataset": StrItem(new_name, self.str_index, substrings),
+                        "Shape": "",
+                        "Mark": Qt.Unchecked,
+                        "Label": f"_{new_name}"
+                    }
+                    substrings.extend(value["Dataset"].sub_strings)
+                    inserted = True
+                else:
+                    substrings.extend(value["Dataset"].sub_strings)
+            new_table_info[new_name]["Dataset"].sub_strings = substrings
+            self.table_info = new_table_info
+            self.str_index += 1
+            self.populate_table()
+            return new_name, strings
+        return None, None
+
+    def rename_item(self):
+        """Rename the selected entry in the table widget."""
+        selected_items = self.items_table.selectedItems()
+        if len(selected_items)  != 5:
+            QMessageBox.warning(self, "Warning", "Select one item to rename.")
+            return None, None
+        # Get the selected row
+        selected_row = selected_items[0].row()
+        name = self.items_table.item(selected_row, 1).text()
+        new_name, ok = QInputDialog.getText(
+            self, "Rename item", "Enter the new name:", text=name
+        )
+        if ok:
+            self.items_table.item(selected_row, 1).setText(new_name)
+            self.items_table.item(selected_row, 4).setText(f"_{new_name}")
+
+            if name in self.table_info[name]["Dataset"].sub_strings:
+                substrings = self.table_info[name]["Dataset"].sub_strings
+            else:
+                substrings = self.table_info[name]["Dataset"].sub_strings + [name]
+            self.table_info[new_name] = self.table_info.pop(name)
+            self.table_info[new_name]["Dataset"] = StrItem(new_name, self.str_index, substrings)
+            self.table_info[new_name]["Label"] = f"_{new_name}"
+            self.str_index += 1
+            return new_name, substrings
+        return None, None
     
 
-        # List Widget for Columns
-        self.columns_list = QListWidget()
-        self.columns_list.setDragDropMode(
-            QAbstractItemView.InternalMove
-        )  # Enable drag-and-drop reordering
-        reset_columns_button = QPushButton("Reset")
-        reset_columns_button.clicked.connect(self.reset_columns_list)
-        reset_columns_button.setFixedWidth(75)
-        refresh_columns_button = QPushButton("Refresh")
-        refresh_columns_button.clicked.connect(self.refresh_columns_list)
-        refresh_columns_button.setFixedWidth(75)
-        sort_columns_button = QPushButton("Sort")
-        sort_columns_button.clicked.connect(self.sort_columns_list)
-        sort_columns_button.setFixedWidth(75)
+class DataHandlerWidgets(DataHandler):
+    """A class to handle the data widgets for the EIS analysis."""
+    def __init__(self, parent=None, **kwargs):
+        self.raw = None
+        super().__init__()
+        self._raw = {}
+        self.root = parent
+        # self.raw_list = ListFrame(list(self.raw.keys()), parent)
+        self.raw_list = TableFrame([(k, str(len(v))) for k, v in self.raw.items()], parent)
+        self.window = None
+        self.var = None
 
-        columns_layout = QVBoxLayout()
-        columns_layout.addWidget(QLabel("<b>Columns:</b>"))
-        columns_layout.addWidget(self.columns_list)
-        columns_buttons_layout = QHBoxLayout()
-        columns_buttons_layout.addWidget(reset_columns_button)
-        columns_buttons_layout.addWidget(refresh_columns_button)
-        columns_buttons_layout.addWidget(sort_columns_button)
-        columns_layout.addLayout(columns_buttons_layout)
+        self.callback = kwargs.get("callback", None)
 
-        columns_frame = QFrame()
-        columns_frame.setLayout(columns_layout)
-
-        layout.addWidget(columns_frame)
+    def load_window(self):
+        """Show the list frame window."""
+        if not self.raw:
+            QMessageBox.warning(self.root, "Warning", "No data to display.")
+            return
+        for key, system in self.raw.items():
+            self._raw[key] = system.get_df("freq", "real", "imag")
+            self._raw[key].attrs["thickness"] = system.thickness
+            self._raw[key].attrs["area"] = system.area
         
+        self.raw_archive = {**self.raw_archive.copy(), **self.raw.copy()}
 
-        self.setCentralWidget(central_widget)
+        # self.raw_list.populate_list(list(self.raw.keys()))
+        self.raw_list.populate_table([(k, str(len(v))) for k, v in self.raw.items()])
 
-        # needs update_entries, highlight, clear, checked_names, show
+        self.window = QMainWindow(self.root)
+        self.window.setWindowTitle("Loaded Datasets")
+        self.window.setGeometry(100, 100, 400, 300)
 
-    def reset_columns_list(self):
-        """Populate the columns list with unique columns from the dataframes ignoring any checked list."""
-        if self.data_org is None:
-            QMessageBox.warning(
-                self, "No Data", "Please load and group data first."
-            )
-            return
+        self.layout = QVBoxLayout()
 
-        # Flatten the data organization dictionary
-        flattened_data = flatten_dict(self.data_org)
+        central_widget = QWidget()
+        # self.raw_list.setParent(central_widget)
+        self.raw_list.initialize(central_widget)
 
-        # Collect all unique columns from the dataframes
-        unique_columns = set()
-        for df in flattened_data.values():
-            if isinstance(df, pd.DataFrame):
-                unique_columns.update(df.columns)
-
-        check = Qt.Checked if len(unique_columns) < 10 else Qt.Unchecked
-        # Populate the list widget with unique columns
-        self.columns_list.clear()
-        for col in unique_columns:
-            item = QListWidgetItem(str(col))
-            item.setFlags(
-                item.flags() | Qt.ItemIsUserCheckable
-            )  # Allow item to be checkable
-            item.setCheckState(check)  # Default to checked
-            self.columns_list.addItem(item)
-
-    def refresh_columns_list(self):
-        """Populate the columns list with unique columns from the dataframes keeping any checked list."""
-        if self.data_org is None and self.checked_columns == []:
-            QMessageBox.warning(
-                self, "No Data", "Please load and group data first."
-            )
-            return
-
-        if self.data_org is None:
-            for col in self.checked_columns:
-                item = QListWidgetItem(str(col))
-                item.setFlags(
-                    item.flags() | Qt.ItemIsUserCheckable
-                )  # Allow item to be checkable
-                item.setCheckState(Qt.Checked)  # Default to checked
-                self.columns_list.addItem(item)
-            return
-
-        if self.columns_list.count() == 0:
-            self.reset_columns_list()
-
-        # # Flatten the data organization dictionary
-        # flattened_data = flatten_dict(self.data_org)
-
-        # # Collect all unique columns from the dataframes
-        # unique_columns = set()
-        # for df in flattened_data.values():
-        #     if isinstance(df, pd.DataFrame):
-        #         unique_columns.update(df.columns)
-
-        # # Make sure checked columns match the unique columns
-        # clean_check = []
-        # for col in self.checked_columns:
-        #     if col in unique_columns:
-        #         clean_check.append(col)
-        #     elif any(str(col) in str(u_col) for u_col in unique_columns):
-        #         clean_check.append(str(col))
-        #     else:
-        #         for u_col in unique_columns:
-        #             if str(u_col) in str(col):
-        #                 clean_check.append(u_col)
-        #                 break
-        # self.checked_columns = (
-        #     clean_check  # if clean_check != [] else self.checked_columns
-        # )
-
-        # items = {}
-        # c_items = {}
-        # for i in range(self.columns_list.count()):
-        #     item = self.columns_list.item(i)
-        #     if item.checkState() == Qt.Checked:
-        #         c_items[item.text()] = item
-        #     else:
-        #         items[item.text()] = item
-
-        # if self.checked_columns == [] and c_items:
-        #     self.checked_columns = list(c_items.keys())
-        # elif self.checked_columns != [] and c_items:
-        #     self.checked_columns = [
-        #         c for c in self.checked_columns if c in c_items
-        #     ]
-        #     if items:
-        #         self.checked_columns.extend(
-        #             [
-        #                 c
-        #                 for c in c_items.keys()
-        #                 if c not in self.checked_columns
-        #             ]
-        #         )
-        #     else:
-        #         for key, item in c_items.items():
-        #             if key not in self.checked_columns:
-        #                 item.setCheckState(Qt.Unchecked)
-        # elif self.checked_columns != [] and not c_items:
-        #     for key, item in items.items():
-        #         if key in self.checked_columns:
-        #             item.setCheckState(Qt.Checked)
-        # self.sort_columns_list()
-
-    def sort_columns_list(self):
-        """Sort the columns list by check state first, then alphabetically."""
-        if self.columns_list.count() == 0:
-            self.reset_columns_list()
-
-        items = [(c, Qt.Checked) for c in self.checked_columns]
-        unc_items = []
-        for i in range(self.columns_list.count()):
-            if self.columns_list.item(i).text() in self.checked_columns:
-                continue
-            item = self.columns_list.item(i)
-            unc_items.append((item.text(), item.checkState()))
-
-        # Sort by check state first, then alphabetically
-        unc_items.sort(key=lambda x: (x[1] == Qt.Unchecked, x[0].lower()))
-
-        items.extend(unc_items)
-
-        self.columns_list.clear()
-        for text, checkState in items:
-            item = QListWidgetItem(text)
-            item.setCheckState(checkState)
-            self.columns_list.addItem(item)
-
-
-
-        # columns_frame.setMaximumWidth(max_width)
-
-            # def create_separator(frame=None):
-        #     separator = QFrame(frame)
-        #     separator.setFrameShape(QFrame.HLine)
-        #     separator.setFrameShadow(QFrame.Sunken)
-        #     return separator
-
-        # max_width = 300
-
-        # # Input Path
-        # self.in_path_label = QLabel("<b>Input Path:</b>")
-        # in_path_button = QPushButton("Browse")
-        # in_path_button.setFixedWidth(100)
-        # in_path_button.clicked.connect(self.browse_in_path)
-        # in_path_layout = QHBoxLayout()
-        # in_path_layout.addWidget(self.in_path_label)
-        # in_path_layout.addWidget(in_path_button)
-        # in_path_frame = QFrame()
-        # in_path_frame.setLayout(in_path_layout)
-        # in_path_frame.setFrameShape(QFrame.StyledPanel)
-        # layout.addWidget(in_path_frame)
-
-        # layout.addWidget(create_separator())
-
-        # # File Patterns
-        # self.patterns_list = QListWidget()
-        # self.patterns_list.setMaximumWidth(max_width)
-        # self.patterns_list.installEventFilter(self)
-        # self.patterns_edit = QLineEdit()
-        # self.patterns_edit.setPlaceholderText("pattern")
-        # self.patterns_edit.returnPressed.connect(self.add_pattern)
-
-        # patterns_layout = QVBoxLayout()
-        # patterns_layout.addWidget(QLabel("<b>File Patterns:</b>"))
-        # patterns_layout.addWidget(self.patterns_list)
-
-        # patterns_edit_layout = QHBoxLayout()
-        # patterns_edit_layout.addWidget(QLabel("Add Item:"))
-        # patterns_edit_layout.addWidget(self.patterns_edit)
-
-        # patterns_layout.addLayout(patterns_edit_layout)
-
-        # patterns_frame = QFrame()
-        # patterns_frame.setLayout(patterns_layout)
-        # patterns_frame.setMaximumWidth(max_width)
-
-        # # Tab Widget for Grouping Iterations
-        # self.tab_widget = QTabWidget()
-        # self.add_grouping_tab()
-
-        # grid1 = QGridLayout()
-        # grid1.addWidget(patterns_frame, 0, 0)
-        # grid1.addWidget(self.tab_widget, 0, 1)
-        # grid1.addWidget(columns_frame, 0, 2)
-
-        # layout.addLayout(grid1)
-
-        # layout.addWidget(create_separator())
-
-        # self.files_datasets_tab_widget = QTabWidget()
-
-        # # Files Table
-        # self.files_table = QTableWidget()
-        # self.files_table.setColumnCount(3)
-        # self.files_table.setHorizontalHeaderLabels(
-        #     ["File Name", "Relative Path", "Path"]
-        # )
-        # self.files_table.setColumnWidth(0, 150)
-        # self.files_table.setColumnWidth(1, 250)
-        # self.files_table.setColumnWidth(2, 250)
-        # files_update_button = QPushButton("Update Files")
-        # files_update_button.clicked.connect(self.update_files)
-        # files_update_button.setFixedWidth(150)
-        # files_layout = QVBoxLayout()
-        # files_layout.addWidget(self.files_table)
-        # files_layout.addWidget(files_update_button)
-        # files_frame = QFrame()
-        # files_frame.setLayout(files_layout)
-        # files_frame.setMinimumWidth(int(max_width * 1.5))
-
-        # self.files_datasets_tab_widget.addTab(files_frame, "Loaded Files")
-
-        # # Tree View for Datasets
-        # datasets_layout = QVBoxLayout()
-
-        # self.datasets_tree = QTreeWidget()
-        # self.datasets_tree.setHeaderLabels(["Name", "Details"])
-        # self.datasets_tree.setColumnWidth(0, 400)
-        # self.datasets_tree.installEventFilter(self)
-        # self.datasets_tree.itemDoubleClicked.connect(self.view_data)
-        # datasets_layout.addWidget(self.datasets_tree)
-
-        # datasets_buttons = QHBoxLayout()
-
-        # reset_gr_button = QPushButton("Reset")
-        # reset_gr_button.clicked.connect(self.set_data_org)
-        # reset_gr_button.setFixedWidth(150)
-        # datasets_buttons.addWidget(reset_gr_button)
-
-        # apply_gr_button = QPushButton("Apply Groups")
-        # apply_gr_button.clicked.connect(self.apply_all_groups)
-        # apply_gr_button.setFixedWidth(150)
-        # datasets_buttons.addWidget(apply_gr_button)
+        # layout = QVBoxLayout(central_widget)
+        self.layout.addWidget(self.raw_list)
+        central_widget.setLayout(self.layout)
         
-        # datasets_rename_button = QPushButton("Rename Datasets")
-        # datasets_rename_button.clicked.connect(self.simplify_data_keys)
-        # datasets_rename_button.setFixedWidth(150)
-        # datasets_buttons.addWidget(datasets_rename_button)
+        self.raw_list.combine_button.clicked.disconnect()
+        self.raw_list.combine_button.clicked.connect(self.combine_items)
+        self.raw_list.rename_button.clicked.disconnect()
+        self.raw_list.rename_button.clicked.connect(self.rename_item)
+        self.raw_list.save_button.clicked.disconnect()
+        self.raw_list.save_button.clicked.connect(self.save_data)
 
-        # datasets_concat_button = QPushButton("Combine Datasets")
-        # datasets_concat_button.clicked.connect(self.concat_data)
-        # datasets_concat_button.setFixedWidth(150)
-        # datasets_buttons.addWidget(datasets_concat_button)
+        self.window.setCentralWidget(central_widget)
 
-        # datasets_layout.addLayout(datasets_buttons)
+        self.window.closeEvent = self.closeEvent
 
-        # self.datasets_frame = QFrame()
-        # self.datasets_frame.setLayout(datasets_layout)
-        # self.datasets_frame.setMinimumWidth(int(max_width * 1.5))
+        self.window.show()
+    
+    def show(self):
+        """Show the list frame window."""
+        self.load_window()
 
-        # self.files_datasets_tab_widget.addTab(self.datasets_frame, "Datasets")
+    def closeEvent(self, event):
+        self.raw_list.setParent(None)
+        # self.window.hide()
+        
+        if self.raw_list.changed:
+            reply = QMessageBox.question(
+                self.raw_list,
+                "Save Changes",
+                "Do you want to save changes before closing?",
+                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+                QMessageBox.Cancel,
+            )
+            if reply == QMessageBox.Yes:
+                self.save_data()
+                event.accept()
+            elif reply == QMessageBox.Cancel:
+                event.ignore()
+            else:
+                event.accept()
+            if not sip.isdeleted(self.window):
+                self.window.deleteLater()
+        else:
+            event.accept()
+            if not sip.isdeleted(self.window):
+                self.window.deleteLater()
 
-        # # Tree Widget for t_files
-        # t_files_layout = QVBoxLayout()
+    def save_data(self):
+        """Save the data to the raw dictionary. """
+        self.raw_archive = {**self.raw_archive.copy(), **self.raw.copy()}
+        self.raw = {}
+        for key in self.raw_list.get_info():
+            self.update_system(key, self._raw[key], "impedance", self._raw[key].attrs["thickness"], self._raw[key].attrs["area"])
+        if self.raw_list.changed:
+            self.update_var()
+        elif self.var is not None and not self.is_highlighted(self.primary()):
+            self.var.setCurrentText(self.raw_list.special_items[0])
+        self.raw_list.changed = False
+        if self.callback is not None:
+            self.callback()
+    
+    def update_data(self, data):
+        """Update the raw data dictionary."""
+        self._raw = data
+        self.save_data()
 
-        # self.t_files_tree = QTreeWidget()
-        # self.t_files_tree.setHeaderLabels(["Name", "ID"])
-        # t_files_layout.addWidget(self.t_files_tree)
+    def update_var(self):
+        """Update the variable in the list frame window."""
+        if self.var is not None and self.raw:
+            old_var = self.raw_list.special_items[0] if self.raw_list.special_items else self.var.currentText()
+            self.var.blockSignals(True)
+            self.var.clear()
+            self.var.setCurrentText("")
+            self.var.addItems(list(self.raw.keys()))
+            if old_var not in self.raw:
+                old_var = next(iter(self.raw))
+            self.highlight(old_var)
+            self.var.setCurrentText(old_var)
+            self.var.blockSignals(False)
 
-        # t_files_update_button = QPushButton("Update Target Files")
-        # t_files_update_button.clicked.connect(self.update_t_files)
-        # t_files_update_button.setFixedWidth(150)
-        # self.get_all_checkbox = QCheckBox("Get All")
-        # convert_button = QPushButton("Convert")
-        # convert_button.setFixedWidth(100)
-        # convert_button.clicked.connect(self.convert_files)
+    def set_var(self, var):
+        """Set the variable in the list frame window."""
+        if self.var is not None and var in self.raw:
+            self.var.blockSignals(True)
+            self.highlight(var)
+            self.var.setCurrentText(var)
+            self.var.blockSignals(False)
 
-        # check_update_layout = QHBoxLayout()
-        # check_update_layout.addWidget(t_files_update_button)
-        # check_update_layout.addWidget(self.get_all_checkbox)
-        # check_update_layout.addWidget(convert_button)
-        # t_files_layout.addLayout(check_update_layout)
+    def primary(self):
+        if self.var is not None:
+            return self.var.currentText()
+        else:
+            return ""
+        
+    def combine_items(self):
+        """Combine the selected entries in the list widget."""
+        new_key, keys = self.raw_list.combine_items()
+        if new_key:
+            data = {k: v for k, v in self._raw.items() if k in keys}
+            comb = pd.concat(data.values(), sort=False, keys=data.keys())
+            comb.sort_values("freq", ignore_index=True)
+            comb.attrs["thickness"] = np.mean([v.attrs["thickness"] for v in data.values()])
+            comb.attrs["area"] = np.mean([v.attrs["area"] for v in data.values()])
+            self._raw[new_key] = comb
+            self.raw_list.changed = True
+            self.raw_list.table_info[new_key]["Shape"] = str(len(comb))
+            self.raw_list.populate_table()
+            # self.update_var()
 
-        # self.t_files_frame = QFrame()
-        # self.t_files_frame.setLayout(t_files_layout)
-        # self.t_files_frame.setMinimumWidth(int(max_width * 1.5))
+    def rename_item(self):
+        """Rename the selected entry in the list widget."""
+        new_key, keys = self.raw_list.rename_item()
+        if new_key:
+            for key in keys:
+                if key in self._raw:
+                    self._raw[new_key] = self._raw.pop(key)
+                    self.raw_list.changed = True
+                    # self.update_var()
+                    break
+            else:
+                QMessageBox.warning(self.raw_list, "Warning", "Key not found.")
+        
+    def highlight(self, strings, reset=False):
+        """Highlight the selected entry in the list widget."""
+        self.raw_list.highlight(strings, reset)
 
-        # self.files_datasets_tab_widget.addTab(
-        #     self.t_files_frame, "Target Files"
-        # )
-        # self.files_datasets_tab_widget.setTabVisible(2, False)
+    def is_highlighted(self, string):
+        """Check if the string is highlighted."""
+        return string in self.raw_list.special_items
 
-        # # layout.addLayout(grid2)
-        # layout.addWidget(self.files_datasets_tab_widget)
-        # layout.addWidget(create_separator())
+    def get_checked(self):
+        """Return the strings of the checked entries."""
+        return self.raw_list.get_checked()
+    
+    def get_label(self, key):
+        """Return the label for the selected key."""
+        try:
+            return self.raw_list.table_info[key]["Label"]   
+        except KeyError:
+            return f"_{key}",
 
-        # bottom_layout = QHBoxLayout()
-        # # Save Format
-        # self.save_format_combo = QComboBox()
-        # self.save_format_combo.addItems(
-        #     ["Use Columns", "Use Freq, Real, Imag"]
-        # )
-        # self.save_format_combo.setFixedWidth(150)
-        # save_button = QPushButton("Save")
-        # save_button.setFixedWidth(100)
-        # save_button.clicked.connect(self.save)
-
-        # save_format_layout = QHBoxLayout()
-        # save_format_layout.addWidget(QLabel("Save Format: "))
-        # save_format_layout.addWidget(self.save_format_combo)
-        # save_format_layout.addWidget(save_button)
-        # save_format_layout.setAlignment(Qt.AlignLeft)
-
-        # # Add Buttons for Save and Load Settings
-        # save_settings_button = QPushButton("Save Settings")
-        # save_settings_button.clicked.connect(self.save_settings)
-        # load_settings_button = QPushButton("Load Settings")
-        # load_settings_button.clicked.connect(self.load_settings)
-        # # load_all_settings_button = QPushButton("Load All Settings")
-        # # load_all_settings_button.clicked.connect(self.load_all_settings)
-
-        # # Add buttons to the layout
-        # settings_buttons_layout = QHBoxLayout()
-        # settings_buttons_layout.addWidget(save_settings_button)
-        # settings_buttons_layout.addWidget(load_settings_button)
-        # # settings_buttons_layout.addWidget(load_all_settings_button)
-        # settings_buttons_layout.setAlignment(Qt.AlignRight)
-
-        # bottom_layout.addLayout(save_format_layout)
-        # bottom_layout.addLayout(settings_buttons_layout)
-
-        # layout.addLayout(bottom_layout)
-
+    def get_mark(self, key):
+        """Return the mark for the selected key."""
+        checks = self.raw_list.get_checked(3)
+        if checks != self.raw_list.special_items:
+            return key in checks
+        try:
+            return self.raw_list.table_info[key]["Mark"]   
+        except KeyError:
+            return True
 

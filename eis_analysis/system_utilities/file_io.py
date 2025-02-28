@@ -23,12 +23,11 @@ import h5py
 import numpy as np
 import pandas as pd
 
-# Local application imports
 from ..dict_ops import dict_df, merge_single_key, dict_key_sep
 from ..string_ops import slugify #, parse_path_str
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+logger = logging.getLogger(__name__)
 
 
 def save(data, path=None, name=None, file_type="xls", **kwargs):
@@ -99,7 +98,7 @@ def filter_kwargs(func, kwargs):
     return valid_kwargs
 
 
-def load_file(file, path=None, verbose=False, **kwargs):
+def load_file(file, path=None, **kwargs):
     """
     Loads data from Excel or HDF5 files.
     
@@ -127,7 +126,7 @@ def load_file(file, path=None, verbose=False, **kwargs):
     attrs = {}
 
     if re.search(r"(.xls|.xls\w)$", str(file)):
-        data, attrs = load_excel(file, verbose,**filter_kwargs(pd.read_excel, kwargs))
+        data, attrs = load_excel(file, **filter_kwargs(pd.read_excel, kwargs))
     elif re.search(r"(.h5|.hdf5)$", str(file)):
         data, attrs = load_hdf(
             file,
@@ -144,12 +143,13 @@ def load_file(file, path=None, verbose=False, **kwargs):
         else:
             filelist = [p for p in Path.cwd().glob(kwargs.get("glob", "*")) if p.is_file()]
 
-        return [load_file(f, None, verbose, **kwargs) for f in filelist]
+        return [load_file(f, None, **kwargs) for f in filelist]
 
     return data, attrs
+    # return None, None
 
 
-def load_excel(file, verbose=False, **kwargs):
+def load_excel(file, **kwargs):
     """
     Loads data from an Excel file and returns it as dictionaries.
     
@@ -162,6 +162,7 @@ def load_excel(file, verbose=False, **kwargs):
     - data (dict): Dictionary of DataFrames loaded from the file.
     - attrs (dict): Dictionary of attributes loaded from the file.
     """
+    # logger = logging.getLogger(__name__)
     data = {}
     attrs = None
     
@@ -187,7 +188,7 @@ def load_excel(file, verbose=False, **kwargs):
         test_df = pd.read_excel(file, sheet_name=first_sheet_name, header=kw_header, index_col=kw_index_col, nrows=kw_nrows, **kwargs)
     except ValueError:
         test_df = pd.DataFrame()
-        print(f"Error loading {file}")
+        logger.error("Error loading %s", file)
         
     if test_df.isnull().all(axis=1).any():
         test_df = pd.read_excel(file, sheet_name=first_sheet_name, header=None, nrows=10)
@@ -224,15 +225,15 @@ def load_excel(file, verbose=False, **kwargs):
     all_sheets = pd.read_excel(file, sheet_name=names, header=header, index_col=index_rows, **kwargs)
     
     for sheet_name, df in all_sheets.items():
-        if verbose:
-            logging.info(f"Processing sheet: {sheet_name}")
+        logger.debug("Processing sheet: %s", sheet_name)
+        
         data[sheet_name] = df
         # Apply attrs to the respective DataFrame
         data[sheet_name].attrs = attrs.loc[sheet_name,:].to_dict() if isinstance(attrs, pd.DataFrame) else {}
     return data, attrs
 
 
-def load_hdf(file, path=None, target="/", key_sep=False, verbose=False, **kwargs):
+def load_hdf(file, path=None, target="/", key_sep=False, **kwargs):
     """
     Loads data from an HDF5 file and returns it as dictionaries.
     Parameters:
@@ -250,6 +251,7 @@ def load_hdf(file, path=None, target="/", key_sep=False, verbose=False, **kwargs
            - ds_dict: A dictionary where keys are dataset names and values are the dataset contents.
            - attr_dict: A dictionary where keys are attribute names and values are the attribute contents.
     """
+    # logger = logging.getLogger(__name__)
     # if isinstance(path, Path):
     #     path = str(path)
     # if path is not None:
@@ -269,15 +271,15 @@ def load_hdf(file, path=None, target="/", key_sep=False, verbose=False, **kwargs
                     }
                 else:
                     ds_dict[node.name] = np.array(node[()])
-                if verbose:
-                    logging.info(f"Loaded dataset: {node.name}")
+                logger.debug("Loaded dataset: %s", node.name)
             if any(node.attrs):
                 for key, val in node.attrs.items():
                     attr_dict[node.name + "/" + key] = val
 
     with h5py.File(file, "r") as hf:
         ds_dict = {}
-        attr_dict = {}
+        attr_dict = {k:v for k,v in hf.attrs.items()} if any(hf.attrs) else {}
+        # attr_dict = {}
         hf.visititems(get_ds_dictionaries, **kwargs)
     if key_sep:
         return dict_key_sep(ds_dict), dict_key_sep(attr_dict)

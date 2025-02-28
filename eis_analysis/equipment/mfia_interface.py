@@ -13,6 +13,7 @@ from functools import partial
 from pathlib import Path
 import numpy as np
 import pandas as pd
+import xml.etree.ElementTree as ET
 
 import zhinst.core
 
@@ -21,8 +22,8 @@ import matplotlib.pyplot as plt
 from IPython import get_ipython
 
 from ..system_utilities.special_io import get_config
-
-
+from ..temp_controller.watlow import Watlow
+from ..string_ops import safe_eval
 
 def plot_measured_data(sweep_data: dict, **kwargs):
     """Plot the sweep data in bode plot."""
@@ -45,6 +46,30 @@ def plot_measured_data(sweep_data: dict, **kwargs):
 
     plt.draw()
     plt.show()
+
+def get_node_as_dict(in_file, node_name):
+    tree = ET.parse(in_file)
+    root = tree.getroot()
+
+    settings_dict = {}
+    node = root.find(f".//tab[@html-name='{node_name}.html']/pages/page/figures/figure")
+
+    if node is not None:
+        for child in node:
+            settings_dict[child.tag] = safe_eval(child.text)
+            if isinstance(settings_dict[child.tag], bool):
+                settings_dict[child.tag] = int(settings_dict[child.tag])
+
+    return settings_dict
+
+def update_module_dict(ref_dict, targ_dict):
+    for xkey, xvalue in ref_dict.items():
+        # Attempt to find the closest matching key in the module_dict
+        for mkey in targ_dict.keys():
+            if mkey.lower().replace("/", "") == xkey.lower():
+                targ_dict[mkey] = xvalue
+                break
+    return targ_dict
 
 
 class MFIA(object):
@@ -121,12 +146,9 @@ class MFIA(object):
             self._daq.setInt(f"/{self.device}/imps/0/bias/enable", 0)
         return self._daq
 
-
 class MFIA_Freq_Sweep(MFIA):
     """
     Initializes and operates the MFIA tool and sets up for a sweep operation.
-
-    ...
 
     Attributes
     ----------
@@ -145,19 +167,15 @@ class MFIA_Freq_Sweep(MFIA):
     sweeper_conditions : dict
         A dict containing the conditions/settings of the current sweeper object
 
-
     Methods
     -------
     sweep(delay, verbose, plot)
         Performs a simple sweep without bias
-    biased_sweep(biases, delay, verbose, plot)
-        Performs single sweep or sequence of sweeps with bias
-
     """
 
     def __init__(self, device=None, config_file="config.ini", **kwargs):
         super().__init__(device, config_file, **kwargs)
-
+        self.result = None
         self.sweeper = self.init_config
         self.sample_key = kwargs.get("sample_key", f"/{self.device}/imps/0/sample")
 
@@ -178,7 +196,6 @@ class MFIA_Freq_Sweep(MFIA):
             isinstance(args, (tuple, list))
             and len(args) == 2
             and "/"+args[0] in self._sweeper.listNodes("*",recursive=True)
-            # and hasattr(self._sweeper, args[0])
         ):
             self._sweeper.set(args[0], args[1])
         elif isinstance(args, dict):
@@ -246,11 +263,22 @@ class MFIA_Freq_Sweep(MFIA):
             },
             dtype=np.float64,
         )
-        if hasattr(self, "result") and isinstance(self.result, dict):
+        if isinstance(self.result, dict):
             return res_df
         
         self.result = res_df
         return self.result
+
+
+class MFIA_DC_Freq_Sweep(MFIA_Freq_Sweep):
+    """
+    Initializes and operates the MFIA tool and sets up for a sweep operation with DC bias.
+
+    Methods
+    -------
+    biased_sweep(biases, delay, verbose, plot)
+        Performs single sweep or sequence of sweeps with bias
+    """
 
     def biased_sweep(self, biases, delay=2, verbose=True, plot=None):
         """
@@ -295,6 +323,254 @@ class MFIA_Freq_Sweep(MFIA):
         self.daq.setDouble(f"/{self.device}/imps/0/bias/value", 0.0)
         return self.result
 
+class MFIA_Freq_Temp_Sweep(MFIA_Freq_Sweep):
+    """
+    Initializes and operates the MFIA tool and sets up for a sweep operation with temperature control.
+
+    Methods
+    -------
+    temp_sweep(temperatures, delay, verbose, plot)
+        Performs single sweep or sequence of sweeps with temperature control
+    """
+
+    def __init__(self, device=None, config_file="config.ini", temp_controller=None, **kwargs):
+        super().__init__(device, config_file, **kwargs)
+        self.temp_controller = temp_controller
+
+    def temp_sweep(self, temperatures, delay=2, verbose=True, plot=None):
+        """
+        Perform a sweep with applied temperature control, iterating if a list of temperatures is provided.
+
+        Parameters
+        ----------
+        temperatures : [list, int, float]
+            The temperature or list of temperatures to be applied during a sweep operation.
+        delay : [int, float], optional
+            Specify the delay in reading time for verbosity or plotting.
+            Higher value -> fewer updates
+            Default : 2
+        verbose : bool, optional
+            Tells system whether to print progress updates
+        plot : function, optional
+            Function to be passed to the sweep method. Modifies title to specify the current temperature.
+            Function must have a "title" parameter to modify title
+
+        Returns
+        -------
+        result : dict
+            Returns a dict of DataFrames of the results.
+        """
+        if isinstance(temperatures, (int, float)):
+            temperatures = [temperatures]
+        
+        self.result = {}
+        
+        pplot = None
+        for temp in temperatures:
+            print(f"Setting temperature: {temp}°C")
+            self.temp_controller.setpoint(temp)
+            self._wait_for_temp_stabilization(temp, verbose)
+            if callable(plot):
+                pplot = partial(plot, title=f"Temperature: {temp}°C")
+            self.result[str(temp)] = self.sweep(delay, verbose, pplot)
+        
+        return self.result
+
+    def _wait_for_temp_stabilization(self, target_temp, verbose):
+        """
+        Wait for the temperature to stabilize around the target temperature.
+
+        Parameters
+        ----------
+        target_temp : float
+            The target temperature to stabilize around.
+        verbose : bool
+            Tells system whether to print progress updates
+        """
+        stable = False
+        while not stable:
+            current_temp = self.temp_controller.temp()
+            if verbose:
+                print(f"Current temperature: {current_temp:.2f}°C; Target: {target_temp}°C", end="\r")
+            if abs(current_temp - target_temp) < 0.5:
+                stable = True
+            time.sleep(10)
+        if verbose:
+            print(f"\nTemperature stabilized at {current_temp:.2f}°C")
+
+# class MFIA_Freq_Sweep(MFIA):
+#     """
+#     Initializes and operates the MFIA tool and sets up for a sweep operation.
+
+#     ...
+
+#     Attributes
+#     ----------
+#     sample_key : str
+#         The sample key location for subscription necessary for a sweep
+#     result : pd.Dataframe, dict
+#         A dataframe or dict of dataframes returned by all sweep functions saved
+#         within the class in case of error.
+#         Note: Any new sweep functions should update and return this attr.
+
+#     Properties
+#     ----------
+#     sweeper: object
+#         The daq.sweeper object from zhinst which contains and controls the sweep function of the
+#         MFIA tool. Sweeper settings can be adjusted by passing (key, value) pairs or dict.
+#     sweeper_conditions : dict
+#         A dict containing the conditions/settings of the current sweeper object
+
+
+#     Methods
+#     -------
+#     sweep(delay, verbose, plot)
+#         Performs a simple sweep without bias
+#     biased_sweep(biases, delay, verbose, plot)
+#         Performs single sweep or sequence of sweeps with bias
+
+#     """
+
+#     def __init__(self, device=None, config_file="config.ini", **kwargs):
+#         super().__init__(device, config_file, **kwargs)
+
+#         self.sweeper = self.init_config
+#         self.sample_key = kwargs.get("sample_key", f"/{self.device}/imps/0/sample")
+
+#     @property
+#     def sweeper(self):
+#         """The daq.sweeper object from zhinst which controls the sweep function of the MFIA."""
+#         if not hasattr(self, "_sweeper"):
+#             self._sweeper = self.daq.sweep()
+#             self._sweeper.set("device", self.device)
+#         return self._sweeper
+
+#     @sweeper.setter
+#     def sweeper(self, args):
+#         if not hasattr(self, "_sweeper"):
+#             self._sweeper = self.daq.sweep()
+#             self._sweeper.set("device", self.device)
+#         if (
+#             isinstance(args, (tuple, list))
+#             and len(args) == 2
+#             and "/"+args[0] in self._sweeper.listNodes("*",recursive=True)
+#             # and hasattr(self._sweeper, args[0])
+#         ):
+#             self._sweeper.set(args[0], args[1])
+#         elif isinstance(args, dict):
+#             for k, v in args.items():
+#                 self.sweeper = (k, v)
+
+#     @property
+#     def sweeper_conditions(self):
+#         """A dict containing the conditions/settings of the current sweeper object."""
+#         return self.sweeper.get("*")
+
+#     def sweep(self, delay=2, verbose=True, plot=None):
+#         """
+#         Perform a simple sweep.
+
+#         Parameters
+#         ----------
+#         delay : Union[int, float]
+#             Specify the delay in reading time for verbosity or plotting.
+#             Higher value -> fewer updates
+#             Default : 2
+#         verbose : bool
+#             Tells system whether to print progress updates
+#         plot : function, optional
+#             Pass a function for plotting the data. Function must be limited to single data input
+#             of type dict or dataframe with keys appropriate to the native output of the sweeper obj.
+#             i.e. "frequency", "realz", "imagz", "absz", "phasez", "param0", or "param1"
+#             Default : None
+
+#         Returns
+#         -------
+#         result : pd.DataFrame
+#             Returns a DataFrame of the result of the dict
+#         """
+#         self.sweeper.subscribe(self.sample_key)
+#         self.sweeper.execute()
+
+#         data = 0
+#         if verbose:
+#             print("Sweep progress: 0.00%; ", end="\r")
+#         while not self.sweeper.finished():
+#             time.sleep(delay)
+#             if verbose:
+#                 print(f"{self.sweeper.progress()[0]:.2%}; ", end="\r")
+#             data = self.sweeper.read(True)
+#             try:
+#                 samples = data[self.sample_key][0][0]
+#                 if callable(plot):
+#                     plot(samples)
+#             except KeyError:
+#                 continue
+#         print("")
+
+#         self.sweeper.finish()
+#         result = self.sweeper.read(True)
+#         if result == {}:
+#             result = data
+#         self.sweeper.unsubscribe(self.sample_key)
+
+#         res_df = pd.DataFrame(
+#             {
+#                 k: v
+#                 for k, v in data[self.sample_key][0][0].items()
+#                 if isinstance(v, np.ndarray)
+#             },
+#             dtype=np.float64,
+#         )
+#         if hasattr(self, "result") and isinstance(self.result, dict):
+#             return res_df
+        
+#         self.result = res_df
+#         return self.result
+
+#     def biased_sweep(self, biases, delay=2, verbose=True, plot=None):
+#         """
+#         Perform a sweep with applied biasing, iterating If a list of biases is provided.
+
+#         Parameters
+#         ----------
+#         biases : [list, int, float]
+#             The bias or list of biases to be applied during a sweep operation.
+#         delay : [int, float], optional
+#             Specify the delay in reading time for verbosity or plotting.
+#             Higher value -> fewer updates
+#             Default : 2
+#         verbose : bool, optional
+#             Tells system whether to print progress updates
+#         plot : function, optional
+#             Function to be passed to the sweep method. Modifies title to specify the current bias.
+#             Function must have a "title" parameter to modify title
+
+#         Returns
+#         -------
+#         result : dict
+#             Returns a dict of DataFrames of the results.
+#         """
+#         if isinstance(biases, (int, float)):
+#             biases = [biases]
+        
+#         # Enable bias after ensuring bias is 0 V
+#         self.daq.setDouble(f"/{self.device}/imps/0/bias/value", 0.0)
+#         self.daq.setInt(f"/{self.device}/imps/0/bias/enable", 1)
+        
+#         self.result = {}
+        
+#         pplot = None
+#         for bv in biases:
+#             print(f"Bias: {bv}")
+#             self.daq.setDouble(f"/{self.device}/imps/0/bias/value", bv)
+#             if callable(plot):
+#                 pplot = partial(plot, title=f"Bias: {bv}")
+#             self.result[str(bv)] = self.sweep(delay, verbose, pplot)
+        
+#         self.daq.setDouble(f"/{self.device}/imps/0/bias/value", 0.0)
+#         return self.result
+
 
 if __name__ == "__main__":
     from ..system_utilities import save, find_path
@@ -303,12 +579,23 @@ if __name__ == "__main__":
     save_path = find_path("impedance_analysis", "testing", "Data", "Raw", base="cwd")
     
     get_ipython().run_line_magic("matplotlib", "inline")
+
     # sweep_obj = MFIA_Freq_Sweep(
     #     "dev6037", config_path/"config_mfia.ini", sections=["base_sweep_settings", "fast_sweep"],
     # )
     
     # single_sweep = sweep_obj.sweep(plot=plot_measured_data)
     # save(single_sweep, save_path, "mfia_test_single")
+
+    # watlow_controller = Watlow(port="com4", full_output=False)
+    # sweep_obj = MFIA_Freq_Temp_Sweep(
+    #     "dev6037", config_path/"config_mfia.ini", temp_controller=watlow_controller, sections=["base_sweep_settings", "fast_sweep"],
+    # )
+    
+    # temperatures = [25, 50, 75]
+    # sweep_sequence = sweep_obj.temp_sweep(temperatures, plot=plot_measured_data)
+
+    # save(sweep_sequence, save_path, "mfia_temp_sweep_sequence")
     
     # biases = [-0.1, 0, 0.1]
     # sweep_sequence = sweep_obj.biased_sweep(biases, plot=plot_measured_data)
