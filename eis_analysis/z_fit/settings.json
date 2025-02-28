@@ -1,0 +1,195 @@
+{
+    "model": "p(R1,C1)-p(R2,C2)-p(R3,C3)",
+    "load_dir": {
+        "__path__": "D:\\Online\\ASU Dropbox\\Jacob Clenney\\Work Docs\\Data\\Analysis\\IS\\EVA\\Fit_Results\\2025"
+    },
+    "save_dir": {
+        "__path__": "D:\\Online\\ASU Dropbox\\Jacob Clenney\\Work Docs\\Data\\Analysis\\IS\\EVA\\Fit_Results\\2025"
+    },
+    "export_dir": {
+        "__path__": "C:\\Users\\j2cle\\Documents"
+    },
+    "plot_types": [
+        "Z",
+        "Y",
+        "M",
+        "C",
+        "\u03b5",
+        "\u03b5\u1d63",
+        "\u03c3",
+        "\u03c1"
+    ],
+    "var_val": {
+        "Z": "impedance",
+        "Y": "admittance",
+        "M": "modulus",
+        "C": "capacitance",
+        "\u03b5": "permittivity",
+        "\u03b5\u1d63": "relative_permittivity",
+        "\u03c3": "conductivity",
+        "\u03c1": "resistivity",
+        "Real": "real",
+        "Imag": "imag",
+        "+Imag": "pos_imag",
+        "Mag": "mag",
+        "\u0398": "phase",
+        "tan(\u03b4)": "tan"
+    },
+    "var_scale": {
+        "Real": "lin",
+        "Imag": "lin",
+        "+Imag": "log",
+        "Mag": "log",
+        "\u0398": "deg",
+        "tan(\u03b4)": "lin"
+    },
+    "var_units": {
+        "Z": "[$\\Omega$]",
+        "Y": "[S]",
+        "M": "[cm/F]",
+        "C": "[F]",
+        "\u03b5": "[F/cm]",
+        "\u03b5\u1d63": "[1]",
+        "\u03c3": "[S/cm]",
+        "\u03c1": "[$\\Omega$ cm]"
+    },
+    "option_inits": {
+        "simulation": {
+            "limit_error": true,
+            "sim_param_freq": true,
+            "interp": true,
+            "freq_start": -3,
+            "freq_stop": 7,
+            "freq_num": 200,
+            "dx": 0,
+            "area (cm^2)": 25,
+            "thickness (cm)": 0.045,
+            "interval": 0.1
+        },
+        "bands": {
+            "band_color": "gray",
+            "band_alpha": 0.2,
+            "band_freq_num": 250,
+            "band_mult": 50,
+            "percentile": 5,
+            "std_devs": 0.2,
+            "conf_band_upper": "97.5%",
+            "conf_band_lower": "2.5%"
+        },
+        "fit": {
+            "function": "least_squares",
+            "type": "impedance",
+            "modes": "real, imag, mag",
+            "f_max": 10000000.0,
+            "f_min": 1e-06,
+            "scale": "linear",
+            "weight_by_modulus": true,
+            "bootstrap_percent": 95
+        },
+        "curve_fit": {
+            "absolute_sigma": false,
+            "check_finite": null,
+            "method": null,
+            "jac": "3-point",
+            "x_scale": "jac",
+            "ftol": 1e-14,
+            "xtol": 1e-06,
+            "gtol": 1e-08,
+            "loss": "cauchy",
+            "diff_step": null,
+            "tr_solver": null,
+            "tr_options": {},
+            "jac_sparsity": null,
+            "verbose": 0,
+            "maxfev": 1000000.0
+        },
+        "least_sq": {
+            "method": "trf",
+            "jac": "3-point",
+            "x_scale": "calc",
+            "ftol": 1e-14,
+            "xtol": 1e-15,
+            "gtol": 1e-08,
+            "loss": "cauchy",
+            "diff_step": null,
+            "tr_solver": null,
+            "tr_options": {},
+            "jac_sparsity": null,
+            "verbose": 0,
+            "max_nfev": 1000.0
+        },
+        "diff_evolution": {
+            "strategy": "best1bin",
+            "maxiter": 1000.0,
+            "popsize": 15,
+            "tol": 0.01,
+            "recombination": 0.7,
+            "seed": null,
+            "disp": false,
+            "polish": true,
+            "init": "latinhypercube",
+            "atol": 0,
+            "updating": "immediate",
+            "workers": 1
+        },
+        "basinhopping": {
+            "niter": 100,
+            "T": 1,
+            "stepsize": 0.5,
+            "minimizer_kwargs": {
+                "method": "L-BFGS-B",
+                "jac": "3-point"
+            },
+            "interval": 50,
+            "disp": false,
+            "niter_success": null,
+            "seed": null,
+            "target_accept_rate": 0.5,
+            "stepwise_factor": 0.9
+        },
+        "linkk": {
+            "f_max": 1000000.0,
+            "f_min": 1e-06,
+            "c": 0.5,
+            "max_M": 200,
+            "add_cap": false
+        },
+        "element": {
+            "R": 1000000000.0,
+            "C": 1e-10,
+            "CPE": [
+                1e-10,
+                1
+            ],
+            "L": 100
+        },
+        "element_range": {
+            "R": [
+                0,
+                {
+                    "__invalid_float__": "inf"
+                }
+            ],
+            "C": [
+                0,
+                1
+            ],
+            "CPE": [
+                [
+                    0,
+                    1
+                ],
+                [
+                    -1,
+                    1
+                ]
+            ],
+            "L": [
+                0,
+                {
+                    "__invalid_float__": "inf"
+                }
+            ]
+        }
+    }
+}

@@ -1,0 +1,485 @@
+{
+    "EVA 9100 and 406": {
+        "directory": "D:\\Online\\ASU Dropbox\\Jacob Clenney\\Work Docs\\Data\\Analysis\\IS\\EVA",
+        "patterns": [
+            [
+                "5cm",
+                0
+            ],
+            [
+                "rev",
+                0
+            ],
+            [
+                "\\D\\d{0,2}\\.xlsx$",
+                0
+            ],
+            [
+                "_imps",
+                2
+            ],
+            [
+                "xlsx",
+                0
+            ]
+        ],
+        "groups": [
+            {
+                "search_terms": "9100, 406",
+                "reject_terms": "",
+                "keys": "9100, 406"
+            },
+            {
+                "search_terms": "init, dh, dryout, static",
+                "reject_terms": "",
+                "keys": "init, dh, dryout, static"
+            },
+            {
+                "search_terms": "\\s85c, \\s80c, \\s70c, \\s60c",
+                "reject_terms": "[^0]$, not bad$",
+                "keys": "85c, 80c, 70c, 60c"
+            }
+        ],
+        "columns": [
+            "('imps', 'frequency')",
+            "('imps', 'realz')",
+            "('imps', 'imagz')",
+            "('imps', 'inv_imagz')",
+            "('imps', 'absz')",
+            "('imps', 'phasez')",
+            "('imps', 'param0')",
+            "('imps', 'param1')"
+        ]
+    },
+    "Raw 1": {
+        "directory": "D:\\Online\\ASU Dropbox\\Jacob Clenney\\Work Docs\\Data\\Raw\\MFIA\\WebServer",
+        "patterns": [
+            [
+                "session",
+                0
+            ],
+            [
+                ".h5",
+                0
+            ],
+            [
+                "autosave",
+                2
+            ],
+            [
+                "sweep",
+                2
+            ],
+            [
+                "stream",
+                2
+            ],
+            [
+                "scope",
+                2
+            ]
+        ],
+        "keywords": [
+            "9100",
+            "406"
+        ],
+        "groups": [],
+        "columns": []
+    },
+    "post raw2": {
+        "directory": "D:\\Online\\ASU Dropbox\\Jacob Clenney\\Work Docs\\Data\\Raw\\MFIA\\WebServer",
+        "patterns": [
+            [
+                "session",
+                0
+            ],
+            [
+                ".h5",
+                0
+            ],
+            [
+                "autosave",
+                2
+            ],
+            [
+                "sweep",
+                2
+            ],
+            [
+                "stream",
+                2
+            ],
+            [
+                "scope",
+                2
+            ],
+            [
+                "vstarts",
+                2
+            ],
+            [
+                "406",
+                0
+            ]
+        ],
+        "groups": [
+            {
+                "search_terms": "init, DH, Dryout",
+                "reject_terms": "",
+                "keys": ""
+            }
+        ],
+        "columns": [
+            "('demods', 'auxin0')",
+            "('demods', 'auxin1')",
+            "('imps', 'absz')",
+            "('imps', 'flabel')",
+            "('imps', 'frequency')",
+            "('imps', 'imagz')",
+            "('imps', 'inv_imagz')",
+            "('imps', 'param0')",
+            "('imps', 'param1')",
+            "('imps', 'phasez')",
+            "('imps', 'realz')"
+        ]
+    },
+    "406 raw to final": {
+        "directory": "D:\\Online\\ASU Dropbox\\Jacob Clenney\\Work Docs\\Data\\Raw\\MFIA\\WebServer",
+        "patterns": [
+            [
+                "session",
+                0
+            ],
+            [
+                ".h5",
+                0
+            ],
+            [
+                "autosave",
+                2
+            ],
+            [
+                "sweep",
+                2
+            ],
+            [
+                "stream",
+                2
+            ],
+            [
+                "scope",
+                2
+            ],
+            [
+                "vstarts",
+                2
+            ],
+            [
+                "test",
+                2
+            ],
+            [
+                "406",
+                0
+            ],
+            [
+                "rev",
+                0
+            ]
+        ],
+        "groups": [
+            {
+                "search_terms": "9100, 406",
+                "reject_terms": "",
+                "keys": "9100, 406"
+            },
+            {
+                "search_terms": "init, dh, dryout, static",
+                "reject_terms": "",
+                "keys": "init, dh, dryout, static"
+            },
+            {
+                "search_terms": "\\s85c, \\s80c, \\s70c, \\s60c",
+                "reject_terms": "[^0]$, not bad$",
+                "keys": "85c, 80c, 70c, 60c"
+            }
+        ],
+        "columns": [
+            "('imps', 'frequency')",
+            "('imps', 'realz')",
+            "('imps', 'imagz')",
+            "('imps', 'inv_imagz')",
+            "('imps', 'absz')",
+            "('imps', 'phasez')",
+            "('imps', 'param0')",
+            "('imps', 'param1')"
+        ]
+    },
+    "Combined 1": {
+        "directory": "D:\\Online\\ASU Dropbox\\Jacob Clenney\\Work Docs\\Data\\Raw\\MFIA\\WebServer",
+        "patterns": [
+            [
+                "session",
+                0
+            ],
+            [
+                ".h5",
+                0
+            ],
+            [
+                "autosave",
+                2
+            ],
+            [
+                "sweep",
+                2
+            ],
+            [
+                "stream",
+                2
+            ],
+            [
+                "scope",
+                2
+            ],
+            [
+                "Au",
+                0
+            ],
+            [
+                "cln1",
+                0
+            ]
+        ],
+        "keywords": [
+            "9100"
+        ],
+        "groups": [
+            {
+                "search_terms": "9100, 406",
+                "reject_terms": "",
+                "keys": "9100, 406"
+            },
+            {
+                "search_terms": "pre, dh, dryout, dry",
+                "reject_terms": "",
+                "keys": "pre, dh, dryout, dry"
+            },
+            {
+                "search_terms": "\\s85c, \\s80c, \\s70c, \\s60c",
+                "reject_terms": "[^0]$, not bad$",
+                "keys": "85c, 80c, 70c, 60c"
+            },
+            {
+                "search_terms": "",
+                "reject_terms": "",
+                "keys": ""
+            }
+        ],
+        "columns": [
+            "('imps', 'frequency')",
+            "('imps', 'realz')",
+            "('imps', 'imagz')",
+            "('imps', 'inv_imagz')",
+            "('imps', 'absz')",
+            "('imps', 'phasez')",
+            "('imps', 'param0')",
+            "('imps', 'param1')"
+        ]
+    },
+    "Combined 2": {
+        "directory": "D:\\Online\\ASU Dropbox\\Jacob Clenney\\Work Docs\\Data\\Raw\\MFIA\\WebServer",
+        "patterns": [
+            [
+                "session",
+                0
+            ],
+            [
+                ".h5",
+                0
+            ],
+            [
+                "autosave",
+                2
+            ],
+            [
+                "sweep",
+                2
+            ],
+            [
+                "stream",
+                2
+            ],
+            [
+                "scope",
+                2
+            ],
+            [
+                "Au",
+                0
+            ],
+            [
+                "9100",
+                0
+            ]
+        ],
+        "keywords": [
+            "9100"
+        ],
+        "groups": [
+            {
+                "search_terms": "cln0, cln1, 300",
+                "reject_terms": "",
+                "keys": "cln0, cln1, 300"
+            },
+            {
+                "search_terms": "pre, dh, dryout, dry",
+                "reject_terms": "",
+                "keys": "pre, dh, dryout, dry"
+            },
+            {
+                "search_terms": "\\s85c, \\s80c, \\s70c, \\s60c",
+                "reject_terms": "[^0]$, not bad$",
+                "keys": "85c, 80c, 70c, 60c"
+            }
+        ],
+        "columns": [
+            "('imps', 'frequency')",
+            "('imps', 'realz')",
+            "('imps', 'imagz')",
+            "('imps', 'inv_imagz')",
+            "('imps', 'absz')",
+            "('imps', 'phasez')",
+            "('imps', 'param0')",
+            "('imps', 'param1')"
+        ]
+    },
+    "Combined 3": {
+        "directory": "D:\\Online\\ASU Dropbox\\Jacob Clenney\\Work Docs\\Data\\Raw\\MFIA\\WebServer",
+        "patterns": [
+            [
+                "session",
+                0
+            ],
+            [
+                ".h5",
+                0
+            ],
+            [
+                "autosave",
+                2
+            ],
+            [
+                "sweep",
+                2
+            ],
+            [
+                "stream",
+                2
+            ],
+            [
+                "scope",
+                2
+            ],
+            [
+                "Au",
+                0
+            ],
+            [
+                "9100",
+                0
+            ]
+        ],
+        "keywords": [
+            "9100"
+        ],
+        "groups": [
+            {
+                "search_terms": "9100, 406",
+                "reject_terms": "",
+                "keys": "9100, 406"
+            },
+            {
+                "search_terms": "cln0, cln1, 300, 200, 100",
+                "reject_terms": "",
+                "keys": "cln0, cln1, 300, 200, 100"
+            },
+            {
+                "search_terms": "pre, dh, dryout, dry",
+                "reject_terms": "",
+                "keys": "pre, dh, dryout, dry"
+            },
+            {
+                "search_terms": "\\s85c, \\s80c, \\s70c, \\s60c",
+                "reject_terms": "not c0$",
+                "keys": "85c, 80c, 70c, 60c"
+            }
+        ],
+        "columns": [
+            "('imps', 'frequency')",
+            "('imps', 'realz')",
+            "('imps', 'imagz')",
+            "('imps', 'inv_imagz')",
+            "('imps', 'absz')",
+            "('imps', 'phasez')",
+            "('imps', 'param0')",
+            "('imps', 'param1')"
+        ]
+    },
+    "DC v1": {
+        "directory": "D:\\Online\\ASU Dropbox\\Jacob Clenney\\Work Docs\\Data\\Raw\\MFIA\\WebServer",
+        "patterns": [
+            [
+                "session",
+                0
+            ],
+            [
+                ".h5",
+                0
+            ],
+            [
+                "autosave",
+                2
+            ],
+            [
+                "stream",
+                2
+            ],
+            [
+                "scope",
+                2
+            ],
+            [
+                "Au",
+                0
+            ],
+            [
+                "9100",
+                0
+            ]
+        ],
+        "keywords": [
+            "2v",
+            "sweep",
+            "dc"
+        ],
+        "groups": [
+            {
+                "search_terms": "cln0, cln1, cln2, 300, 200, 100",
+                "reject_terms": "",
+                "keys": "cln0, cln1, cln2, 300, 200, 100"
+            },
+            {
+                "search_terms": "pre, dh, dryout, dry",
+                "reject_terms": "",
+                "keys": "pre, dh, dryout, dry"
+            },
+            {
+                "search_terms": "\\s85c, \\s80c, \\s70c, \\s60c",
+                "reject_terms": "not c0$",
+                "keys": "85c, 80c, 70c, 60c"
+            }
+        ],
+        "columns": []
+    }
+}

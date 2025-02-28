@@ -36,11 +36,12 @@ def plot_measured_data(sweep_data: dict, **kwargs):
     plt.show()
 
 if __name__ == "__main__":
-    from research_tools.functions import save, p_find
-    from impedance_analysis.tool_interface import MFIA_Freq_Sweep
+    from research_tools.functions import save, find_path
+    from impedance_analysis.device_control import MFIA_Freq_Sweep
 
-    config_path = p_find("impedance_analysis", "impedance_analysis", "tool_interface", base="cwd")
-    save_path = p_find("Dropbox (ASU)", "Work Docs", "Data", "Raw", "MFIA", base="home")
+    config_path = find_path("impedance_analysis", "impedance_analysis", "device_control", base="cwd")
+    
+    save_path = find_path("Work Docs", "Data", "Raw", "MFIA",  base=find_path("ASU Dropbox", base="drive"))
 
     sweep_obj = MFIA_Freq_Sweep(
         "dev6037", config_path/"config_mfia.ini", sections=["base_sweep_settings", "fast_sweep"], start=500

@@ -7,7 +7,7 @@ Created on Fri Jul  1 22:12:37 2022.
 
 if __name__ == "__main__":
     from scipy.optimize import Bounds
-    from research_tools.functions import f_find, p_find
+    from research_tools.functions import f_find, find_path
     from eis_analysis.data_analysis import IS_Data
 
     ckt_model = "R_0-p(R_1,C_1)"
@@ -32,17 +32,17 @@ if __name__ == "__main__":
 
     """
     Import the data from the raw files exported from the meeasurement tool
-    This provides the 1st filter, "re_filter" which will only get the filenames
+    This provides the 1st filter, "patterns" which will only get the filenames
     which match the filter name.
     """
-    my_hdf_path = p_find(
+    my_hdf_path = find_path(
         "impedance_analysis", "testing", "Data", "Databases", base="cwd"
     )
 
-    my_folder_path = p_find(
+    my_folder_path = find_path(
         "impedance_analysis", "testing", "Data", base="cwd"
     )
-    files = f_find(my_folder_path / "Raw", re_filter="(mfia_rc).*(seq)")
+    files = find_files(my_folder_path / "Raw", patterns="(mfia_rc).*(seq)")
 
     """
     Create an object to operate on all of the available data.  This will also
@@ -63,7 +63,7 @@ if __name__ == "__main__":
     """
 
     test_group.get_raw(
-        f_find(my_folder_path, re_filter="(mfia_rc).*(sweep)"),
+        find_files(my_folder_path, patterns="(mfia_rc).*(sweep)"),
         tool="MFIA",
     )
     # %% Fitting Examples

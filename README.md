@@ -5,5 +5,5 @@ Package for operating and reviewing Electrochemical Impedance Analysis
 
 
 ## Contents
-- `tool_interface`: Does thing
+- `device_control`: Does thing
 - `data_analysis`: Does thing
