@@ -22,7 +22,7 @@ import matplotlib.pyplot as plt
 from IPython import get_ipython
 
 from ..system_utilities.special_io import get_config
-from ..temp_controller.watlow import Watlow
+from ..temp_controller.controllers.watlow import Watlow
 from ..string_ops import safe_eval
 
 def plot_measured_data(sweep_data: dict, **kwargs):
