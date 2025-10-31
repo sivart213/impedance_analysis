@@ -8,201 +8,707 @@ General function file
 """
 
 import re
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast, overload
 from difflib import get_close_matches
-from collections import Counter
+from itertools import chain
+from collections.abc import Callable, Iterator
 
-import numpy as np
 import pandas as pd
 
+if TYPE_CHECKING:
+    from ..utils._typings import (
+        PandasKey,
+        PandasMap,
+        PandasKeys,
+        PandasLike,
+        IPandasKeys,
+        MIPandasKeys,
+    )
 
-from ..utils.decorators import handle_dicts, handle_subdicts
-from ..string_ops import eng_not  # str_in_list
+try:
+    from ..utils.decorators import handle_dicts, handle_subdicts
+except ImportError:
+    from eis_analysis.utils.decorators import handle_dicts, handle_subdicts
 
 
-def most_frequent(arg):
+IsFalse: TypeAlias = Literal[False]
+IsTrue: TypeAlias = Literal[True]
+
+
+class CachedColumnSelector:
     """
-    Finds the most frequent element in an array.
-
-    This function takes an array-like input and returns the most frequently occurring
-    element. If there are multiple elements with the same highest frequency, it returns
-    the first one encountered.
-
-    Parameters:
-    arg (array-like): The input array to analyze.
-
-    Returns:
-    int: The most frequent element in the array.
+    Class to manage and validate DataFrame columns using a cache.
     """
-    unique, counts = np.unique(arg, return_counts=True)
-    index = np.argmax(counts)
-    return int(unique[index])
+
+    def __init__(self, initial_columns: list | tuple | set | None = None):
+        self._cache = []
+        # Initialize the cache with default column names
+        self.cache = initial_columns
+
+    @property
+    def cache(self) -> list[list[PandasKey]]:
+        """
+        Return the cache list.
+        """
+        return self._cache
+
+    @cache.setter
+    def cache(self, value: Any):
+        if isinstance(value, (tuple, list, set)):
+            self._cache.append(list(value))
+
+    @overload
+    def get_valid_columns(
+        self,
+        df: pd.DataFrame,
+        reducing_keys: ...,
+        get_keys: IsTrue,
+        cutoff: float = 0.6,
+    ) -> list: ...
+
+    @overload
+    def get_valid_columns(
+        self,
+        df: pd.DataFrame,
+        reducing_keys: str | list[str] | None = None,
+        *,
+        get_keys: IsTrue,
+        cutoff: float = 0.6,
+    ) -> list[str]: ...
+
+    @overload
+    def get_valid_columns(
+        self,
+        df: pd.DataFrame,
+        reducing_keys: str | list[str] | tuple[str, ...] | None = None,
+        get_keys: IsFalse = False,
+        cutoff: float = 0.6,
+    ) -> pd.DataFrame: ...
+
+    def get_valid_columns(
+        self,
+        df: pd.DataFrame,
+        reducing_keys: str | list[str] | tuple[str, ...] | None = None,
+        get_keys: bool = False,
+        cutoff: float = 0.6,
+    ) -> pd.DataFrame | list:
+        """
+        Check if the DataFrame contains a valid set of columns.
+        If not, call `get_valid_keys` to find a valid set and update the cache.
+
+        Args:
+            df (pd.DataFrame): The DataFrame to validate.
+            reducing_keys (tuple/list, optional): Keys to iteratively reduce the DataFrame columns.
+            get_keys (bool, optional): If True, return the valid keys instead of updating the DF.
+
+        Returns:
+            pd.DataFrame or list: Updated DataFrame or valid keys, depending on `get_keys`.
+        """
+
+        def recombine_keys(keys, common_keys: list[str]) -> PandasKeys:
+            """
+            Recombine keys with the preceding common_keys.
+            """
+            if not common_keys:
+                return keys
+            return [
+                tuple(common_keys) + (key if isinstance(key, tuple) else (key,)) for key in keys
+            ]
+
+        key_len = len(self._cache[0])
+        used_r_keys = []
+
+        columns = set(df.columns.tolist())
+        for col_set in self._cache:
+            if set(col_set).issubset(columns):
+                if get_keys:
+                    return col_set
+                df = df[col_set]
+                df.columns = self._cache[0]
+                return df
+
+        # Handle MultiIndex columns with reducing_keys
+        if reducing_keys is not None and isinstance(df.columns, pd.MultiIndex):
+            if isinstance(reducing_keys, str):
+                reducing_keys = [reducing_keys]
+            used_r_keys: list[str] = []
+            for key in reducing_keys:
+                if key in df.columns and len(df[key].columns) >= key_len:
+                    df = df[key]  # type: ignore
+                    used_r_keys.append(key)
+                    if not isinstance(df.columns, pd.MultiIndex):
+                        break
+            columns = set(df.columns.tolist())
+
+        # If no valid set is found, call `get_valid_keys`
+
+        n_cache = 0
+        valid_keys = []
+        while n_cache < len(self._cache) and not valid_keys:
+            valid_keys = get_valid_keys(df, self._cache[n_cache], all_or_none=True, cutoff=cutoff)
+            valid_keys = (
+                [] if not valid_keys or len(valid_keys) > len(set(valid_keys)) else valid_keys
+            )
+            n_cache += 1
+
+        if valid_keys:
+            self.cache = recombine_keys(valid_keys, used_r_keys)
+            if get_keys:
+                return self._cache[-1]
+            df = df[valid_keys]
+            df.columns = self._cache[0]
+            return df
+        elif used_r_keys or cutoff >= 0.2:
+            return self.get_valid_columns(df, None, get_keys=get_keys, cutoff=cutoff - 0.1)
+
+        # Return None if no valid columns are found
+        if get_keys:
+            return []
+        return df[[]]
+
+    def get_valid_keys_from_list(
+        self,
+        columns: list,
+        cutoff: float = 0.4,
+    ) -> list:
+        """
+        Validate a list of column names and return the valid keys.
+
+        Args:
+            columns (list): List of column names (strings or tuples) to validate.
+            cutoff (float, optional): Fuzzy matching cutoff for `get_valid_keys`.
+
+        Returns:
+            list: Valid keys from the list of column names.
+        """
+        # Check against cached column sets
+        columns_set = set(columns)
+        for col_set in self.cache:
+            if set(col_set).issubset(columns_set):
+                return col_set  # No modification logic for lists
+
+        # If no valid set is found, call `get_valid_keys`
+
+        n_cache = 0
+        valid_keys = []
+        while n_cache < len(self._cache) and not valid_keys:
+            valid_keys = get_valid_keys(
+                columns,
+                self._cache[n_cache],
+                all_or_none=True,
+                cutoff=cutoff,
+            )
+            valid_keys = (
+                [] if not valid_keys or len(valid_keys) > len(set(valid_keys)) else valid_keys
+            )
+            n_cache += 1
+
+        # valid_keys = get_valid_keys(columns, self._cache[0], all_or_none=True, cutoff=cutoff)
+        if valid_keys:
+            self.cache.append(valid_keys)
+            return valid_keys
+
+        # Return None if no valid keys are found
+        return []
+
+    def reset_cache(self, initial_columns: list[PandasKey] | tuple[PandasKey] | None = None):
+        """
+        Reset the cache to the initial columns.
+
+        Args:
+            initial_columns (tuple/list, optional): Initial columns to set in the cache.
+        """
+
+        if not self._cache:
+            pass
+        elif initial_columns is not None:
+            self._cache = []
+            self.cache = initial_columns
+        else:
+            self._cache = [self._cache[0]]
 
 
-# def get_valid_keys(columns, target, return_unmatched=False):
-#     """
-#     Returns the correct column names for the DataFrame based on the target.
-#     Args:
-#         columns (pd.Index or pd.MultiIndex): The DataFrame columns.
-#         target (str, list of str, or list of tuple of str): The target column names to match.
-#     Returns:
-#         list: A list of matched column names.
-#     """
-#     if isinstance(target, str):
-#         target = [target]
-
-#     # Convert columns to list if not already a list
-#     if isinstance(columns, (pd.Index, pd.MultiIndex)):
-#         columns = columns.tolist()
-
-#     if isinstance(columns[0], (tuple, list)):
-#         column_lists = [[".".join(map(str, col)) for col in columns]]
-#         for level in range(len(columns[0])):
-#             column_lists.append([str(col[level]) for col in columns])
-#     else:
-#         column_lists = [columns]
-
-#     matched_columns = []
-#     unmatched_columns = []
-#     for t in target:
-#         if isinstance(t, tuple):
-#             t = ".".join(t)
-
-#         if t.startswith("(") and t.endswith(")"):
-#             t = re.sub(r'\s*,\s*', '.', t[1:-1])
-
-#         match_found = False
-#         cutoff = 0.8
-#         while cutoff >= 0.1 and not match_found:
-#             for column_list in column_lists:
-#                 if matches := get_close_matches(t, column_list, cutoff=cutoff):
-#                     match_index = column_list.index(matches[0])
-#                     matched_columns.append(columns[match_index])
-#                     match_found = True
-#                     break
-
-#             cutoff -= 0.1
-#         if not match_found:
-#             print(f"No match found for {t}")
-#             unmatched_columns.append(t)
-
-#     if return_unmatched:
-#         return matched_columns, unmatched_columns
-#     return matched_columns
-
-
+@overload
 def get_valid_keys(
-    columns, target, return_unmatched=False, prevent_duplicates=True, slice_multi=False
-):
+    source: Any,
+    target: str | list[str] | tuple[str, ...],
+    as_list: IsTrue = True,
+    slice_multi: bool = ...,
+    all_or_none: bool = ...,
+    cutoff: float = ...,
+) -> list[PandasKey]: ...
+@overload
+def get_valid_keys(
+    source: Any,
+    target: str | list[str] | tuple[str, ...],
+    as_list: IsFalse,
+    slice_multi: bool = ...,
+    all_or_none: bool = ...,
+    cutoff: float = ...,
+) -> PandasMap: ...
+def get_valid_keys(
+    source: Any,
+    target: str | list[str] | tuple[str, ...],
+    as_list: bool = True,
+    slice_multi: bool = False,
+    all_or_none: bool = False,
+    cutoff: float = 0.6,
+) -> list[PandasKey] | PandasMap:
     """
-    Returns the correct column names for the DataFrame based on the target.
+    [DEPRECATED] Returns the correct column names for the DataFrame based on the target.
+
+    This function is retained for compatibility with legacy code and may be removed in the future.
+    For new code, use the KeyMatcher class directly.
+
     Args:
-        columns (pd.Index or pd.MultiIndex): The DataFrame columns.
+        source (pd.DataFrame, pd.Index or pd.MultiIndex): The DataFrame or DataFrame columns.
         target (str, list of str, or list of tuple of str): The target column names to match.
+        slice_multi (bool): If True, uses the treated target to slice.
+        as_list (bool): If True, returns a list of matched columns.
+        all_or_none (bool): If True, returns [] if not all targets are matched.
+        cutoff (float): Fuzzy matching cutoff for get_close_matches.
+
     Returns:
         list: A list of matched column names.
     """
-    if isinstance(target, str):
-        target = [target]
-
-    # Convert columns to list if not already a list
-    if isinstance(columns, (pd.Index, pd.MultiIndex)):
-        columns = columns.tolist()
-
-    is_multi = False
-    if isinstance(columns[0], (tuple, list)):
-        is_multi = True
-        column_lists = [[".".join(map(str, col)) for col in columns]]
-        for level in range(len(columns[0])):
-            column_lists.append([str(col[level]) for col in columns])
-        # column_lists.append([str(col) for col in columns])
-    else:
-        column_lists = [columns]
-
-    matched_columns = []
-    unmatched_columns = []
-    for t in target:
-        if isinstance(t, tuple):
-            t = ".".join(t)
-
-        if t.startswith("(") and t.endswith(")"):
-            t = re.sub(r"\s*,\s*", ".", t[1:-1])
-
-        match_found = False
-        cutoff = 0.8
-        cutoff_min = 0.1
-        while cutoff >= cutoff_min and not match_found:
-            for n, column_list in enumerate(column_lists):
-                if matches := get_close_matches(t, column_list, cutoff=cutoff):
-                    match_index = column_list.index(matches[0])
-                    res = columns[match_index]
-                    if is_multi and slice_multi and n >= 1:
-                        # if n >= 1 then it is a multi-index column and I want to "slice" it safely if slice_multi is True
-                        for col in columns[match_index:]:
-                            if col[n - 1] == res[n - 1] and col not in matched_columns:
-                                matched_columns.append(col)
-                            match_found = True
-                            break
-
-                    elif (is_multi and slice_multi) or prevent_duplicates:
-                        for match in matches:
-                            if (
-                                m := columns[column_list.index(match)]
-                            ) not in matched_columns:
-                                matched_columns.append(m)
-                                match_found = True
-                                break
-                        else:
-                            cutoff_min = max(0.1, cutoff / 2)
-                    else:
-                        matched_columns.append(res)
-                        match_found = True
-                    break
-
-            cutoff -= 0.1
-        if not match_found:
-            print(f"No match found for {t}")
-            unmatched_columns.append(t)
-
-    if return_unmatched:
-        return matched_columns, unmatched_columns
-    return matched_columns
+    return KeyMatcher(source, target, cutoff, slice_multi, as_list, all_or_none).result
 
 
-def insert_inverse_col(df, name):
+class KeyMatcher:
     """
-    Inserts a new column in the DataFrame with the inverse of the specified column.
-
-    This function searches for a column in the DataFrame that matches the given name
-    (or a close match if the exact name is not found). It then creates a new column
-    with the inverse values of the specified column and inserts it immediately after
-    the original column.
-
-    Parameters:
-    df (pd.DataFrame): The DataFrame to modify.
-    name (str): The name of the column to invert.
-
-    Returns:
-    pd.DataFrame: The modified DataFrame with the new inverse column inserted.
+    Class to match target column names to DF columns, supporting both flat and MultiIndex columns.
+    Handles exact and fuzzy matching, and prevents duplicates using a set of prior matches.
     """
-    # name = str_in_list(name, df.columns)
-    # if name in df.columns:
-    names = get_close_matches(name, list(df.columns))
-    if names:
-        name = names[0]
-        if isinstance(name, tuple):
-            new_name = tuple(
-                [
-                    name[n] if n < len(name) - 1 else "inv_" + name[n]
-                    for n in range(len(name))
-                ]
-            )
+
+    def __init__(
+        self,
+        source: Any | None = None,
+        target: str | list[str] | tuple[str, ...] | None = None,
+        cutoff: float | None = None,
+        slice_multi: bool | None = None,
+        as_list: bool | None = None,
+        all_or_none: bool | None = None,
+    ):
+        """
+        Initialize the KeyMatcher and immediately perform matching.
+
+        Args:
+            source (pd.DataFrame, pd.Index, pd.MultiIndex, list): The columns or DF to match.
+            target (str, list, tuple): The target column names to match.
+            cutoff (float): Fuzzy matching cutoff for get_close_matches.
+            slice_multi (bool): If True, enables slicing for MultiIndex columns.
+            as_list (bool): If True, returns a list of matched columns.
+            all_or_none (bool): If True, returns [] if not all targets are matched.
+        """
+        self.priors = set()
+        self.matched_mapping: PandasMap = {}
+        self.cutoff = 0.6
+        self._targets = set()
+        self.info = {}
+        self.process_info = dict(
+            slice_multi=False,
+            as_list=True,
+            all_or_none=False,
+        )
+        self.keys = [[], []]
+        self._result = {}
+        # as_list=True,
+        # all_or_none=False
+
+        self._preprocess(source, target, cutoff, slice_multi, as_list, all_or_none)
+
+    @property
+    def result(self) -> list[PandasKey] | PandasMap:
+        """Return result of matching."""
+        if not self._result:
+            self.get_valid_keys()
+        return cast(list[PandasKey] | PandasMap, self._result)
+
+    @property
+    def result_list(self) -> list[PandasKey]:
+        """Return result of matching."""
+        if not self.matched_mapping:
+            self.get_valid_keys()
+        return self._postprocess(self.process_info["all_or_none"])
+
+    @property
+    def result_dict(self) -> PandasMap:
+        """Return result of matching."""
+        if not self.matched_mapping:
+            self.get_valid_keys()
+        return self.matched_mapping
+
+    def _parse_target(self, target: str | list[str] | tuple[str, ...] | None):
+        """
+        Parse the target input to ensure it's a list of strings or tuples.
+        """
+        if target is None:
+            return
+        if isinstance(target, str):
+            target = [target]
+
+        if isinstance(target, (tuple, list)):
+            try:
+                self._targets = set(target)
+            except TypeError:
+                self._targets = set(str(t) for t in target)
         else:
-            new_name = "inv_" + name
-        df.insert(df.columns.get_loc(name) + 1, new_name, -1 * df[name])
-    return df
+            raise ValueError("Invalid target type. Must be str, list of str/tuples.")
+
+        self.info.update({"target": target})
+
+    def _parse_source(self, source: Any | None):
+        """
+        Parse the source input
+        """
+        if source is None:
+            return
+        # Always convert columns to a list
+        if isinstance(source, pd.DataFrame):
+            columns = source.columns.to_list()
+        elif isinstance(source, pd.Index):
+            columns = source.to_list()
+        elif isinstance(source, (list, tuple)):
+            columns = list(source)
+        else:
+            raise ValueError(
+                "Invalid columns type. Must be pd.DataFrame, pd.Index, or list/tuple."
+            )
+
+        is_multi = isinstance(columns[0], tuple) and not any(
+            isinstance(col, (str, int, float)) for col in columns
+        )
+
+        self.info.update(
+            {
+                "columns": columns,
+                "c_len": len(columns),
+                "levels": len(columns[0]) if is_multi else 1,
+                "is_multi": is_multi,
+            }
+        )
+
+    def _preprocess(
+        self,
+        source: Any | None,
+        target: str | list[str] | tuple[str, ...] | None,
+        cutoff: float | None,
+        slice_multi: bool | None,
+        as_list: bool | None,
+        all_or_none: bool | None,
+    ):
+        """
+        Initialize the KeyMatcher and immediately perform matching.
+        """
+        if source is not None:
+            self._parse_source(source)
+
+        # Normalize targets
+        if target is not None:
+            self._parse_target(target)
+
+        if isinstance(cutoff, (float, int)):
+            self.cutoff = cutoff
+
+        if isinstance(slice_multi, bool):
+            self.process_info["slice_multi"] = slice_multi
+
+        if isinstance(as_list, bool):
+            self.process_info["as_list"] = as_list
+
+        if isinstance(all_or_none, bool):
+            self.process_info["all_or_none"] = all_or_none
+
+        if len(self.info) == 5 and not self.keys[0]:
+            # Prepare keys for matching
+            if self.info["is_multi"]:
+                # keys[0]: full multiindex as joined string;
+                # keys[1]: all single-level keys as strings
+                self.keys = [
+                    [".".join(map(str, col)) for col in self.info["columns"]],
+                    [str(col) for col in chain.from_iterable(self.info["columns"])],
+                ]
+                self.keys[0].extend([k.lower() for k in self.keys[0]])
+                self.keys[1].extend([k.lower() for k in self.keys[1]])
+
+            else:
+                self.keys = [[str(col) for col in self.info["columns"]], []]
+                self.keys[0].extend([col.lower() for col in self.info["columns"]])
+
+                self.process_info["slice_multi"] = False
+
+    def _postprocess(self, all_or_none: bool) -> list[PandasKey]:
+        """
+        Post-process the result to return as list, handle slice_multi and all_or_none.
+        """
+        # Use the original target order if provided, else sorted keys
+        matched_columns: list[PandasKey] = [
+            self.matched_mapping[x] for x in self.info["target"] if x in self.matched_mapping
+        ]
+        if self.process_info["slice_multi"]:
+            matched_columns = list(
+                dict.fromkeys(
+                    chain.from_iterable(
+                        [value] if not isinstance(value, list) else value
+                        for value in matched_columns
+                    )
+                )
+            )
+        if all_or_none and len(matched_columns) != len(self.info["target"]):
+            return []
+
+        return matched_columns
+
+    def _get_mat_value(self, mat: int) -> PandasKey:
+        """
+        Get the column value for a flat index.
+        """
+        return self.info["columns"][mat % self.info["c_len"]]
+
+    def _get_multi_mat_value(self, mat: int) -> list[PandasKey]:
+        """
+        Get all columns matching a specific level value in a MultiIndex.
+        """
+        match_index = mat % self.info["c_len"]
+        level = match_index % self.info["levels"]
+        col_key = self.info["columns"][match_index // self.info["levels"]][level]
+        return [col for col in self.info["columns"] if col[level] == col_key]
+
+    def _is_in_filter(
+        self,
+        target: str,
+        keys: list[str],
+        value_getter: Callable,
+        cutoff: float,
+    ) -> tuple[list, Callable, float]:
+        """
+        Helper for short target logic in _find_best_match.
+        Returns updated keys, value_getter, and cutoff.
+        """
+
+        def _value_getter(vg, oi):
+            def wrapped(idx):
+                return vg(oi[idx])
+
+            return wrapped
+
+        filtered = [
+            (i, key) for i, key in enumerate(keys) if target in key or target.lower() in key
+        ]
+        if filtered:
+            orig_indices, filtered_keys = zip(*filtered)
+            f_keys = list(filtered_keys)
+            min_key_lens = (len(target), min(len(k) for k in keys))
+            max_possible = 2 * min(min_key_lens) / sum(min_key_lens)
+            f_cutoff = (1 - (1 - max_possible) * (1 - cutoff) / 2) * min(max_possible, cutoff)
+            return f_keys, _value_getter(value_getter, orig_indices), f_cutoff
+
+        return keys, value_getter, cutoff
+
+    def _find_best_match(
+        self,
+        target: str,
+        keys: list[str],
+        value_getter: Callable,
+    ) -> Any:
+        """
+        Helper to find the best match for a target in keys using value_getter.
+        Returns the first value not in self.priors, or the first match if all are taken.
+
+        Args:
+            target (str): The target string to match.
+            keys (list): List of candidate keys (strings).
+            value_getter (callable): Function to get the column value from a key index.
+
+        Returns:
+            The best-matched column value, or None if no match is found.
+        """
+
+        cutoff = self.cutoff
+        val_func = value_getter
+        if len(target) <= 3:
+            keys, val_func, cutoff = self._is_in_filter(target, keys, value_getter, cutoff)
+
+        matches = self.get_close_matches_caseless(target, keys, n=5, cutoff=cutoff)
+
+        if matches:
+            val = next(
+                (v for mat in matches if (v := val_func(keys.index(mat))) not in self.priors),
+                val_func(keys.index(matches[0])),
+            )
+            self.priors.add(val)
+            return val
+        return None
+
+    def match_exact(self) -> PandasMap:
+        """
+        Match targets to exact column names.
+
+        Returns:
+            dict: Mapping of target to matched column.
+        """
+        # Perform exact matching once in __init__ for both flat and multiindex
+        exact_matches = self._targets.intersection(self.info["columns"])
+        self.matched_mapping = dict(zip(exact_matches, exact_matches))
+        self._targets.difference_update(exact_matches)
+
+        return self.matched_mapping
+
+    def match_flat(self) -> PandasMap:
+        """
+        Match targets to flat (single-level) columns using fuzzy matching.
+
+        Returns:
+            dict: Mapping of target to matched column.
+        """
+        self.match_exact()
+        for target in sorted(self._targets, key=lambda x: len(str(x)), reverse=True):
+            val = self._find_best_match(str(target), self.keys[0], self._get_mat_value)
+            if val is not None:
+                self.matched_mapping[target] = val
+
+        return self.matched_mapping
+
+    def match_multi(self) -> PandasMap:
+        """
+        Match targets to MultiIndex columns using fuzzy matching.
+        Handles both full multiindex keys and single-level keys.
+
+        Returns:
+            dict: Mapping of target to matched column(s).
+        """
+        self.match_exact()
+        slice_multi_res = {}
+        for target in sorted(self._targets, key=lambda x: len(str(x)), reverse=True):
+            # Branch 1: tuple/list or stringified tuple (full MultiIndex key)
+            modify = False
+            if isinstance(target, (tuple, list)) or (
+                (modify := str(target)[0] in "([" and "," in str(target))
+            ):
+                mod_target = tuple(re.split(r"\s*,\s*", str(target)[1:-1])) if modify else target
+                val_v1 = self._find_best_match(
+                    ".".join(map(str, mod_target)), self.keys[0], self._get_mat_value
+                )
+                if val_v1 is not None:
+                    self.matched_mapping[target] = val_v1
+            # Branch 2: single-level key (matches all columns at that level)
+            else:
+                val_v2 = self._find_best_match(
+                    str(target), self.keys[1], self._get_multi_mat_value
+                )
+                if val_v2 is not None:
+                    if len(val_v2) == 1:
+                        self.matched_mapping[target] = val_v2[0]
+                    else:
+                        slice_multi_res[target] = val_v2
+
+        if slice_multi_res:
+            if self.process_info["slice_multi"]:
+                self.matched_mapping.update(slice_multi_res)
+            else:
+                self.matched_mapping.update(
+                    {
+                        key: next(
+                            (v for v in value if v not in self.matched_mapping.values()), value[0]
+                        )
+                        for key, value in slice_multi_res.items()
+                    }
+                )
+        return self.matched_mapping
+
+    # @overload
+    # def get_valid_keys(
+    #     source: Any | None ,
+    #     target: list | None,
+    #     as_list: IsTrue = True,
+    #     slice_multi: bool | None = ...,
+    #     all_or_none: bool | None = ...,
+    #     cutoff: float | None = ...,
+    # ) -> list[PandasKey]: ...
+    # @overload
+    # def get_valid_keys(
+    #     source: Any | None ,
+    #     target: list | None,
+    #     as_list: IsFalse,
+    #     slice_multi: bool | None = ...,
+    #     all_or_none: bool | None = ...,
+    #     cutoff: float | None = ...,
+    # ) -> PandasMap: ...
+
+    def get_valid_keys(
+        self,
+        source: Any | None = None,
+        target: list | None = None,
+        as_list: bool | None = None,
+        slice_multi: bool | None = None,
+        all_or_none: bool | None = None,
+        cutoff: float | None = None,
+    ) -> list[PandasKey] | PandasMap:
+        """
+        Initialize the  and immediately perform matching.
+
+        Args:
+            source (pd.DataFrame, pd.Index, pd.MultiIndex, list): The columns or DF to match.
+            target (str, list, tuple): The target column names to match.
+            cutoff (float): Fuzzy matching cutoff for get_close_matches.
+            slice_multi (bool): If True, enables slicing for MultiIndex columns.
+            as_list (bool): If True, returns a list of matched columns.
+            all_or_none (bool): If True, returns [] if not all targets are matched.
+        """
+        self._preprocess(source, target, cutoff, slice_multi, as_list, all_or_none)
+
+        if len(self.info) != 5:
+            raise ValueError(
+                "KeyMatcher not fully initialized. "
+                "Please provide a source/target list at initialization or via get_valid_keys()."
+            )
+
+        if self.info["is_multi"]:
+            self.match_multi()
+        else:
+            self.match_flat()
+
+        if self.process_info["as_list"]:
+            self._result = self._postprocess(self.process_info["all_or_none"])
+        else:
+            self._result = self.matched_mapping
+
+        return self._result
+
+    @staticmethod
+    def get_close_matches_caseless(
+        target: str,
+        possibilities: list,
+        n: int = 5,
+        cutoff: float = 0.6,
+    ) -> list[str]:
+        """
+        Return close matches to 'target' in 'possibilities'.
+        Ignores case of target if first pass fails.
+
+        Args:
+            target (str): The string to match.
+            possibilities (list): List of candidate strings.
+            n (int): Maximum number of close matches to return.
+            cutoff (float): Minimum similarity ratio.
+
+        Returns:
+            list: List of close matches.
+        """
+        results = get_close_matches(target, possibilities, n, cutoff)
+        return results or get_close_matches(target.lower(), possibilities, n, cutoff)
 
 
-def modify_sub_dfs(data, *functions):
+# used by convert_mfia_data and is a primary function
+
+
+@handle_dicts
+def modify_sub_dfs(
+    data: pd.DataFrame,
+    *functions: Callable[..., Any] | tuple[Any, ...],
+    args: tuple[Any, ...] | None = None,
+    **kwargs: Any,
+) -> pd.DataFrame:
     """
     Applies a series of functions to a DataFrame or nested DataFrames within a dictionary.
 
@@ -212,398 +718,535 @@ def modify_sub_dfs(data, *functions):
     DataFrame in place and returns the modified DataFrame.
 
     Parameters:
-    data (pd.DataFrame or dict): The DataFrame or dictionary of DataFrames to modify.
-    *functions (callable or tuple): A series of functions or tuples of functions and their arguments
+    data pd.DataFrame: The DataFrame to modify.
+    *functions (callable or tuple): A series of functions/tuples of functions and their arguments
                                 to apply to the DataFrame(s).
 
     Returns:
-    pd.DataFrame or dict: The modified DataFrame or dictionary of DataFrames.
+    pd.DataFrame: The modified DataFrame .
     """
-    if isinstance(data, pd.DataFrame):
-        for f in functions:
-            if isinstance(f, (tuple, list)):
-                if len(f) == 1:
-                    res = f[0](data)
-                elif len(f) == 2:
-                    res = (
-                        f[0](data, **f[1])
-                        if isinstance(f[1], dict)
-                        else f[0](data, f[1])
-                    )
-                else:
-                    res = f[0](data, *f[1:])
-            else:
-                res = f(data)
-            if res is not None:
-                data = res
-        return data
-    elif isinstance(data, dict):
-        return {k: modify_sub_dfs(d, *functions) for k, d in data.items()}
-    elif isinstance(data, (list, tuple)):
-        return [modify_sub_dfs(d, *functions) for d in data]
-
+    if args is None:
+        args = tuple([])
+    res = None
+    for f in functions:
+        if callable(f):
+            res = f(data, *args, **kwargs)
+        elif isinstance(f[-1], dict):
+            res = f[0](data, *(f[1:-1] or args), **{**kwargs, **f[-1]})
+        else:
+            res = f[0](data, *(f[1:] or args), **kwargs)
+        data = res if isinstance(res, type(data)) else data
     return data
 
 
-# def remove_duplicate_datasets(data_dict, min_rows=1, verbose=False):
-#     """
-#     Removes duplicate datasets from a dictionary of datasets and filters based on minimum number of rows.
-
-#     Parameters:
-#     - data_dict (dict): Dictionary containing datasets.
-#       Format: {filename: {sheet_name: pd.DataFrame}}
-#     - min_rows (int): Minimum number of rows required to keep a dataset. Default is 1.
-#     - verbose (bool): If True, prints the file and sheet name of rejected datasets. Default is False.
-
-#     Returns:
-#     - dict: Filtered dictionary with duplicates removed.
-#     """
-#     unique_datasets = {}
-#     seen_createdtimes = {}
-
-#     for filename, sheets in data_dict.items():
-#         for sheet_name, df in sheets.items():
-#             if len(df) <= min_rows:
-#                 if verbose:
-#                     print(
-#                         f"Rejected dataset due to insufficient rows: {filename} - {sheet_name} (rows: {len(df)})"
-#                     )
-#                 continue
-
-#             createdtime = df.attrs.get("createdtime")
-#             if createdtime:
-#                 if createdtime in seen_createdtimes:
-#                     existing_filename, existing_sheet_name = seen_createdtimes[
-#                         createdtime
-#                     ]
-#                     existing_df = unique_datasets[existing_filename][
-#                         existing_sheet_name
-#                     ]
-
-#                     # Compare completeness (number of non-null values)
-#                     if df.notnull().sum().sum() > existing_df.notnull().sum().sum():
-#                         # Replace with the more complete dataset
-#                         unique_datasets[existing_filename].pop(existing_sheet_name)
-#                         if not unique_datasets[existing_filename]:
-#                             unique_datasets.pop(existing_filename)
-#                         unique_datasets.setdefault(filename, {})[sheet_name] = df
-#                         seen_createdtimes[createdtime] = (filename, sheet_name)
-#                         if verbose:
-#                             print(
-#                                 f"Replaced dataset: {existing_filename} - {existing_sheet_name} with {filename} - {sheet_name} due to more completeness"
-#                             )
-#                     elif (
-#                         df.notnull().sum().sum() == existing_df.notnull().sum().sum()
-#                         and "loaded" not in sheet_name
-#                         and df.attrs.get("createdtimestamp", 0)
-#                         != df.attrs.get("changedtimestamp", 1)
-#                     ):
-#                         # If completeness is the same, keep the dataset with the longer name
-#                         if (
-#                             existing_sheet_name.startswith(sheet_name)
-#                             or len(filename) > len(existing_filename)
-#                             or (len(filename) == len(existing_filename)
-#                                 and len(sheet_name) > len(existing_sheet_name))
-#                         ):
-#                             unique_datasets[existing_filename].pop(existing_sheet_name)
-#                             if not unique_datasets[existing_filename]:
-#                                 unique_datasets.pop(existing_filename)
-#                             unique_datasets.setdefault(filename, {})[sheet_name] = df
-#                             seen_createdtimes[createdtime] = (
-#                                 filename,
-#                                 sheet_name,
-#                             )
-#                             if verbose:
-#                                 print(
-#                                     f"Replaced dataset: {existing_filename} - {existing_sheet_name} with {filename} - {sheet_name} due to longer name"
-#                                 )
-#                     else:
-#                         if verbose:
-#                             print(
-#                                 f"Rejected dataset due to duplicate createdtime: {filename} - {sheet_name} (createdtime: {createdtime})"
-#                             )
-#                 else:
-#                     unique_datasets.setdefault(filename, {})[sheet_name] = df
-#                     seen_createdtimes[createdtime] = (filename, sheet_name)
-#             else:
-#                 # If no createdtime attribute, keep the dataset
-#                 unique_datasets.setdefault(filename, {})[sheet_name] = df
-
-#     return unique_datasets
+@overload
+def sanitize_df_col(args: MIPandasKeys, as_index: IsTrue) -> pd.MultiIndex: ...
+@overload
+def sanitize_df_col(args: IPandasKeys | PandasMap, as_index: IsTrue) -> pd.Index: ...
+@overload
+def sanitize_df_col(args: Any, as_index: IsFalse = False) -> pd.DataFrame: ...
 
 
-# def find_duplicate_datasets(data_dict):
-#     """
-#     Finds duplicate datasets and returns a dictionary with the necessary information
-#     to select all duplicate sets.
-
-#     Parameters:
-#     - data_dict (dict): Dictionary containing datasets.
-#       Format: {filename: {sheet_name: pd.DataFrame}}
-
-#     Returns:
-#     - dict: Dictionary with createdtime as keys and lists of tuples (filename, sheet_name) as values.
-#     """
-#     duplicates = {}
-#     seen_createdtimes = {}
-
-#     for filename, sheets in data_dict.items():
-#         for sheet_name, df in sheets.items():
-#             createdtime = df.attrs.get("createdtime")
-#             if createdtime:
-#                 if createdtime in seen_createdtimes:
-#                     if createdtime not in duplicates:
-#                         duplicates[createdtime] = [seen_createdtimes[createdtime]]
-#                     duplicates[createdtime].append((filename, sheet_name))
-#                 else:
-#                     seen_createdtimes[createdtime] = (filename, sheet_name)
-
-#     return duplicates
-
-
-def remove_duplicate_datasets(data_dict, min_rows=1, duplicates=None):
+def sanitize_df_col(
+    args: PandasLike | IPandasKeys | MIPandasKeys | PandasMap,
+    as_index: bool = False,
+) -> pd.DataFrame | pd.MultiIndex | pd.Index:
     """
-    Removes duplicate datasets from a dictionary of datasets and filters based on minimum number of rows.
+    Converts various input types (e.g., MultiIndex, Index, list, tuple) into a DataFrame
+    or optionally back into a MultiIndex/Index.
 
     Parameters:
-    - data_dict (dict): Dictionary containing datasets.
-      Format: {filename: {sheet_name: pd.DataFrame}}
-    - min_rows (int): Minimum number of rows required to keep a dataset. Default is 1.
-    - verbose (bool): If True, prints the file and sheet name of rejected datasets. Default is False.
+    args: Input to convert (e.g., pd.MultiIndex, pd.Index, list, tuple).
+    as_index (bool): If True, converts the result back into a MultiIndex or Index.
 
     Returns:
-    - dict: Filtered dictionary with duplicates removed.
+    pd.DataFrame or pd.MultiIndex/pd.Index: Converted DataFrame or Index.
     """
-    if duplicates is None:
-        duplicates = find_duplicate_datasets(data_dict)
-
-    for key, val in data_dict.items():
-        if isinstance(val, dict):
-            sub_dict = remove_duplicate_datasets(val)
-            duplicates.update(
-                {k: duplicates.get(k, []) + v for k, v in sub_dict.items()}
+    if isinstance(args, pd.DataFrame):
+        args = args.columns
+    if isinstance(args, (tuple, list)):
+        # Check if it's a list of tuples (MultiIndex-like)
+        if all(isinstance(item, tuple) for item in args):
+            result = pd.DataFrame(args)
+        # Check if it's a list of strings (flat index-like)
+        elif all(isinstance(item, str) for item in args):
+            result = pd.DataFrame({0: args})
+        else:
+            raise ValueError(
+                "Invalid list/tuple format. Expected a list of tuples (MultiIndex-like)"
+                " or a list of strings (flat index-like)."
             )
-        elif isinstance(val, pd.DataFrame):
-            if createdtime := val.attrs.get("createdtime"):
-                duplicates[createdtime] = duplicates.get(createdtime, []) + [key]
+    elif isinstance(args, dict):
+        result = pd.DataFrame.from_dict(args, orient="index").reset_index(drop=True)
+    elif isinstance(args, pd.Series):
+        result = args.to_frame()
+    elif isinstance(args, (pd.Index, pd.MultiIndex)):
+        result = args.to_frame(index=False)
+    else:
+        try:
+            if isinstance(args, str):
+                raise ValueError("strings are not supported")
+            args = list(args)
+            return sanitize_df_col(args, as_index=as_index)
+        except Exception as exc:
+            # Handle cases where args is not iterable
+            raise ValueError("Invalid arguments. Expected an interable.") from exc
 
-    # return duplicates
+    # Ensure output is disconnected from the original object
+    result = result.copy(deep=True)
 
-    unique_datasets = {}
-    seen_createdtimes = {}
+    # Convert back to MultiIndex or Index if requested
+    if as_index:
+        if result.shape[1] > 1:
+            return pd.MultiIndex.from_frame(result)
+        return pd.Index(result[0])
 
-    for filename, sheets in data_dict.items():
-        for sheet_name, df in sheets.items():
-            if len(df) <= min_rows:
-                continue
+    return result
 
-            createdtime = df.attrs.get("createdtime")
-            if createdtime:
-                if createdtime in seen_createdtimes:
-                    existing_filename, existing_sheet_name = seen_createdtimes[
-                        createdtime
-                    ]
-                    existing_df = unique_datasets[existing_filename][
-                        existing_sheet_name
-                    ]
 
-                    # Compare completeness (number of non-null values)
-                    if df.notnull().sum().sum() > existing_df.notnull().sum().sum():
-                        # Replace with the more complete dataset
-                        unique_datasets[existing_filename].pop(existing_sheet_name)
-                        if not unique_datasets[existing_filename]:
-                            unique_datasets.pop(existing_filename)
-                        unique_datasets.setdefault(filename, {})[sheet_name] = df
-                        seen_createdtimes[createdtime] = (filename, sheet_name)
-                    elif (
-                        df.notnull().sum().sum() == existing_df.notnull().sum().sum()
-                        and "loaded" not in sheet_name
-                        and df.attrs.get("createdtimestamp", 0)
-                        != df.attrs.get("changedtimestamp", 1)
-                    ):
-                        # If completeness is the same, keep the dataset with the longer name
-                        if (
-                            existing_sheet_name.startswith(sheet_name)
-                            or len(filename) > len(existing_filename)
-                            or (
-                                len(filename) == len(existing_filename)
-                                and len(sheet_name) > len(existing_sheet_name)
-                            )
-                        ):
-                            unique_datasets[existing_filename].pop(existing_sheet_name)
-                            if not unique_datasets[existing_filename]:
-                                unique_datasets.pop(existing_filename)
-                            unique_datasets.setdefault(filename, {})[sheet_name] = df
-                            seen_createdtimes[createdtime] = (
-                                filename,
-                                sheet_name,
-                            )
-                else:
-                    unique_datasets.setdefault(filename, {})[sheet_name] = df
-                    seen_createdtimes[createdtime] = (filename, sheet_name)
+# Not actively used
+def sort_column_levels(
+    df: pd.DataFrame,
+    level_index: int | list | None = None,
+    return_index: bool = False,
+) -> pd.DataFrame | tuple[pd.DataFrame, list[int]]:
+    """
+    Sorts the levels of a DataFrame's columns based on the number of unique values in each level
+    or a specified level index.
+
+    Parameters:
+    df (pd.DataFrame): The DataFrame to sort.
+    level_index (int or list, optional): Specific level(s) to sort by.
+        Default: sorts by uniqueness.
+    return_index (bool): If True, returns the sorted index instead of the sorted DataFrame.
+
+    Returns:
+    pd.DataFrame or pd.Index: The sorted DataFrame or index.
+    """
+    # Convert columns to a DataFrame for consistent handling
+    columns_df = sanitize_df_col(df)
+
+    # Handle single-level columns
+    if len(columns_df.columns) == 1:
+        if return_index:
+            return df, [0]
+        return df
+
+    sorted_columns = []
+
+    # Sort the columns by the number of unique values in each level
+    if level_index is None:
+        unique_counts = columns_df.nunique()
+        sorted_columns = unique_counts.sort_values().index
+        sorted_df = pd.DataFrame(columns_df[sorted_columns])
+    else:
+        level_index = [level_index] if not isinstance(level_index, list) else level_index
+        try:
+            if any(idx not in columns_df.columns for idx in level_index):
+                sorted_df = pd.DataFrame(columns_df.iloc[:, level_index])
             else:
-                # If no createdtime attribute, keep the dataset
-                unique_datasets.setdefault(filename, {})[sheet_name] = df
+                sorted_df = pd.DataFrame(columns_df[level_index])
+        except Exception as exc:
+            raise ValueError(
+                f"Invalid level index in sort_column_levels: {level_index}. Error: {exc}"
+            ) from exc
 
-    return unique_datasets
+    if isinstance(df, pd.DataFrame):
+        cache = [col if col in df.columns.names else None for col in sorted_df.columns]
+        df = df.copy(deep=True)
+        df.columns = pd.MultiIndex.from_frame(sorted_df, names=cache)
+    if return_index:
+        return df, list(sorted_columns)
+    return df
 
 
-def find_duplicate_datasets(data_dict):
+def get_most_common_keys(
+    columns: PandasLike | PandasKeys | PandasMap,
+    context: PandasLike | PandasKeys | PandasMap | None = None,
+) -> Iterator[Any]:
     """
-    Finds duplicate datasets and returns a dictionary with the necessary information
-    to select all duplicate sets.
+    Iteratively selects the most common key at each level of a MultiIndex,
+    narrowing down the options for subsequent levels. Uses Pandas indexing
+    and sorting methods for improved performance.
 
     Parameters:
-    - data_dict (dict): Dictionary containing datasets.
-      Format: {filename: {sheet_name: pd.DataFrame}}
+    columns (pd.MultiIndex): The MultiIndex columns to analyze.
+    context (pd.MultiIndex, optional): A subset of columns to limit the options for the most common
+                                        key. Defaults to None, in which case it uses the
+                                        original columns.
+
+    Yields:
+    tuple: The most common key for the current level.
+    """
+    # Convert MultiIndex to a DataFrame for easier manipulation
+    columns_df = sanitize_df_col(columns)
+    context_df = sanitize_df_col(context) if context is not None else columns_df.copy(deep=True)
+
+    if all(columns_df.columns != context_df.columns):
+        raise ValueError("Columns and context must have the number of levels")
+
+    for col in columns_df.columns:
+        # Count occurrences of each value in the current col of the original columns
+        level_counts = columns_df[col].value_counts()
+
+        # Filter the context to the current col
+        context_values = context_df[col].unique()
+
+        # Find the most common key within the context
+        most_common_key = level_counts.loc[context_values].idxmax()
+
+        # Yield the most common key for this col
+        yield most_common_key
+
+        # Narrow down the columns and context for the next col
+        columns_df = columns_df[columns_df[col] == most_common_key].drop(columns=[col])
+        context_df = context_df[context_df[col] == most_common_key].drop(columns=[col])
+
+
+@overload
+def evaluate_df_index_key(
+    col: str,
+    clean_map: dict[str, str],
+    sep: str | list | None = None,
+) -> str: ...
+@overload
+def evaluate_df_index_key(
+    col: tuple[str, ...],
+    clean_map: dict[tuple[str, ...], tuple[str, ...]],
+    sep: str | list | None = None,
+) -> tuple[str, ...]: ...
+
+
+def evaluate_df_index_key(
+    col: str | tuple[str, ...],
+    clean_map: dict[Any, Any],
+    sep: str | list | None = None,
+) -> str | tuple[str, ...]:
+    """
+    Helper function to evaluate and complete a tuple based on the base columns and common keys.
+
+    Parameters:
+    col (tuple): The tuple to evaluate.
+    clean_map (dict): Mapping of clean column names.
+    sep (str or list, optional): Separator(s) to use for splitting the string.
 
     Returns:
-    - dict: Dictionary with createdtime as keys and lists of tuples (filename, sheet_name) as values.
+    tuple: The completed tuple.
     """
-    duplicates = {}
+    if isinstance(col, str):
+        return col
+    # Reverse both col and completed_col for simplified reverse iteration
+    eval_col = list(col)[::-1]
+    base_col_df = sanitize_df_col(clean_map)
+    completed_col: list[str] = list(get_most_common_keys(clean_map))[::-1]
 
-    def check_duplicates(old, new):
-        if old is None:
-            return new
-        if (
-            "loaded" not in new.get("name", "")
-            and new.get("time_delta", 0) > 1
-            and (
-                new.get("name", "") >= old.get("name", "")
-                or "loaded" in old.get("name", "")
-            )
-        ):
-            new["duplicates"] = old["duplicates"] + new["duplicates"]
-            new["py_ids"] = old["py_ids"] + new["py_ids"]
-            return new
-        old["duplicates"] = old["duplicates"] + new["duplicates"]
-        old["py_ids"] = old["py_ids"] + new["py_ids"]
-        return old
+    base_col_df = base_col_df[base_col_df.columns[::-1]].T.reset_index(drop=True).T
 
-    for key, val in data_dict.items():
-        if isinstance(val, dict):
-            sub_dict = find_duplicate_datasets(val)
-            for k, v in sub_dict.items():
-                duplicates[k] = check_duplicates(duplicates.get(k), v)
-        elif isinstance(val, pd.DataFrame):
-            if createdtime := val.attrs.get("createdtime"):
-                try:
-                    time_delta = int(val.attrs.get("changedtimestamp", 1)
-                    - val.attrs.get("createdtimestamp", 1))
-                except TypeError:
-                    time_delta = 0
-                duplicates[createdtime] = check_duplicates(
-                    duplicates.get(createdtime),
-                    {
-                        "data": val,
-                        "name": key,
-                        "py_id": val.attrs.get("py_id", id(val)),
-                        "duplicates": [key],
-                        "py_ids": [val.attrs.get("py_id", id(val))],
-                        "time_delta": time_delta,
-                    },
-                )
-    return duplicates
+    # Track available indices in completed_col
+    available_indices = list(range(len(completed_col)))
+
+    if sep and isinstance(sep, str):
+        pattern = re.sub(r"\\+", r"\\", re.escape(sep))
+        sep = [pattern]
+    elif isinstance(sep, (list, tuple)):
+        sep = [re.sub(r"\\+", r"\\", re.escape(s)) for s in sep]
+        pattern = (
+            "("
+            + "|".join(f"{s}(?!.*[{''.join(sep[:i])}])" if i > 0 else s for i, s in enumerate(sep))
+            + ")"
+        )
+    else:
+        sep = [r"\.", r"\-", "/", "_"]
+        # sep = r"(\.|-(?!.*\.)|\/(?!.*[-.])|_(?!.*[\/\-.]))"
+        pattern = r"(\.|\-(?!.*[\.])|/(?!.*[\.\-])|_(?!.*[\.\-/]))"
+
+    highest_sep_priority_used = len(sep) - 1
+    # ignored_split = []
+    # Use a while loop instead of recursion
+    idx = 0
+    while idx < len(eval_col):
+        col_str = eval_col[idx]
+
+        # Check if `.`, `-`, `/`, or `_` is in the string
+        # Then if either of the split parts are in the base_col_df
+        match = re.search(pattern, col_str)
+        if match:
+            split_parts = [s for s in re.split(re.escape(match.group(1)), col_str) if s]
+            #
+            if len(split_parts) > 1:
+                sep_priority = sep.index(match.group(1))
+                if len(split_parts) - 1 <= len(completed_col) - len(eval_col):
+                    if any(part in base_col_df.values for part in split_parts):
+                        # Update the tuple with split parts
+                        eval_col = eval_col[:idx] + split_parts[::-1] + eval_col[idx + 1 :]
+                        # Reset idx to re-evaluate the current position
+                        col_str = eval_col[idx]
+                    # else:
+                    #     ignored_split.append((sep_priority, col_str))
+                elif sep_priority < highest_sep_priority_used:
+                    if any(part in base_col_df.values for part in split_parts):
+                        # Update the tuple with split parts
+                        i = col.index(col_str)
+                        new_col = list(col)[:i] + split_parts + list(col)[i + 1 :]
+                        return evaluate_df_index_key(tuple(new_col), clean_map, sep=sep)
+                    # else:
+                    #     ignored_split.append((sep_priority, col_str))
+
+        # Determine the index (level_idx) where col_str should be placed
+        # Note: If col_str is not in base_col_df.values, level_idx will default to 0
+        if (level_idx := base_col_df.isin([col_str]).any().idxmax()) in available_indices:
+            # Place col_str in the determined index
+            completed_col[level_idx] = col_str
+            # Remove the used index from available_indices
+            available_indices.remove(level_idx)
+        else:
+            # Use the next smallest available index if level_idx is not valid
+            next_idx = available_indices.pop(0)
+            completed_col[next_idx] = col_str
+
+        # Increment idx to move to the next part of col
+        idx += 1
+
+    # Reverse completed_col back to its original order before returning
+    return tuple(completed_col[::-1])
+
 
 @handle_dicts
-def simplify_multi_index(df, keep_keys=None, allow_merge=False, sep="."):
+def rename_columns_with_mapping(
+    df: pd.DataFrame,
+    mapping: PandasMap,
+    **_,
+) -> pd.DataFrame:
+    """
+    Renames columns in a DataFrame based on a provided mapping dictionary.
+
+    Parameters:
+    df (pd.DataFrame): The DataFrame whose columns need to be renamed.
+    mapping (dict): A dictionary mapping old column names to new column names.
+                    Keys are old names, values are new names.
+
+    Returns:
+    pd.DataFrame: The DataFrame with renamed columns.
+    """
+    if not isinstance(df, pd.DataFrame) or not isinstance(mapping, dict):
+        return df
+
+    # Convert columns to a DataFrame for consistent handling
+    columns_df = sanitize_df_col(df.columns)
+
+    # Apply the mapping to rename columns
+    # dict[new_name: tuple[str],
+    # list[tuple[<old matching name>: str | tuple[str], new_name: tuple[str]))]
+    new_columns = {}
+    for col in columns_df.itertuples(index=False, name=None):
+        new_name = mapping.get(
+            col, mapping.get(str(col), mapping.get(col[0], col) if len(col) == 1 else col)
+        )
+        new_name = new_name if isinstance(new_name, tuple) else (new_name,)
+        new_columns.setdefault(len(new_name), []).append((col, new_name))
+
+    # dict[<old matching name>: str | tuple[str], new_name: tuple[str] ]
+    clean_map = {col[0]: col[1] for col in new_columns[max(new_columns.keys())]}
+
+    # insert sorting
+    # Evaluate the other new_column groups excluding the max and 0 in descending order
+    for i in range(len(new_columns) - 1, 0, -1):
+        active_columns = sorted(new_columns[i], key=lambda x: len(str(x[1])), reverse=True)
+
+        # Evaluate each tuple (aka column name)
+        for original_col, col in active_columns:
+            completed_col = evaluate_df_index_key(col, clean_map)
+            # base_columns.append(completed_col)
+            clean_map[original_col] = completed_col
+
+    # restore original order
+    # Update the MultiIndex columns
+    df.columns = pd.MultiIndex.from_tuples(
+        [clean_map[col if isinstance(col, tuple) else (col,)] for col in df.columns]
+    )
+    return df
+
+
+@handle_dicts
+def dataframe_manager(
+    df: pd.DataFrame,
+    simplify: bool = True,
+    columns: list | tuple | dict | None = None,
+    mapping: dict | None = None,
+    **kwargs,
+) -> pd.DataFrame:
+    """Perform simplification of multiindex columns in a DataFrame."""
+    if not isinstance(df, pd.DataFrame):
+        return df
+
+    df = df.copy(deep=True)
+    if isinstance(columns, (tuple, list)):
+        valid_columns = [c for c in columns if c in df.columns]
+        if valid_columns:
+            df = df[valid_columns]
+
+        if isinstance(mapping, dict) and any(col in mapping for col in valid_columns):
+            df = rename_columns_with_mapping(df, mapping)
+    elif isinstance(columns, dict):
+        valid_columns = [c for c in columns if c in df.columns]
+        if valid_columns:
+            df = df[valid_columns]
+        df = rename_columns_with_mapping(df, columns)
+    elif isinstance(mapping, dict):
+        df = rename_columns_with_mapping(df, mapping)
+
+    if simplify:
+        df = simplify_multi_index(df, **kwargs)
+
+    df = df.dropna(
+        how="all",
+        subset=df.columns[df.nunique(dropna=False) >= 2],
+        ignore_index=(
+            True
+            if isinstance(df.index, pd.RangeIndex) or pd.api.types.is_integer_dtype(df.index)
+            else False
+        ),
+    )
+
+    return df
+
+
+# used in parse_files.gui_workers
+@handle_dicts
+def simplify_multi_index(
+    df: pd.DataFrame,
+    keep_keys: list | None = None,
+    allow_merge: bool = False,
+    sep: str = ".",
+    **_,
+) -> pd.DataFrame:
     """Perform simplification of multiindex columns in a DataFrame."""
     if not isinstance(df, pd.DataFrame):
         return df
     if not isinstance(df.columns, pd.MultiIndex):
         return df
+
+    # Flatten MultiIndex index
     if isinstance(df.index, pd.MultiIndex):
         df = df.reset_index(drop=True)
-    
+
+    # Simplify MultiIndex columns
     if isinstance(df.columns, pd.MultiIndex):
         df = simplify_columns(df)
+
+    # Make sure all levels are unique
     df = drop_common_index_key(df, keep_keys, allow_merge)
     df = flatten_multiindex_columns(df, sep)
     return df
 
+
+# only used by simplify_multi_index
 @handle_dicts
-def flatten_multiindex_columns(df, sep="."):
+def flatten_multiindex_columns(
+    df: pd.DataFrame,
+    sep: str = ".",
+) -> pd.DataFrame:
     """
     Flatten MultiIndex columns by merging them with a specified separator.
     """
     if not isinstance(df, pd.DataFrame):
         return df
-    if not isinstance(df.columns, pd.MultiIndex):
-        return df
 
-    # Flatten the MultiIndex columns
-    df.columns = [sep.join(map(str, col)).strip() for col in df.columns.values]
+    # Convert columns to a DataFrame for consistent handling
+    columns_df = sanitize_df_col(df.columns)
+
+    # Flatten the columns
+    df.columns = [
+        sep.join(map(str, col)).strip() for col in columns_df.itertuples(index=False, name=None)
+    ]
 
     return df
 
-# @handle_dicts
-# def drop_common_index_key(df,  keep_keys=None, allow_merge=False):
-#     """Drop levels with all unique names or single unique values."""
-#     if not isinstance(df, pd.DataFrame):
-#         return df
-#     if not isinstance(df.columns, pd.MultiIndex):
-#         return df
-#     keep_keys = keep_keys or []
-#     drop_levels = []
-#     for level in range(df.columns.nlevels):
-#         level_vals = df.columns.get_level_values(level)
-#         if level_vals.is_unique and not keep_keys:
-#             df.columns = level_vals
-#             break
-#         elif df.columns.get_level_values(level).nunique() == 1 and level_vals[0] not in keep_keys:
-#             drop_levels.append(level)
-#         elif allow_merge and level > 0 and all(val.isnumeric() for val in level_vals):
-#             merged_level = [
-#                 f"{prev}_{curr}" for prev, curr in zip(df.columns.get_level_values(level - 1), level_vals)
-#             ]
-#             df.columns = df.columns.set_levels(merged_level, level=level - 1)
-#             drop_levels.append(level)
 
-#     if isinstance(df.columns, pd.MultiIndex) and drop_levels != []:
-#         drop_levels.sort(reverse=True)
-#         for level in drop_levels:
-#             df.columns = df.columns.droplevel(level)
-#     return df
-
+# used by simplify_multi_index and convert_mfia_data of mfia_ops (an important function)
 @handle_dicts
-def drop_common_index_key(df, keep_keys=None, allow_merge=False):
-    """Drop levels with all unique names or single unique values."""
+def drop_common_index_key(
+    df: pd.DataFrame,
+    keep_keys: list | None = None,
+    allow_merge: bool = False,
+) -> pd.DataFrame:
+    """
+    Drop levels with all unique names or single unique values in MultiIndex columns.
+
+    Parameters:
+    df (pd.DataFrame): The DataFrame to process.
+    keep_keys (list, optional): Keys to retain even if they are unique or single-valued.
+    allow_merge (bool, optional): Whether to merge numeric levels.
+
+    Returns:
+    pd.DataFrame: The DataFrame with simplified MultiIndex columns.
+    """
     if not isinstance(df, pd.DataFrame):
         return df
     if not isinstance(df.columns, pd.MultiIndex):
         return df
 
     keep_keys = keep_keys or []
-    new_columns = []
 
-    # Iterate through each level
-    for level in range(df.columns.nlevels):
-        level_vals = df.columns.get_level_values(level)
-        if level_vals.is_unique and not keep_keys:
-            new_columns = level_vals.to_list()
-            break
-        elif df.columns.get_level_values(level).nunique() == 1 and level_vals[0] not in keep_keys:
-            continue
-        elif allow_merge and level > 0 and all(val.isnumeric() for val in level_vals):
-            merged_level = [
-                f"{prev}_{curr}" for prev, curr in zip(df.columns.get_level_values(level - 1), level_vals)
-            ]
-            if new_columns:
-                new_columns.pop()
-            new_columns.append(merged_level)
+    # Convert columns to a DataFrame for consistent handling
+    columns_df = sanitize_df_col(df.columns)
 
-        else:
-            new_columns.append(level_vals.to_list())
+    # Case 1: Handle unique levels upfront
+    unique_mask = columns_df.nunique() == len(columns_df)
+    if unique_mask.any():
+        unique_level = unique_mask.idxmax()  # Get the first unique level
+        unique_values = set(columns_df[unique_level])
 
-    if len(new_columns) == len(df.columns):
-        df.columns = new_columns
+        # Check if keep_keys is empty or all strings in keep_keys are in the unique level
+        if not keep_keys or all(key in unique_values for key in keep_keys):
+            df.columns = columns_df[unique_level]
+            return df
+
+    # Initialize a list to track levels to drop
+    drop_levels = []
+    numeric_level = None
+    # Handle remaining cases in a for loop
+    # for level in range(columns_df.shape[1]):
+    for level in columns_df.columns:
+        level_vals = columns_df[level]
+
+        # Case 2: If the level has a single unique value and it's not in keep_keys, drop this level
+        if level_vals.nunique() == 1 and level_vals.iloc[0] not in keep_keys:
+            drop_levels.append(level)
+
+        # Case 3: If allow_merge is True and the level is numeric, merge it with the previous level
+        elif allow_merge and level_vals.str.isnumeric().all():
+            numeric_level = (
+                level_vals if numeric_level is None else numeric_level + "_" + level_vals
+            )
+            drop_levels.append(level)
+
+        # Case 4: Otherwise, keep this level (do nothing)
+        # No action needed for levels that don't meet the above criteria
+
+    # Drop the identified levels
+    columns_df = columns_df.drop(columns=drop_levels)
+
+    # Check if all levels were dropped
+    if columns_df.empty:
+        return df  # Return the unmodified DataFrame
+
+    # if numeric_level, merge with the first column:
+    if numeric_level is not None:
+        columns_df.iloc[:, 0] = columns_df.iloc[:, 0] + "_" + numeric_level
+
+    # Convert back to MultiIndex or flat index
+    if columns_df.shape[1] == 1:
+        df.columns = pd.Index(columns_df.iloc[:, 0])
     else:
-        df.columns = pd.MultiIndex.from_arrays(new_columns)
+        df.columns = pd.MultiIndex.from_frame(columns_df)
 
     return df
 
+
+# only used by simplify_multi_index
 @handle_dicts
-def simplify_columns(df):
+def simplify_columns(df: pd.DataFrame) -> pd.DataFrame:
     """
     Simplify columns by finding duplicated data and renaming columns in the multi-index.
 
@@ -618,44 +1261,32 @@ def simplify_columns(df):
 
     df = df.copy(deep=True)
 
-    # Identify duplicated columns
-    unchecked_columns = list(df.columns)
+    columns_df = sanitize_df_col(df.columns)
+
     duplicated_columns = {}
-    for col in df.columns:
+    while not columns_df.empty:
+        col = tuple(columns_df.iloc[0])  # Get the first column as a tuple
         duplicated = []
-        if col in unchecked_columns:
-            unchecked_columns.remove(col)
-        for other_col in unchecked_columns:
+
+        # Compare col with the remaining columns
+        for other_col in columns_df.iloc[1:].itertuples(index=False, name=None):
             if df[col].equals(df[other_col]):
                 duplicated.append(other_col)
+
         if duplicated:
-            for dup in duplicated:
-                unchecked_columns.remove(dup)
             duplicated.insert(0, col)
             duplicated_columns[col] = duplicated
 
-    for col, duplicates in duplicated_columns.items():
-        if isinstance(df.columns, pd.MultiIndex):
-            col_df = pd.DataFrame(columns=df.columns)
-            dup_df =  pd.DataFrame(columns=df[duplicates].columns)
-            new_col = []
-            # iterate the levels
-            for _ in range(len(col)):
-                occurrences = Counter(list(col_df.columns.get_level_values(0)))
-                level_val = ""
-                for dup in dup_df.columns.get_level_values(0):
-                    if not level_val:
-                        level_val = dup
-                    elif occurrences[dup] > occurrences[level_val]:
-                        level_val = dup
-
-                new_col.append(level_val)
-                col_df = col_df[level_val]
-                dup_df = dup_df[level_val]
-            new_col = tuple(new_col)
+            # Remove all columns in `duplicated` from `columns_df`
+            columns_df = columns_df[~columns_df.apply(tuple, axis=1).isin(duplicated)]
         else:
-            new_col = col
+            columns_df = columns_df.iloc[1:]
 
+    for col, duplicates in duplicated_columns.items():
+        # Use get_most_common_key to determine the new column name
+        new_col = tuple(get_most_common_keys(df.columns, context=duplicates))
+
+        # Rename and drop duplicates
         if new_col not in df.columns:
             df.rename(columns={col: new_col}, inplace=True)
         if new_col in duplicates:
@@ -664,509 +1295,33 @@ def simplify_columns(df):
 
     return df
 
-# @handle_dicts
-# def simplify_columns2(df, preferred=""):
-#     """
-#     Simplify columns by finding duplicated data and renaming columns in the multi-index.
-
-#     Parameters:
-#     df (pd.DataFrame): The DataFrame to simplify.
-
-#     Returns:
-#     pd.DataFrame: The simplified DataFrame.
-#     """
-#     if not isinstance(df, pd.DataFrame):
-#         return df
-#     if isinstance(preferred, str):
-#         preferred = [preferred]
-#     df = df.copy(deep=True)
-
-#     # Identify duplicated columns
-#     unchecked_columns = list(df.columns)
-#     duplicated_columns = {}
-#     for col in df.columns:
-#         duplicated = []
-#         if col in unchecked_columns:
-#             unchecked_columns.remove(col)
-#         for other_col in unchecked_columns:
-#             if df[col].equals(df[other_col]):
-#                 duplicated.append(other_col)
-#         if duplicated:
-#             for dup in duplicated:
-#                 unchecked_columns.remove(dup)
-#             duplicated.insert(0, col)
-#         duplicated_columns[col] = duplicated
-    
-#     new_df = pd.DataFrame()
-#     for col, duplicates in duplicated_columns.items():
-#         if isinstance(df.columns, pd.MultiIndex):
-#             col_df = pd.DataFrame(columns=df.columns)
-#             dup_df =  pd.DataFrame(columns=df[duplicates].columns)
-#             new_col = []
-#             # iterate the levels
-#             for _ in range(len(col)):
-#                 occurrences = Counter(list(col_df.columns.get_level_values(0)))
-#                 level_val = ""
-#                 for dup in dup_df.columns.get_level_values(0):
-#                     if not level_val:
-#                         level_val = dup
-#                     elif occurrences[dup] > occurrences[level_val]:
-#                         level_val = dup
-
-#                 new_col.append(level_val)
-#                 col_df = col_df[level_val]
-#                 dup_df = dup_df[level_val]
-#             new_col = tuple(new_col)
-#         else:
-#             new_col = col
-
-#         if new_col not in df.columns:
-#             df.rename(columns={col: new_col}, inplace=True)
-#         if new_col in duplicates:
-#             duplicates.remove(new_col)
-#         df.drop(columns=duplicates, inplace=True)
-
-#     return df
-
-                        # duplicated_columns[col].append(col)
-    # duplicated_columns is a dictionary with the 1st duplicated columns as keys and the list of duplicates as values
-
-    # Flatten the list of all strings and their occurrences
-    # if isinstance(df.columns, pd.MultiIndex):
-    #     flat_list = [item for sublist in df.columns for item in sublist]
-    #     occurrences = Counter(flat_list)
-    #     # occurrences = [Counter(sublist) for sublist in df.columns]
-    #     # occurrences = [Counter(df.columns.get_level_values(i)) for i in range(df.columns.nlevels)]
-    # else:
-    #     # flat_list = list(df.columns)
-    #     occurrences = Counter(list(df.columns))
-    # occurrences = Counter(flat_list)
-    # Iterate through duplicated columns
-            # new_col = []
-            # for level in range(len(col)):
-            #     level_vals = [dup[level] for dup in duplicates]
-            #     most_common_val = max(level_vals, key=lambda x: (occurrences[level][x], -duplicates.index(dup)))
-            #     new_col.append(most_common_val)
-            # new_col = []
-            # for level in range(len(col)):
-            #     level_val = duplicates[0][level]
-            #     for dup in duplicates:
-            #         # if occurrences[dup[level]] > occurrences[level_val]:
-            #         if occurrences[level][dup[level]] > occurrences[level][level_val]:
-            #             level_val = dup[level]
-            #     new_col.append(level_val)
-    # for col, vals in df.items():
-    #     new_col = col
-    #     if col in duplicated_columns:
-    #         duplicates = duplicated_columns[col]
-    #         new_col = []
-    #         for i in range(len(col)):
-    #             level_val = duplicates[0][i]
-    #             for dup in duplicates:
-    #                 if occurrences[dup[i]] > occurrences[level_val]:
-    #                     level_val = dup[i]
-    #             new_col.append(level_val)
-    #         new_col = tuple(new_col)
-            
-
-# def simplify_columns(df):
-#     """Simplify columns by finding main level and handling duplicates."""
-#     unique_counts = [
-#         df.columns.get_level_values(level).nunique()
-#         for level in range(df.columns.nlevels)
-#     ]
-#     main_level = unique_counts.index(max(unique_counts))
-
-#     common_keys = []
-#     for level in range(df.columns.nlevels):
-#         if level != main_level:
-#             common_keys.append(
-#                 df.columns.get_level_values(level).value_counts().idxmax()
-#             )
-#         else:
-#             common_keys.append(None)
-#     duplicates = df.columns.get_level_values(main_level).value_counts()
-#     duplicates = [k for k, v in duplicates.items() if v > 1]
-
-#     try:
-#         new_df = pd.DataFrame()
-#         for key in df.columns.get_level_values(main_level):
-#             common_keys.pop(main_level)
-#             common_keys.insert(main_level, key)
-#             if key not in duplicates:
-#                 new_df[key] = df.xs(key, level=main_level, axis=1)
-#             else:
-#                 new_df = handle_duplicates(df, new_df, key, main_level, common_keys)
-#     except KeyError as e:
-#         raise KeyError(
-#             "Error while simplifying multi-index columns. Please check the DataFrame."
-#         ) from e
-#     return new_df
-
-# def handle_duplicates(df, new_df, key, main_level, common_keys):
-#     """Handle duplicates by comparing their data and simplifying columns."""
-#     selectors = [slice(None)] * df.columns.nlevels
-#     selectors[main_level] = key
-#     group = df.loc[:, tuple(selectors)]
-#     main_col = group[tuple(common_keys)]
-#     for col in group.columns:
-#         if not group[col].equals(main_col):
-#             new_df[".".join(col)] = group[col]
-#         elif key not in new_df.columns:
-#             new_df[key] = main_col
-#     return new_df
-
-@handle_dicts
-def simplify_multi_index2(df):
-    """Perform simplification of multiindex columns in a DataFrame."""
-    if not isinstance(df, pd.DataFrame):
-        return df
-    if not isinstance(df.columns, pd.MultiIndex):
-        return df
-    if isinstance(df.index, pd.MultiIndex):
-        df = df.reset_index(drop=True)
-
-    # Check for levels with all unique names and drop them
-    # source of drop_unique_or_single_levels
-    drop_levels = []
-    for level in range(df.columns.nlevels):
-        if df.columns.get_level_values(level).is_unique:
-            df.columns = df.columns.get_level_values(level)
-            break
-        elif df.columns.get_level_values(level).nunique() == 1:
-            drop_levels.append(level)
-
-    if isinstance(df.columns, pd.MultiIndex) and drop_levels != []:
-        for level in drop_levels:
-            df.columns = df.columns.droplevel(level)
-
-    # end prev, source for simplify_columns
-    if isinstance(df.columns, pd.MultiIndex):
-        # Find the level with the most unique column keys
-        unique_counts = [
-            df.columns.get_level_values(level).nunique()
-            for level in range(df.columns.nlevels)
-        ]
-        main_level = unique_counts.index(max(unique_counts))
-
-        # Get the most common column key for each of the other levels
-        # source for get_common_keys
-        common_keys = []
-        for level in range(df.columns.nlevels):
-            if level != main_level:
-                common_keys.append(
-                    df.columns.get_level_values(level).value_counts().idxmax()
-                )
-            else:
-                common_keys.append(None)
-
-        # Find duplicates of the main level and compare their data
-        duplicates = df.columns.get_level_values(main_level).value_counts()
-        duplicates = [k for k, v in duplicates.items() if v > 1]
-
-        try:
-            new_df = pd.DataFrame()
-            for key in df.columns.get_level_values(main_level):
-                common_keys.pop(main_level)
-                common_keys.insert(main_level, key)
-                if key not in duplicates:
-                    new_df[key] = df.xs(key, level=main_level, axis=1)
-                else:
-                    selectors = [slice(None)] * df.columns.nlevels
-                    selectors[main_level] = key
-                    group = df.loc[:, tuple(selectors)]
-                    main_col = group[*common_keys]
-                    for col in group.columns:
-                        if not group[col].equals(main_col):
-                            new_df[".".join(col)] = group[col]
-                        elif key not in new_df.columns:
-                            new_df[key] = main_col
-        except KeyError as e:
-            breakpoint()
-            raise KeyError(
-                "Error while simplifying multi-index columns. Please check the DataFrame."
-            ) from e
-        df = new_df
-    return df
-
 
 @handle_subdicts
-def impedance_concat(raw_data):
-    """Perform Concat on DataFrames in a dictionary."""
-    data = {
-        k: v for k, v in raw_data.items() if isinstance(v, (pd.DataFrame, pd.Series))
-    }
+def impedance_concat(raw_data: dict) -> pd.DataFrame:
+    """
+    Perform Concat on DataFrames in a dictionary.
+
+    Parameters:
+    raw_data (dict): Dictionary containing DataFrames to concatenate.
+
+    Returns:
+    pd.DataFrame: Concatenated DataFrame.
+    """
+    data = {k: v for k, v in raw_data.items() if isinstance(v, (pd.DataFrame, pd.Series))}
     comb = pd.concat(data.values(), sort=False, keys=data.keys())
     try:
         if isinstance(comb.columns, pd.MultiIndex):
             freq_col = get_close_matches("freq", comb.columns.get_level_values(1))
             if not freq_col:
                 return comb
-            return comb.sort_values(
-                [
-                    (
-                        "imps",
-                        freq_col[0],
-                        # str_in_list("freq", comb.columns.get_level_values(1)),
-                    )
-                ]
-            )
+            return comb.sort_values(("imps", freq_col[0]))
         else:
             freq_col = get_close_matches("freq", comb.columns)
             if not freq_col:
                 return comb
-            return comb.sort_values(
-                freq_col,
-                ignore_index=True,
-                # str_in_list("freq", comb.columns), ignore_index=True
-            )
+            return comb.sort_values(freq_col, ignore_index=True)
     except KeyError:
         return comb
 
 
-class TypeList(list):
-    """Class to create a list with 'type' information."""
-
-    def __init__(self, values):
-        super().__init__(values)
-
-    def of_type(self, *item_type):
-        """Return a list of items of the given type."""
-        if len(item_type) == 0:
-            return self
-        if len(item_type) == 1:
-            item_type = item_type[0]
-        if isinstance(item_type, str):
-            return [
-                item for item in self if item_type.lower() in str(type(item)).lower()
-            ]
-        elif isinstance(item_type, type) or (
-            isinstance(item_type, tuple) and all(isinstance(i, type) for i in item_type)
-        ):
-            return [item for item in self if isinstance(item, item_type)]
-        return []
-
-
-def moving_average(arr, w=2, logscale=False):
-    """
-    Computes the moving average of an array.
-
-    This function calculates the moving average of the input array `arr` with a specified
-    window size `w`. If `logscale` is True, the logarithm (base 10) of the array values is
-    used for the calculation. The function handles edge cases by adjusting the window size
-    and returns the result as a list of floats.
-
-    Parameters:
-    arr (list or np.ndarray): The input array to compute the moving average for.
-    w (int, optional): The window size for the moving average. Default is 2.
-    logscale (bool, optional): If True, computes the moving average on the logarithm (base 10)
-                               of the array values. Default is False.
-
-    Returns:
-    list of float: The moving average of the input array.
-    """
-    if logscale:
-        arr = np.log10([a if a > 0 else 1e-30 for a in arr])
-    res = list(np.convolve(arr, np.ones(w), "valid") / w)
-    w -= 1
-    while w >= 1:
-        if w % 2:
-            res.append((np.convolve(arr, np.ones(w), "valid") / w)[-1])
-        else:
-            res.insert(0, (np.convolve(arr, np.ones(w), "valid") / w)[0])
-        w -= 1
-    if logscale:
-        return [float(10**f) for f in res]
-    return [float(f) for f in res]
-
-
-def hz_label(
-    data,
-    test_arr=None,
-    prec=2,
-    kind="eng",
-    space=" ",
-    postfix="Hz",
-    label_rc=True,
-    targ_col="frequency",
-    test_col="imag",
-    new_col="flabel",
-):
-    """
-    Generates frequency labels for MFIA data.
-
-    This function creates a new column in the provided DataFrame or processes a numpy array
-    to generate frequency labels based on the specified parameters. It uses the target column
-    for frequency values and the test column for additional calculations.
-
-    Parameters:
-    data (pd.DataFrame or np.ndarray): The data to process. If a DataFrame, it should contain
-                                       the target and test columns.
-    test_arr (np.ndarray, optional): An array for additional calculations. If not provided,
-                                     it is computed using a moving average of the test column.
-    prec (int, optional): The precision for the frequency labels. Default is 2.
-    kind (str, optional): The format kind for the labels ('eng' for engineering notation). Default is "eng".
-    space (str, optional): The space between the number and the postfix. Default is " ".
-    postfix (str, optional): The postfix for the frequency labels. Default is "Hz".
-    label_rc (bool, optional): If True, labels are generated in reverse order. Default is True.
-    targ_col (str, optional): The name of the target column for frequency values in the DataFrame. Default is "frequency".
-    test_col (str, optional): The name of the test column for additional calculations in the DataFrame. Default is "imag".
-    new_col (str, optional): The name of the new column to store the generated labels in the DataFrame. Default is "flabel".
-
-    Returns:
-    pd.DataFrame or np.ndarray: The DataFrame with the new column of frequency labels, or the processed numpy array.
-    """
-    if isinstance(data, pd.DataFrame):
-        # targ_col = str_in_list(targ_col, data.columns)
-        # test_col = str_in_list(test_col, data.columns)
-        targ_col = get_close_matches(targ_col, data.columns)
-        test_col = get_close_matches(test_col, data.columns)
-
-        if targ_col and test_col:
-            targ_col = targ_col[0]
-            test_col = test_col[0]
-            # if targ_col not in data.columns or test_col not in data.columns:
-            #     return data
-            data[new_col] = hz_label(
-                data[targ_col].to_numpy(),
-                test_arr=moving_average(-1 * data[test_col].to_numpy(), 5, True),
-                prec=prec,
-                kind=kind,
-                space=space,
-                postfix=postfix,
-                label_rc=label_rc,
-            )
-        return data
-    # if isinstance(data, pd.Series)
-    base = [float(10 ** (np.floor(np.log10(a)))) if a > 0 else 0 for a in data]
-    base_diff = np.diff(base)
-
-    res = [np.nan] * len(data)
-
-    for n, value in enumerate(data):
-        if value == 0:
-            continue
-        elif n == 0 or base_diff[n - 1] != 0:
-            res[n] = str(eng_not(base[n], 0, kind, space)) + postfix
-            if (
-                label_rc
-                and isinstance(test_arr, (list, np.ndarray))
-                and test_arr[n] == max(abs(np.array(test_arr)))
-            ):
-                res[n] = res[n] + " (RC)"
-        elif (
-            label_rc
-            and isinstance(test_arr, (list, np.ndarray))
-            and test_arr[n] == max(abs(np.array(test_arr)))
-        ):
-            try:
-                if len(kind) > 2 and "exp" in kind.lower():
-                    res[n] = "RC (f=" + eng_not(data[n], prec, "eng", " ") + "Hz)"
-                else:
-                    res[n] = "RC (f=" + eng_not(data[n], prec, kind, space) + "Hz)"
-            except TypeError:
-                return res
-    return res
-
-
-def apply_extend(start, stop, count, extend_by=0, extend_to=None, logscale=True):
-    if logscale:
-        start = np.log10(start)
-        stop = np.log10(stop)
-        extend_to = (
-            np.log10(extend_to)
-            if isinstance(extend_to, (int, float)) and extend_to > 0
-            else None
-        )
-
-    # Calculate delta
-    delta = np.diff(np.linspace(start, stop, count)).mean()
-
-    # Apply extend_by logic
-    if extend_by < 0:
-        start += delta * extend_by
-    elif extend_by > 0:
-        stop += delta * extend_by
-
-    # Apply extend_to logic
-    if extend_to is not None and isinstance(extend_to, (int, float)):
-        if extend_to < start:
-            start = start + delta * (1 + (extend_to - start) // delta)
-        elif extend_to > stop:
-            stop = stop + delta * ((extend_to - stop) // delta)
-
-    # Update count based on new start and stop
-    count = int(np.ceil((stop - start) / delta)) + 1
-
-    return start, stop, count
-
-
-def shiftspace(start, stop, num=50, shift=0, logscale=True, as_exp=False):
-    if logscale:
-        start = np.log10(start)
-        stop = np.log10(stop)
-
-    delta = np.diff(np.linspace(start, stop, num)).mean()
-
-    new_start = start - delta * shift
-    new_stop = stop + delta * shift
-
-    if logscale and not as_exp:
-        return float(10**new_start), float(10**new_stop), int(num + 2 * shift)
-
-    return new_start, new_stop, int(num + 2 * shift)
-
-
-def range_maker(
-    start,
-    stop,
-    points_per_decade=24,
-    shift=0,
-    is_exp=False,
-    fmt="mfia",
-    extend_by=0,
-    extend_to=None,
-):
-    if not is_exp:
-        start = np.log10(start)
-        stop = np.log10(stop)
-        extend_to = (
-            np.log10(extend_to)
-            if isinstance(extend_to, (int, float)) and extend_to > 0
-            else None
-        )
-    count = int(1 + points_per_decade * abs(start - stop))
-    start, stop, count = shiftspace(start, stop, count, shift, False, True)
-
-    start, stop, count = apply_extend(
-        start, stop, count, extend_by, extend_to, logscale=False
-    )
-
-    if fmt.lower() in ["numpy", "np"]:
-        return start, stop, count
-    return {"start": float(10**start), "stop": float(10**stop), "samplecount": count}
-
-
-# def extendspace(start, stop, num=50, ext=0, logscale=True, as_exp=False):
-#     if logscale:
-#         start = np.log10(start)
-#         stop = np.log10(stop)
-
-#     delta = np.diff(np.linspace(start, stop, num)).mean()
-
-#     new_start = start - delta * ext
-#     new_stop = stop + delta * ext
-
-#     if logscale and not as_exp:
-#         return 10**new_start, 10**new_stop, int(num + 2 * ext)
-
-#     return new_start, new_stop, int(num + 2 * ext)
-
-
-# def range_maker(start, stop, points_per_decade=24, ext=0, is_exp=False):
-#     if not is_exp:
-#         start = np.log10(start)
-#         stop = np.log10(stop)
-#     count = int(1 + points_per_decade * abs(start - stop))
-#     start, stop, count = extendspace(start, stop, count, ext, False, True)
-#     return {"start": 10**start, "stop": 10**stop, "samplecount": count}
+# ARCHIVE

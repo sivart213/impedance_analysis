@@ -1,18 +1,19 @@
+import time
+import threading
+import xml.etree.ElementTree as ET
+from typing import Any
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from zhinst.toolkit import Session
-import matplotlib.pyplot as plt
-import time
-import xml.etree.ElementTree as ET
-from pathlib import Path
-import threading
+
 try:
     from ..string_ops import safe_eval
 except ImportError:
     from eis_analysis.string_ops.string_mod import safe_eval
 
-#%% Functions
+# %% Functions
 # def plot_measured_data(sweep_data: dict, **kwargs):
 #     """Plot the sweep data in bode plot."""
 #     _, (ax1, ax2) = plt.subplots(2, 1)
@@ -35,31 +36,34 @@ except ImportError:
 #     plt.draw()
 #     plt.show()
 
-# 
+#
 
 special_xml_dict = {
     "log": "xmapping",
     "fileformat": "savefileformat",
     "savemode": "savesave",
-
-    "bandwidthMode": ("bandwidthcontrol", lambda x: abs(x-2)),
+    "bandwidthMode": ("bandwidthcontrol", lambda x: abs(x - 2)),
     "filterorder": "order",
-
     "mask": "bitmask",
     "absoluteFrequency": "fftabsolute",
     "holdoff": "holdofftime",
-
 }
+
 
 class tkMFIA:
     """Class to initialize and operate the MFIA tool using zhinst toolkit."""
 
-    def __init__(self, server_host, device_name, interface="1GbE", settings_file=None):
+    def __init__(
+        self,
+        server_host: str,
+        device_name: str,
+        interface: str = "1GbE",
+        settings_file: str | Path | None = None,
+    ):
         self.server_host = server_host
         self.device_name = device_name
         self.interface = interface
         self.settings_file = settings_file
-        
 
         self.session = Session(server_host)
         self.device = self.session.connect_device(device_name, interface=interface)
@@ -70,11 +74,15 @@ class tkMFIA:
         self._sweepers = []
         self._daqs = []
 
-    def load_device_settings(self, settings_file=None, modules=None, asynchronous=False):
+    def load_device_settings(
+        self, settings_file: str | Path | None = None, modules=None, asynchronous=False
+    ):
         settings_file = settings_file or self.settings_file
+        if isinstance(settings_file, str):
+            settings_file = Path(settings_file)
         if settings_file:
             if asynchronous:
-                device_settings = self.session.modules.device_settings
+                device_settings: Any = self.session.modules.device_settings
                 device_settings.device(self.device)
                 device_settings.filename(settings_file.stem)
                 device_settings.path(settings_file.parent)
@@ -84,7 +92,7 @@ class tkMFIA:
 
                 device_settings.finished.wait_for_state_change(1)
             else:
-                self.session.modules.device_settings.load_from_file(settings_file, self.device)
+                self.session.modules.device_settings.load_from_file(settings_file, self.device)  # type: ignore
         if modules:
             n_swp = 0
             n_daq = 0
@@ -98,7 +106,7 @@ class tkMFIA:
                         module = self.daq
                         self.load_module_settings(module, mod, settings_file, n_daq)
                         n_daq += 1
-    
+
     @property
     def sweepers(self):
         return self._sweepers
@@ -115,8 +123,14 @@ class tkMFIA:
     def daq(self):
         return self._daqs[0] if self._daqs else self.gen_daq()
 
-    def parse_module_settings(self, in_file=None, node_name=None, instance=0, **kwargs):
+    def parse_module_settings(
+        self, in_file: str | Path | None = None, node_name: str = "", instance=0, **kwargs
+    ):
         in_file = in_file or self.settings_file
+        if isinstance(in_file, str):
+            in_file = Path(in_file)
+        if not in_file or not in_file.exists():
+            raise FileNotFoundError(f"Settings file {in_file} does not exist.")
         tree = ET.parse(in_file)
         root = tree.getroot()
 
@@ -134,23 +148,22 @@ class tkMFIA:
                 node = nodes[-1]
         else:
             return settings_dict
-        
+
         kwargs = {**special_xml_dict, **kwargs}
 
         if node is not None:
             for child in node:
-                settings_dict[child.tag] = safe_eval(child.text)
-                
+                settings_dict[child.tag] = safe_eval(child.text)  # type: ignore
+
                 if isinstance(settings_dict[child.tag], bool):
                     settings_dict[child.tag] = int(settings_dict[child.tag])
-                
+
         for key, value in kwargs.items():
             if key in settings_dict.keys():
                 if isinstance(value, tuple):
                     settings_dict[value[0]] = value[1](settings_dict.pop(key))
                 else:
                     settings_dict[value] = settings_dict.pop(key)
-        
 
         return settings_dict
 
@@ -161,7 +174,7 @@ class tkMFIA:
     #                 targ_dict[mkey] = xvalue
     #                 break
     #     return targ_dict
-    
+
     def cofigure_module(self, module, ref_dict):
         targ_dict = module.raw_module.get("*", flat=True)
         update_list = []
@@ -175,11 +188,12 @@ class tkMFIA:
 
     def get_children(self, objs):
         flat_dict = {}
-        ign = ['node_info', 'raw_tree', 'root']
-        def process_obj(obj, parent=''):
+        ign = ["node_info", "raw_tree", "root"]
+
+        def process_obj(obj, parent=""):
             if obj.node_info.is_partial:
                 for attr in dir(obj):
-                    if not attr.startswith('_') and attr not in ign:
+                    if not attr.startswith("_") and attr not in ign:
                         process_obj(obj[attr], f"{parent}/{attr}")
             else:
                 try:
@@ -192,16 +206,16 @@ class tkMFIA:
 
     def load_module_settings(self, module, module_name, settings_file=None, instance=0):
         settings_file = settings_file or self.settings_file
-        
+
         # module_settings = self.get_children(module)
         # module_settings = module.raw_module.get("*", flat=True)
         xml_dict = self.parse_module_settings(settings_file, module_name, instance)
         # update_dict = self.update_module_dict(xml_dict, module_settings)
         self.cofigure_module(module, xml_dict)
-    
+
     # def load_module_settings(self, module, module_name, settings_file=None, instance=0):
     #     settings_file = settings_file or self.settings_file
-        
+
     #     # module_settings = self.get_children(module)
     #     module_settings = module.raw_module.get("*", flat=True)
     #     xml_dict = self.parse_module_settings(settings_file, module_name, instance)
@@ -222,7 +236,7 @@ class tkMFIA:
     #             print(f"KeyError setting {key}: {e}")
     #             continue
 
-    def gen_sweeper(self, sweeper=None, configure=True, settings_file=None):
+    def gen_sweeper(self, sweeper: Any = None, configure=True, settings_file=None):
         if sweeper is None:
             sweeper = self.session.modules.sweeper
         sweeper.device(self.device)
@@ -231,9 +245,8 @@ class tkMFIA:
             self.load_module_settings(sweeper, "sweeper", settings_file)
         self._sweepers.append(sweeper)
         return sweeper
-        
-    
-    def gen_daq(self, daq=None, configure=True, settings_file=None):
+
+    def gen_daq(self, daq: Any = None, configure=True, settings_file=None):
         if daq is None:
             daq = self.session.modules.daq
         daq.device(self.device)
@@ -241,6 +254,7 @@ class tkMFIA:
             self.load_module_settings(daq, "data_acquisition", settings_file)
         self._daqs.append(daq)
         return daq
+
 
 class tkMFIA_Sweep:
     """Class to perform frequency sweeps using tkMFIA."""
@@ -250,7 +264,7 @@ class tkMFIA_Sweep:
         self.sample_nodes = sample_nodes or [
             f"/{tk_mfia.device_name}/imps/0/sample",
             f"/{tk_mfia.device_name}/demods/0/sample",
-            f"/{tk_mfia.device_name}/demods/1/sample"
+            f"/{tk_mfia.device_name}/demods/1/sample",
         ]
         self.result = None
         self._thread = None
@@ -290,7 +304,8 @@ class tkMFIA_Sweep:
                     {k: v for k, v in sv[0][0].items() if isinstance(v, np.ndarray)},
                     dtype=np.float64,
                 )
-                for sk, sv in self.data.items() if isinstance(sv, list)
+                for sk, sv in self.data.items()
+                if isinstance(sv, list)
             },
             axis=1,
         )
@@ -312,8 +327,8 @@ class tkMFIA_Sweep:
 
 
 if __name__ == "__main__":
-# Example usage
-    host = '10.155.7.96'
+    # Example usage
+    host = "10.155.7.96"
     settings_path = Path(r"D:\Online\ASU Dropbox\Jacob Clenney\Work Docs\Data\Raw\MFIA\setting")
     swpfile = "JC_all_settings_v10swp.xml"
     daqfile = "JC_all_settings_v10daq.xml"
@@ -325,7 +340,7 @@ if __name__ == "__main__":
     mfia.gen_daq()
 
     mfia.sweeper.start(4e3)
-    mfia.sweeper.stop(500e3) # 500e3 for MF devices, 50e6 for others
+    mfia.sweeper.stop(500e3)  # 500e3 for MF devices, 50e6 for others
 
     kt_sweep = tkMFIA_Sweep(mfia)
     kt_sweep.sweep()
@@ -435,7 +450,7 @@ if __name__ == "__main__":
 #     sweeper[key](value)
 
 # daq = session.modules.daq
-# daq.device(device) 
+# daq.device(device)
 # daq_settings = get_children(daq)
 # xml_daq_dict = parse_module_settings(filename, "data_acquisition")
 # update_dict = update_module_dict(xml_daq_dict, daq_settings)

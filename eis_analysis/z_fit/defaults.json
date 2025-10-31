@@ -9,62 +9,171 @@
     "export_dir": {
         "__path__": "~/Documents"
     },
-    "plot_types": [
-            "Z",
-            "Y",
-            "M",
-            "C",
-            "ε",
-            "εᵣ",
-            "σ",
-            "ρ"
-    ],
-    "var_val": {
-        "Z": "impedance",
-        "Y": "admittance",
-        "M": "modulus",
-        "C": "capacitance",
-        "ε": "permittivity",
-        "εᵣ": "relative_permittivity",
-        "σ": "conductivity",
-        "ρ": "resistivity",
-        "Real": "real",
-        "Imag": "imag",
-        "+Imag": "pos_imag",
-        "Mag": "mag",
-        "Θ": "phase",
-        "tan(δ)": "tan"
+    "error_var": "Mean Abs Err",
+    "sel_error_var": "Z",
+    "afit_inputs": {
+        "Match String": {
+            "default": "fit",
+            "tooltip": "A regex string to match datasets to fit."
+        },
+        "New Name Suffix": {
+            "default": "fit",
+            "tooltip": "The suffix to append to the dataset name (should not include number)."
+        },
+        "Fit Type": {
+            "default": "Normal",
+            "tooltip": "The type of fit to perform.",
+            "widget": "QComboBox",
+            "limits": [
+                "Normal",
+                "Iterative",
+                "Bootstrap"
+            ]
+        },
+        "Iterations": {
+            "default": 10,
+            "tooltip": "The number of iterations to perform for Iterative or Bootstrap fitting.",
+            "widget": "QSpinBox",
+            "limits": [
+                1,
+                100000,
+                1
+            ]
+        },
+        "Fit All Datasets": {
+            "default": false,
+            "tooltip": "Forces a fit of all datasets. Ignores pinned data and uses the current model.",
+            "widget": "QCheckBox"
+        },
+        "Use Current Model": {
+            "default": false,
+            "tooltip": "Whether to use the current model or the pin-specific models.",
+            "widget": "QCheckBox"
+        },
+        "Use Locked Parameter Value": {
+            "default": false,
+            "tooltip": "Whether to use the parameter value or the pinned value (if available) as the constant.",
+            "widget": "QCheckBox"
+        },
+        "Respect Bound Locks": {
+            "default": false,
+            "tooltip": "Whether to shift locked bounds for new initial guess conflicts.",
+            "widget": "QCheckBox"
+        },
+        "Fit Parameters Separately": {
+            "default": false,
+            "tooltip": "Whether to fit each parameter separately (ie sequentially).",
+            "widget": "QCheckBox"
+        },
+        "Value Override": {
+            "default": "",
+            "tooltip": "Redefine any parameters (in dict notation) to be applied to all fits. Note that this only changes the start point."
+        }
     },
-    "var_scale": {
-        "Real": "lin",
-        "Imag": "lin",
-        "+Imag": "log",
-        "Mag": "log",
-        "Θ": "deg",
-        "tan(δ)": "lin"
+    "plot_var": {
+        "ny_x": "Z'",
+        "ny_y": "-Z''",
+        "bd_x": "Frequency",
+        "bd_y1": "Z'",
+        "bd_y2": "Z''"
+    },
+    "is_log": {
+        "ny_x": false,
+        "ny_y": false,
+        "bd_x": true,
+        "bd_y1": false,
+        "bd_y2": false
     },
     "var_units": {
-        "Z": "[$\\Omega$]",
-        "Y": "[S]",
-        "M": "[cm/F]",
-        "C": "[F]",
-        "ε": "[F/cm]",
-        "εᵣ": "[1]",
-        "σ": "[S/cm]",
-        "ρ": "[$\\Omega$ cm]"
+        "f": "Hz",
+        "\u03C9": "rad/s",
+        "\u03c3_dc": "S/cm",
+        "Z": "\u03A9",
+        "Y": "S",
+        "M": "cm/F",
+        "C": "F",
+        "\u03b5\u1d63": "1",
+        "\u03b5\u1d63_dc": "1",
+        "\u03c3": "S/cm",
+        "\u03c1": "\u03A9 cm",
+        "\u03c3_dc": "S/cm"
     },
     "option_inits": {
-        "simulation": {
+        "general": {
+            "additional_save_forms": "e_r",
+            "save_current_parameters": true,
+            "save_current_profile": true,
+            "save_pinned_results": true,
+            "include_unfit_datasets": false,
+            "error_forms": [
+                "Z.real",
+                "Z.imag"
+            ],
+            "backup pins": true,
+            "number of backups": 10,
+            "backup path ('~' == home dir)": "~/Documents/z_fit/backups",
             "limit_error": true,
+            "debounce_interval": 2000
+        },
+        "plotting": {
+            "style": "seaborn-v0_8-darkgrid",
+            "background": "",
+            "always plot to fullrange": false,
+            "allow inv log": false,
+            "suplots: use numbers": false,
+            "suplots: shift by real": true,
+            "suplots: shift using max": true,
+            "window padding": 0.2,
+            "outlier percent": 0,
+            "inversion threshold": 0.95,
+            "plot1 as nyquist": true,
+            "Data options": {
+                "s": 30,
+                "alpha": 1,
+                "zorder": 1,
+                "a_kwargs": {
+                    "mag_off": 0.05
+                }
+            },
+            "Model options": {
+                "color": "red",
+                "alpha": 0.95,
+                "zorder": 2
+            },
+            "Sub Model options": {
+                "cmap": "autumn",
+                "linestyle": "--",
+                "alpha": 0.95,
+                "zorder": 2
+            },
+            "connect points": {
+                "show": true,
+                "color": "grey",
+                "alpha": 0.5,
+                "linestyle": "--",
+                "linewidth": 0.75,
+                "zorder": 0
+            }
+        },
+        "simulation": {
             "sim_param_freq": true,
             "interp": true,
             "freq_start": -4.5,
             "freq_stop": 7,
             "freq_num": 200,
-            "dx": 0,
-            "area (cm^2)": 25,
-            "thickness (cm)": 0.045,
-            "interval": 0.1
+            "area": 25,
+            "thickness": 0.045,
+            "savgol_kwargs": {
+                "window_length": 5,
+                "polyorder": 3
+            },
+            "interp_kwargs": {
+                "old_x": "freq"
+            },
+            "norm_kwargs": {
+                "normalize_to":  "f@10**6",
+                "x_array": "freq"
+            }
         },
         "bands": {
             "band_color": "gray",
@@ -80,11 +189,17 @@
             "function": "least_squares",
             "type": "impedance",
             "modes": ["real", "imag", "mag"],
+            "Rs": "",
             "f_max": 1e7,
             "f_min": 1e-6,
             "scale": "linear",
-            "weight_by_modulus": true,
-            "bootstrap_percent": 95
+            "weight_by_mode": "mag",
+            "bootstrap_percent": 95,
+            "prioritize_bounds": false,
+            "rebound_before_fit": false,
+            "resort_by_RC": false,
+            "sequential_fit": false,
+            "sequential_fit_update": false
         },
         "curve_fit": {
             "absolute_sigma": false,
@@ -152,13 +267,17 @@
             "f_min": 0.000001,
             "c": 0.5,
             "max_M": 200,
-            "add_cap": false
+            "add_cap": false,
+            "fit_type": "complex"
         },
         "element": {
             "R": 1000000000.0,
             "C": 0.0000000001,
             "CPE": [0.0000000001, 1],
-            "L": 100
+            "ICPE": [1000000000.0, 0],
+            "L": 100,
+            "W": 10000,
+            "K": [1000000000.0, 1]
         },
         "element_range": {
             "R": [
@@ -181,11 +300,43 @@
                     1
                 ]
             ],
+            "ICPE": [
+                [
+                    0,
+                    {
+                    "__invalid_float__": "inf"
+                }
+                ],
+                [
+                    -1,
+                    1
+                ]
+            ],
             "L": [
                 0,
                 {
                     "__invalid_float__": "inf"
                 }
+            ],
+            "W": [
+                0,
+                {
+                    "__invalid_float__": "inf"
+                }
+            ],
+            "K": [
+                [
+                    0,
+                    {
+                    "__invalid_float__": "inf"
+                }
+                ],
+                [
+                    0,
+                    {
+                    "__invalid_float__": "inf"
+                }
+                ]
             ]
         }
     }

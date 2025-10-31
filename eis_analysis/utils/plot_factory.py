@@ -13,226 +13,74 @@ Provide any or all of the following:
 @author: j2cle
 Created on Thu Oct  3 15:05:23 2024
 """
+import re
+import logging
 from abc import ABC, abstractmethod
+from typing import Any
+from collections import OrderedDict
+
 import numpy as np
 import pandas as pd
-import logging
+import matplotlib.lines as mlines
+import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
+from numpy.typing import ArrayLike
+from scipy.signal import find_peaks
+from matplotlib.axes import Axes
+from matplotlib.colors import Normalize
 from matplotlib.ticker import ScalarFormatter
+from matplotlib.widgets import Cursor
 from matplotlib.collections import PathCollection, PolyCollection
-
-from impedance.models.circuits.fitting import wrapCircuit
 
 logger = logging.getLogger(__name__)
 
 np.seterr(all="raise")
 
+
 def log_exceptions(func):
     """Decorator to log exceptions in a function."""
+
     def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
         except (FloatingPointError, RuntimeWarning) as e:
             logger.error("Error in %s: %s", func.__name__, e)
+
     return wrapper
 
 
-class RCCircuit:
-    """Class to create a test dataset for RC circuit fitting."""
+def rounded_floats(arr, as_exp: bool = False) -> np.ndarray:
+    """
+    Given an array of positive values, return the rounded decade exponents.
+    Rule: mantissa < 5 → round down, mantissa >= 5 → round up.
+    """
+    arr = np.asarray(arr, dtype=float)
+    if np.any(arr <= 0):
+        raise ValueError("All values must be positive")
 
-    def __init__(
-        self,
-        freq=(-3, 6, 100),
-        true_values=None,
-        noise=0.01,
-        guess_range=0.9,
-        bounds_range=2,
-    ):
-        self._Z = None
-        self._true_values = (
-            true_values
-            if true_values is not None
-            else [101.56e3, 10.210e4, 142.453e-7]
-        )
-        self.freq = freq
-        self._noise = noise  # Default noise multiplier
-        self._guess_range = guess_range  # Default initial guess multiplier
-        self._bounds_range = bounds_range  # Default bounds multiplier
+    exp = np.floor(np.log10(arr)).astype(int)
+    mant = arr / (10.0**exp)
 
-    @property
-    def model(self):
-        return "R1-p(R2,C2)"
+    # Apply rule: if mant >= 5, bump exponent
+    rounded_exp = exp + (mant >= 5)
 
-    @property
-    def true_values(self):
-        return self._true_values
-
-    @true_values.setter
-    def true_values(self, value):
-        if len(value) != 3:
-            raise ValueError("true_values must be of length 3")
-        self._true_values = value
-        self._Z = None  # Invalidate Z to regenerate it
-        # self.Z
-
-    @property
-    def freq(self):
-        return self._freq
-
-    @freq.setter
-    def freq(self, value):
-        if isinstance(value, (list, tuple)) and len(value) == 3:
-            self._freq = np.logspace(value[0], value[1], num=int(value[2]))
-        else:
-            self._freq = value
-        self._Z = None  # Invalidate Z to regenerate it
-        # self.Z
-
-    @property
-    def Z(self):
-        if self._Z is None:
-            Z = np.array(
-                np.hsplit(self.circuit_func(self._freq, *self._true_values), 2)
-            ).T
-            self._Z = Z[:, 0] + 1j * Z[:, 1]
-        return self._Z
-
-    @property
-    def Z_noisy(self):
-        if self._Z is not None:
-            np.random.seed(0)
-            noise_real = np.random.normal(
-                0, self._noise * abs(self.Z), size=self.Z.real.shape
-            )
-            noise_imag = np.random.normal(
-                0, self._noise * abs(self.Z), size=self.Z.imag.shape
-            )
-            return self.Z + noise_real + 1j * noise_imag
-        return None
-
-    @Z_noisy.setter
-    def Z_noisy(self, value):
-        if not isinstance(value, (int, float)):
-            raise ValueError("Z_noisy multiplier must be an int or float")
-        self._noise = value
-
-    @property
-    def initial_guess(self):
-        return [v * self._guess_range for v in self._true_values]
-
-    @initial_guess.setter
-    def initial_guess(self, value):
-        if not isinstance(value, (int, float)):
-            raise ValueError(
-                "Initial guess multiplier must be an int or float"
-            )
-        self._guess_range = value
-
-    @property
-    def bounds(self):
-        lower_bounds = [v / self._bounds_range for v in self._true_values]
-        upper_bounds = [v * self._bounds_range for v in self._true_values]
-        return (lower_bounds, upper_bounds)
-
-    @bounds.setter
-    def bounds(self, value):
-        if not isinstance(value, (int, float)):
-            raise ValueError("Bounds multiplier must be an int or float")
-        self._bounds_range = value
-
-    @property
-    def circuit_func(self):
-        try:
-            return wrapCircuit(self.model, {})
-        except ImportError:
-            raise ImportError(
-                "Please install the impedance package and import wrapCircuit using: "
-                "from impedance.models.circuits.fitting import wrapCircuit"
-            )
-
-    @property
-    def Z_hstack(self):
-        if self._Z is None:
-            return None
-        return np.hstack([self.Z.real, self.Z.imag])
-
-    @property
-    def Z_noisy_hstack(self):
-        if self._Z is None:
-            return None
-        return np.hstack([self.Z_noisy.real, self.Z_noisy.imag])
-
-    @property
-    def lsq_kwargs(self):
-        return {
-            # "absolute_sigma": False,
-            # "check_finite": None,
-            "method": "trf",
-            "jac": "3-point",
-            "x_scale": "jac",
-            "ftol": 1e-14,
-            "xtol": 1e-8,
-            "gtol": 1e-8,
-            "loss": "cauchy",
-            "diff_step": None,
-            "tr_solver": None,
-            "tr_options": {},
-            "jac_sparsity": None,
-            "verbose": 1,
-            "max_nfev": 1e6,
-        }
-
-    @property
-    def objective(self):
-        circuit_func = self.circuit_func
-
-        def minimizer(params, f, Z_data):
-            Z0 = np.array(np.hsplit(circuit_func(f, *params), 2)).T
-            Z_fit = np.hstack([Z0[:, 0], Z0[:, 1]])
-            if len(Z_data) == len(Z_fit) / 2:
-                Z_data = np.hstack([Z_data.real, Z_data.imag])
-            return Z_data - Z_fit
-
-        return minimizer
-
-    @property
-    def objective_complex(self):
-        circuit_func = self.circuit_func
-
-        def minimizer(params, freq, Z_data):
-            Z0 = np.array(np.hsplit(circuit_func(freq, *params), 2)).T
-            Z_fit = Z0[:, 0] + 1j * Z0[:, 1]
-            Z2 = np.array(np.hsplit(Z_data, 2)).T
-            Z_noisy = Z2[:, 0] + 1j * Z2[:, 1]
-            return Z_noisy - Z_fit
-
-        return minimizer
-
-    @property
-    def objective_sq(self):
-        circuit_func = self.circuit_func
-
-        def minimizer(params, f, Z_data):
-            Z0 = np.array(np.hsplit(circuit_func(f, *params), 2)).T
-            Z_fit = np.hstack([Z0[:, 0], Z0[:, 1]])
-            if len(Z_data) == len(Z_fit) / 2:
-                Z_data = np.hstack([Z_data.real, Z_data.imag])
-            return (Z_data - Z_fit) ** 2
-
-        return minimizer
+    # print(rounded_exp)
+    if as_exp:
+        return rounded_exp
+    return 10.0**rounded_exp
 
 
-def sig_figs_ceil(number, digits=3):
+def sig_figs_ceil(number: int | float, digits: int = 3) -> float:
     """Round based on desired number of digits."""
     digits = digits - 1
     power = "{:e}".format(number).split("e")[1]
     root = 10 ** (int(power) - digits)
-    return np.ceil(number / root) * root
+    return float(np.ceil(number / root) * root)
 
 
 def annotation_positioner(
-    data, annotations, min_distance, mag_off, base_angle, **kwargs
-):
+    data: Any, annotations: list, min_distance: float, mag_off: float, base_angle: float, **kwargs
+) -> tuple:
     """
     Add annotations to a plot.
 
@@ -254,19 +102,24 @@ def annotation_positioner(
     new_annotation_positions = []
     index = []
 
-    if not isinstance(data, pd.DataFrame):
-        data = pd.DataFrame(data)
+    # Ensure data is a NumPy array
+    if not isinstance(data, np.ndarray):
+        data = np.array(data)
+
+    # Check that rows > columns
+    if data.shape[0] < data.shape[1]:
+        data = data.T
 
     # Get window from kwargs or derive from data
     window = kwargs.pop("window", None)
     if window is None:
         window = (
-            (data.iloc[:, 0].min(), data.iloc[:, 0].max()),
-            (data.iloc[:, 1].min(), data.iloc[:, 1].max()),
+            (data[:, 0].min(), data[:, 0].max()),
+            (data[:, 1].min(), data[:, 1].max()),
         )
-
+    new_position = (0.0, 0.0)
     for anno in annotations:
-        x, y = data.iloc[anno, :2]
+        x, y = data[anno, :2]
 
         # Drop anno if the data position has effectively already been labeled
         if any(
@@ -286,8 +139,7 @@ def annotation_positioner(
             new_position = (x + dx, y + dy)
 
             if all(
-                np.linalg.norm(np.array(new_position) - np.array(pos))
-                > min_distance
+                np.linalg.norm(np.array(new_position) - np.array(pos)) > min_distance
                 for pos in annotation_positions
             ):
                 # Ensure the anno position is inside the window
@@ -296,11 +148,8 @@ def annotation_positioner(
                 ):
                     # Perturb the anno away from the data points
                     if not any(
-                        np.linalg.norm(
-                            np.array(new_position) - np.array([dx, dy])
-                        )
-                        < min_distance
-                        for dx, dy in data.iloc[:, :2].values
+                        np.linalg.norm(np.array(new_position) - np.array([dx, dy])) < min_distance
+                        for dx, dy in data[:, :2]
                     ):
                         break
 
@@ -322,47 +171,69 @@ def annotation_positioner(
     return xy_positions, new_annotation_positions, index
 
 
-def get_plot_data(ax, axis=None, label=None):
+def get_plot_data(
+    ax: Axes,
+    axis: Any = None,
+    label: str = "",
+    res_format: str = "arr",
+    plt_type: str = "line, scatter, fill",
+) -> Any:
     """Retrieve all data from the Axes object."""
     all_data = []
+    all_labels = []
+
+    if "any" in plt_type.lower() or "all" in plt_type.lower():
+        plt_type = "line, scatter, fill"
 
     # Get data from lines
-    for line in ax.lines:
-        if label is None or line.get_label() == label:
-            xy_data = line.get_xydata()
-            all_data.append(xy_data)
+    if "line" in plt_type.lower():
+        for line in ax.lines:
+            if not label or line.get_label() == label:
+                xy_data = line.get_xydata()
+                all_data.append(xy_data)
+                all_labels.append(line.get_label())
 
     # Get data from scatter plots and fill-between plots
     for collection in ax.collections:
-        if isinstance(collection, PathCollection):  # Scatter plot
-            if label is None or collection.get_label() == label:
-                offsets = collection.get_offsets().data
+        if "scatter" in plt_type.lower() and isinstance(collection, PathCollection):
+            if not label or collection.get_label() == label:
+                offsets = collection.get_offsets().data  # type: ignore
                 all_data.append(offsets)
-        elif isinstance(collection, PolyCollection):  # Fill between
-            if label is None or collection.get_label() == label:
+                all_labels.append(collection.get_label())
+        elif "fill" in plt_type.lower() and isinstance(collection, PolyCollection):
+            if not label or collection.get_label() == label:
                 paths = collection.get_paths()
                 for path in paths:
                     vertices = path.vertices
                     all_data.append(vertices)
+                    all_labels.append(collection.get_label())
 
-    all_data = np.vstack(all_data)
-
-    if axis is None:
+    # Return based on res_format
+    # if not res_format or "arr" in res_format.lower():
+    if "labels" in res_format.lower():
+        return all_labels
+    elif "data" in res_format.lower() or "list" in res_format.lower():
         return all_data
-    elif axis == "x" or axis == 0:
-        return all_data[:, 0]
-    elif axis == "y":
-        return all_data[:, 1:]
-    elif isinstance(axis, int) and axis < all_data.shape[1]:
-        return all_data[:, axis]
-
-    raise ValueError("Invalid data_type argument")
+    elif "dict" in res_format.lower():
+        return {label: data for label, data in zip(all_labels, all_data)}
+    else:
+        # Combine all data into a single array
+        all_data = np.vstack(all_data)
+        if axis is None:
+            return all_data
+        elif axis == "x" or axis == 0:
+            return all_data[:, 0]
+        elif axis == "y":
+            return all_data[:, 1:]
+        elif isinstance(axis, int) and axis < all_data.shape[1]:
+            return all_data[:, axis]
+        else:
+            raise ValueError("Invalid axis argument")
+        # raise ValueError(f"Invalid res_format: {res_format}")
 
 
 class Annotations:
-    def __init__(
-        self, ax, base_angle=10, mag_off=0.1, min_distance=0.05, **kwargs
-    ):
+    def __init__(self, ax, base_angle=10, mag_off=0.1, min_distance=0.05, **kwargs):
         self.ax = ax
         self.base_angle = base_angle
         self.mag_off = mag_off
@@ -429,17 +300,16 @@ class Annotations:
 
 
 # %% Abstract Classes
-class AbstractPlot(ABC):
-    @abstractmethod
-    def plot(self, ax, data, keys, **kwargs):
-        pass
 
 
 class AbstractFormatter(ABC):
+    """Abstract class for formatting plots."""
+
     def __init__(self):
 
         self.font_props = {
-            "fontname": "Arial",
+            # "fontname": "DejaVu Sans",  # "Arial",
+            "fontfamily": ["Arial", "DejaVu Sans"],  # "Arial",
             "fontsize": 18,
             "fontweight": "bold",
         }
@@ -448,58 +318,53 @@ class AbstractFormatter(ABC):
             "axis": "both",
             "which": "major",
             "labelsize": 16,
-            "labelfontfamily": "Arial",
+            "labelfontfamily": ["Arial", "DejaVu Sans"],  # "Arial",
         }
 
     def apply_base_formatting(self, ax, **kwargs):
+        """Apply base formatting to the Axes object."""
         font_props = {**self.font_props, **kwargs.get("font_props", {})}
         tick_props = {**self.tick_props, **kwargs.get("tick_props", {})}
         x_power_lim = kwargs.pop("x_power_lim", None)
         y_power_lim = kwargs.pop("y_power_lim", None)
 
-        if kwargs.pop("set_xlabel", False) and isinstance(
-            kwargs.get("xlabel"), str
-        ):
-            ax.set_xlabel(kwargs.get("xlabel", ""), **font_props)
-        if kwargs.pop("set_ylabel", False) and isinstance(
-            kwargs.get("ylabel"), str
-        ):
-            ax.set_ylabel(kwargs.get("ylabel", ""), **font_props)
-        if kwargs.pop("set_title", False) and isinstance(
-            kwargs.get("title"), str
-        ):
+        font_family = font_props.pop("fontfamily", ["Arial", "DejaVu Sans"])
+        plt.rcParams["font.family"] = font_family
+
+        if kwargs.pop("set_xlabel", False) and isinstance(kwargs.get("xlabel"), str):
+            label = kwargs.get("xlabel", "").replace("$", "")
+            ax.set_xlabel(label, **font_props)
+        if kwargs.pop("set_ylabel", False) and isinstance(kwargs.get("ylabel"), str):
+            label = kwargs.get("ylabel", "").replace("$", "")
+            ax.set_ylabel(label, **font_props)
+        if kwargs.pop("set_title", False) and isinstance(kwargs.get("title"), str):
             ax.set_title(kwargs.get("title", ""), **font_props)
 
         ax.tick_params(**tick_props)
         ax.grid(True)
 
         if x_power_lim is not None:
-            xformatter = ScalarFormatter()
+            x_formatter = ScalarFormatter()
             if isinstance(x_power_lim, int):
-                xformatter.set_powerlimits((-x_power_lim, x_power_lim))
-            elif (
-                isinstance(x_power_lim, (list, tuple))
-                and len(x_power_lim) == 2
-            ):
-                xformatter.set_powerlimits(x_power_lim)
-            ax.xaxis.set_major_formatter(xformatter)
+                x_formatter.set_powerlimits((-x_power_lim, x_power_lim))
+            elif isinstance(x_power_lim, (list, tuple)) and len(x_power_lim) == 2:
+                x_formatter.set_powerlimits(tuple(x_power_lim))
+            ax.xaxis.set_major_formatter(x_formatter)
 
         if y_power_lim is not None:
             yformatter = ScalarFormatter()
             if isinstance(y_power_lim, int):
                 yformatter.set_powerlimits((-y_power_lim, y_power_lim))
-            elif (
-                isinstance(y_power_lim, (list, tuple))
-                and len(y_power_lim) == 2
-            ):
-                yformatter.set_powerlimits(y_power_lim)
+            elif isinstance(y_power_lim, (list, tuple)) and len(y_power_lim) == 2:
+                yformatter.set_powerlimits(tuple(y_power_lim))
             ax.yaxis.set_major_formatter(yformatter)
 
-        plt.tight_layout()
+        # plt.tight_layout()
         return ax
 
     @abstractmethod
-    def apply_formatting(self, *ax, **kwargs):
+    def apply_formatting(self, *ax, **kwargs) -> Any:
+        """Abstract method to apply formatting to the Axes."""
         pass
 
 
@@ -508,11 +373,18 @@ class AbstractScaler(ABC):
         self.axis = axis
 
     @abstractmethod
-    def scale(self, ax, arr, **kwargs):
+    def calc_lims(self, arr, **kwargs) -> tuple[float, float]:
+        """Apply scaling to the specified axis of the given Axes object."""
+        pass
+
+    @abstractmethod
+    def scale(self, ax, arr, **kwargs) -> Any:
+        """Apply scaling to the specified axis of the given Axes object."""
         pass
 
     @staticmethod
     def get_scale_functions(ax, axis):
+        """Get the scale functions for the specified axis."""
         if "x" in axis:
             return ax.set_xscale, ax.xaxis.set_ticks, ax.set_xlim
         else:
@@ -535,6 +407,8 @@ class AbstractScaler(ABC):
 
 
 class AbstractAnnotator(ABC):
+    """Abstract class for annotating plots."""
+
     def __init__(self, *args, **kwargs):
         self.init_args = args
         self.window = kwargs.pop("window", None)
@@ -570,23 +444,18 @@ class AbstractAnnotator(ABC):
         window=None,
         **kwargs,
     ):
+        """Find annotation positions for the given data and annotations."""
 
         if scale_by_window and window and min_distance < 1 and mag_off < 1:
-            max_window_length = max(
-                window[0][1] - window[0][0], window[1][1] - window[1][0]
-            )
+            max_window_length = max(window[0][1] - window[0][0], window[1][1] - window[1][0])
             min_distance *= max_window_length
             mag_off *= max_window_length
 
         if "annotation_positions" in kwargs:
             annotation_positions = kwargs["annotation_positions"]
-            if annotation_positions and isinstance(
-                annotation_positions[0], list
-            ):
+            if annotation_positions and isinstance(annotation_positions[0], list):
                 kwargs["annotation_positions"] = [
-                    item
-                    for sublist in annotation_positions
-                    for item in sublist
+                    item for sublist in annotation_positions for item in sublist
                 ]
 
         return annotation_positioner(
@@ -600,8 +469,158 @@ class AbstractAnnotator(ABC):
         )
 
     @abstractmethod
-    def annotate(self, ax, data, min_distance, mag_off, base_angle):
+    def annotate(self, ax, data, **kwargs) -> Any:
+        """Abstract method to annotate the plot."""
         pass
+
+
+def parse_fmt_string(fmt):
+    """
+    Simplified version of Matplotlib's `_process_plot_format` function.
+
+    Adapted from:
+        - Function: `_process_plot_format`
+        - Location: `matplotlib.axes._base`
+        - Version: Matplotlib v3.10.1
+        - Date: April 12, 2025
+
+    Converts a MATLAB-style color/line style format string to a
+    (*linestyle*, *marker*, *color*) tuple.
+
+    Example format strings include:
+    * 'ko': black circles
+    * '.b': blue dots
+    * 'r--': red dashed lines
+    * 'C2--': the third color in the color cycle, dashed lines
+
+    The format is absolute in the sense that if a linestyle or marker is not
+    defined in *fmt*, there is no line or marker. This is expressed by
+    returning 'None' for the respective quantity.
+
+    Parameters:
+        fmt (str): The format string to process.
+
+    Returns:
+        tuple: A tuple of (linestyle, marker, color).
+    """
+
+    linestyle = None
+    marker = None
+    color = None
+
+    # First check whether fmt is just a colorspec
+    if fmt not in ["0", "1"]:
+        try:
+            color = mcolors.to_rgba(fmt)
+            return {"color": fmt}
+        except ValueError:
+            pass
+
+    cn_color = None
+    i = 0
+    re_fmt = ""
+    while i < len(fmt):
+        c = fmt[i]
+        if fmt[i : i + 2] in mlines.lineStyles and linestyle is None:  # Two-character linestyles
+            linestyle = fmt[i : i + 2]
+            re_fmt += linestyle
+            i += 2
+        elif c in mlines.lineStyles and linestyle is None:  # Single-character linestyles
+            linestyle = c
+            re_fmt += linestyle
+            i += 1
+        elif c in mlines.lineMarkers and marker is None:  # Markers
+            marker = c
+            re_fmt += marker
+            i += 1
+        elif c in mcolors.get_named_colors_mapping() and color is None:  # Named colors
+            color = c
+            re_fmt += color
+            i += 1
+        elif c == "C" and color is None:  # Color cycle (e.g., 'C0', 'C1', etc.)
+            cn_color = re.match(r"C\d+", fmt[i:])
+            if cn_color:
+                color = mcolors.to_rgba(cn_color[0])
+                re_fmt += cn_color[0]
+                i += len(cn_color[0])
+        else:
+            break
+
+    result = {}
+    if re_fmt != fmt:
+        return {"color": fmt}
+    if linestyle is not None:
+        result["linestyle"] = linestyle
+    if marker is not None:
+        result["marker"] = marker
+    if color is not None:
+        result["color"] = color
+    return result
+
+
+class AbstractPlot(ABC):
+    def __init__(self):
+        """
+        Initialize the AbstractPlot with ignore_kwargs and short_kwargs.
+        """
+        # List of kwargs to always ignore (e.g., always defined in concrete classes)
+        self.ignore_kwargs = ["data", "x", "y", "y1", "y2"]
+
+        # Mapping of short kwargs to their full versions
+        self.short_kwargs = {
+            "c": "color",
+            "ls": "linestyle",
+            "lw": "linewidth",
+            "m": "marker",
+            "ms": "markersize",
+            "mec": "markeredgecolor",
+            "mew": "markeredgewidth",
+            "mfc": "markerfacecolor",
+            "alpha": "alpha",
+        }
+
+    @property
+    def primary_kwargs(self):
+        """
+        Generic primary_kwargs property to be overridden by concrete classes.
+        Returns an empty list by default.
+        """
+        return []
+
+    @abstractmethod
+    def plot(self, ax, data, keys, **kwargs):
+        pass
+
+    def sanitize_kwargs(self, **kwargs):
+        """
+        Sanitize the kwargs for plotting, including processing the 'fmt' argument.
+
+        Args:
+            data (pd.DataFrame or np.ndarray): The data being plotted.
+            **kwargs: Keyword arguments passed to the plot function.
+
+        Returns:
+            dict: Sanitized kwargs with 'fmt' processed and removed.
+        """
+        fmt = kwargs.pop("fmt", None)
+
+        if isinstance(fmt, str):
+            # Process the fmt string using parse_fmt_string
+            kwargs = {**parse_fmt_string(fmt), **kwargs}
+
+        # Remove ignored kwargs
+        kwargs = {key: value for key, value in kwargs.items() if key not in self.ignore_kwargs}
+
+        # Resolve short kwargs to their full versions
+        resolved_kwargs = {}
+        for key, value in kwargs.items():
+            full_key = self.short_kwargs.get(key, key)  # Map short key to full key if it exists
+            if full_key in resolved_kwargs:
+                # Prevent duplicates by skipping if the full key is already set
+                continue
+            resolved_kwargs[full_key] = value
+
+        return resolved_kwargs
 
 
 # %% Classes
@@ -622,16 +641,17 @@ class ScatterPlot(AbstractPlot):
         ]
 
     def plot(self, ax, data, keys, **kwargs):
+        kwargs = self.sanitize_kwargs(**kwargs)
         ax.scatter(
             x=keys[0],
             y=keys[1],
-            c=kwargs.pop("styling", "b"),
+            c=kwargs.pop("color", "b"),
             data=data,
             edgecolor=kwargs.pop("edgecolor", "none"),
             label=kwargs.pop("label", "_none"),
             **kwargs,
         )
-        plt.tight_layout()
+        # plt.tight_layout()
         return ax
 
 
@@ -650,15 +670,16 @@ class LinePlot(AbstractPlot):
         ]
 
     def plot(self, ax, data, keys, **kwargs):
+        kwargs = self.sanitize_kwargs(**kwargs)
         ax.plot(
             keys[0],
             keys[1],
-            kwargs.pop("styling", "k"),
             data=data,
             label=kwargs.pop("label", "_none"),
+            color=kwargs.pop("color", "k"),
             **kwargs,
         )
-        plt.tight_layout()
+        # plt.tight_layout()
         return ax
 
 
@@ -678,21 +699,22 @@ class BandPlot(AbstractPlot):
         ]
 
     def plot(self, ax, data, keys, **kwargs):
+        kwargs = self.sanitize_kwargs(**kwargs)
         ax.fill_between(
             x=keys[0],
             y1=keys[1],
             y2=keys[2],
             data=data,
-            color=kwargs.pop("styling", "grey"),
+            color=kwargs.pop("color", "grey"),
             alpha=kwargs.pop("alpha", 0.25),
             **kwargs,
         )
-        plt.tight_layout()
+        # plt.tight_layout()
         return ax
 
 
 class DefaultFormatter(AbstractFormatter):
-    def apply_formatting(self, *ax, **kwargs):
+    def apply_formatting(self, *ax, **kwargs) -> Any:
         ax = ax[0]
         kwargs["set_xlabel"] = True
         kwargs["set_ylabel"] = True
@@ -702,7 +724,7 @@ class DefaultFormatter(AbstractFormatter):
 
 
 class BotAxisFormatter(AbstractFormatter):
-    def apply_formatting(self, *ax, **kwargs):
+    def apply_formatting(self, *ax, **kwargs) -> Any:
         ax = ax[0]
         kwargs["set_xlabel"] = True
         kwargs["set_ylabel"] = True
@@ -711,7 +733,7 @@ class BotAxisFormatter(AbstractFormatter):
 
 
 class MidAxisFormatter(AbstractFormatter):
-    def apply_formatting(self, *ax, **kwargs):
+    def apply_formatting(self, *ax, **kwargs) -> Any:
         ax = ax[0]
 
         kwargs["x_power_lim"] = None
@@ -722,7 +744,7 @@ class MidAxisFormatter(AbstractFormatter):
 
 
 class TopAxisFormatter(AbstractFormatter):
-    def apply_formatting(self, *ax, **kwargs):
+    def apply_formatting(self, *ax, **kwargs) -> Any:
         ax = ax[0]
 
         kwargs["x_power_lim"] = None
@@ -734,66 +756,50 @@ class TopAxisFormatter(AbstractFormatter):
 
 
 class StackFormatter(AbstractFormatter):
-    def apply_formatting(self, *ax, **kwargs):
+    def apply_formatting(self, *ax, **kwargs) -> Any:
         try:
             ylabels = kwargs.pop("ylabel")
             if isinstance(ylabels, str) or ylabels is None:
                 ylabels = [ylabels] * len(ax)
             elif len(ylabels) != len(ax):
-                raise ValueError(
-                    "Length of ylabels must match the number of axes"
-                )
+                raise ValueError("Length of ylabels must match the number of axes")
         except TypeError as exc:
-            raise TypeError(
-                "ylabel(s) must be a string, an indexable sequence, or None"
-            ) from exc
+            raise TypeError("ylabel(s) must be a string, an indexable sequence, or None") from exc
 
         try:
             if kwargs["title"] and not isinstance(kwargs["title"], str):
                 kwargs["title"] = kwargs["title"][0]
         except (TypeError, IndexError) as exc:
-            raise TypeError(
-                "title must be a string or an indexable sequence"
-            ) from exc
+            raise TypeError("title must be a string or an indexable sequence") from exc
 
         try:
             if kwargs["xlabel"] and not isinstance(kwargs["xlabel"], str):
                 kwargs["xlabel"] = kwargs["xlabel"][-1]
         except (TypeError, IndexError) as exc:
-            raise TypeError(
-                "xlabel must be a string or an indexable sequence"
-            ) from exc
+            raise TypeError("xlabel must be a string or an indexable sequence") from exc
 
         ax = list(ax)
 
         if len(ax) == 1:
             default_formatter = DefaultFormatter()
-            ax[0] = default_formatter.apply_formatting(
-                ax[0], ylabel=ylabels[0], **kwargs
-            )
+            ax[0] = default_formatter.apply_formatting(ax[0], ylabel=ylabels[0], **kwargs)
         else:
             top_formatter = TopAxisFormatter()
-            ax[0] = top_formatter.apply_formatting(
-                ax[0], ylabel=ylabels[0], **kwargs
-            )
+            ax[0] = top_formatter.apply_formatting(ax[0], ylabel=ylabels[0], **kwargs)
 
             if len(ax) > 2:
                 mid_formatter = MidAxisFormatter()
                 for i in range(1, len(ax) - 1):
-                    ax[i] = mid_formatter.apply_formatting(
-                        ax[i], ylabel=ylabels[i], **kwargs
-                    )
+                    ax[i] = mid_formatter.apply_formatting(ax[i], ylabel=ylabels[i], **kwargs)
 
             bot_formatter = BotAxisFormatter()
-            ax[-1] = bot_formatter.apply_formatting(
-                ax[-1], ylabel=ylabels[-1], **kwargs
-            )
+            ax[-1] = bot_formatter.apply_formatting(ax[-1], ylabel=ylabels[-1], **kwargs)
 
         return ax
 
 
 class TwoAxisFormatter(AbstractFormatter):
-    def apply_formatting(self, *ax, **kwargs):
+    def apply_formatting(self, *ax, **kwargs) -> Any:
         ax1, ax2 = ax
 
         kwargs["x_power_lim"] = None
@@ -809,100 +815,97 @@ class TwoAxisFormatter(AbstractFormatter):
         return ax1, ax2
 
 
+@log_exceptions
 class LogScaler(AbstractScaler):
     @log_exceptions
-    def scale(self, ax, arr, **kwargs):
+    def calc_lims(self, arr, **kwargs) -> tuple[float, float]:
         """Applies log scaling to the specified axis of the given Axes object."""
-        pad = kwargs.get("pad", 0.2)
-        digits = kwargs.get("digits", 2)
-        allow_invert = kwargs.get("allow_invert", False)  # Option to invert data
+        pad = abs(kwargs.get("pad", 0.2))
         invert_threshold = kwargs.get("invert_threshold", 0.95)  # Threshold for inversion
+        invert_threshold = invert_threshold if invert_threshold <= 1 else invert_threshold / 100
 
+        if isinstance(arr, Axes):
+            arr = get_plot_data(arr, self.axis)
+        else:
+            arr = np.asarray(arr)
+
+        inv = 1
+        # Check if more than the threshold proportion of values are negative
+        if (arr < 0).mean() > invert_threshold:
+            inv = -1
+        arr = self.filter_outliers(inv * arr, kwargs.get("quantile", 5))
+        lims = (
+            inv * 10 ** np.floor(np.log10(arr[arr > 0].min()) - pad),
+            inv * 10 ** np.ceil(np.log10(arr[arr > 0].max()) + pad),
+        )
+        return min(lims), max(lims)
+
+    @log_exceptions
+    def scale(self, ax, arr, **kwargs) -> Any:
+        """Applies log scaling to the specified axis of the given Axes object."""
         scale, _, lim = self.get_scale_functions(ax, self.axis)
 
-        if isinstance(arr, (tuple, list)):
-            arr = np.allcloserray(arr)
-        elif arr is None:
-            arr = get_plot_data(ax, self.axis)
+        lims = self.calc_lims(ax if arr is None else arr, **kwargs)
 
-
-        if allow_invert :
-            scale_str = "log"
-            inv = 1
-            invert_threshold = invert_threshold if invert_threshold <= 1 else invert_threshold/100
-            if (arr < 0).mean() > invert_threshold:
-                inv = -1
-                scale_str = "symlog"
-            arr = self.filter_outliers(inv*arr, kwargs.get("quantile", 5))
-
-            scale(scale_str)
-            lim(
-                [
-                    inv * 10 ** np.floor(np.log10(arr[arr > 0].min()) - abs(pad)),
-                    inv * 10 ** np.ceil(np.log10(arr[arr > 0].max()) + abs(pad)),
-                ]
-            )
-        else:
-
-            if (arr < 0).mean() > invert_threshold:
-                # Bypass log scaling if all values are negative
+        scale_str = "log"
+        if any(limit < 0 for limit in lims):
+            if not kwargs.get("allow_invert", False):
+                # Bypass scaling if negative count above threshold
                 return ax
-            
-            arr = self.filter_outliers(arr, kwargs.get("quantile", 5))
+            scale_str = "symlog"
 
-            scale("log")
-            lim(
-                [
-                    10 ** np.floor(np.log10(arr[arr > 0].min()) - abs(pad)),
-                    10 ** np.ceil(np.log10(arr[arr > 0].max()) + abs(pad)),
-                ]
-            )
+        scale(scale_str)
+        lim(lims)
         return ax
 
 
 class LinFrom0Scaler(AbstractScaler):
     @log_exceptions
-    def scale(self, ax, arr, **kwargs):
-        """Applies linear scaling to the specified axis of the given Axes object."""
+    def calc_lims(self, arr, **kwargs) -> tuple[float, float]:
+        """Applies log scaling to the specified axis of the given Axes object."""
         pad = kwargs.get("pad", 0.2)
         digits = kwargs.get("digits", 2)
+        invert_threshold = kwargs.get("invert_threshold", 0.5)  # Threshold for inversion
+        invert_threshold = invert_threshold if invert_threshold <= 1 else invert_threshold / 100
 
-        scale, _, lim = self.get_scale_functions(ax, self.axis)
-
-        if isinstance(arr, (tuple, list)):
-            arr = np.array(arr)
-        elif arr is None:
-            arr = get_plot_data(ax, self.axis)
+        if isinstance(arr, Axes):
+            arr = get_plot_data(arr, self.axis)
+        else:
+            arr = np.asarray(arr)
 
         arr = self.filter_outliers(arr, kwargs.get("quantile", 5))
 
         inv = 1
-        if (arr < 0).mean() > 0.5:
+        if (arr < 0).mean() > invert_threshold:
             inv = -1
 
-        scale("linear")
         lims = [
-            0,
+            0.0,
             inv * sig_figs_ceil((inv * arr).max() * (1 + pad), digits),
         ]
+        return min(lims), max(lims)
+
+    @log_exceptions
+    def scale(self, ax, arr, **kwargs) -> Any:
+        """Applies linear scaling to the specified axis of the given Axes object."""
+        scale, _, lim = self.get_scale_functions(ax, self.axis)
+
         scale("linear")
-        lim([min(lims), max(lims)])
+        lim(self.calc_lims(ax if arr is None else arr, **kwargs))
         return ax
 
 
 class LinScaler(AbstractScaler):
     @log_exceptions
-    def scale(self, ax, arr, **kwargs):
-        """Applies linear scaling to the specified axis of the given Axes object."""
+    def calc_lims(self, arr, **kwargs) -> tuple[float, float]:
+        """Applies log scaling to the specified axis of the given Axes object."""
         pad = kwargs.get("pad", 0.2)
         digits = kwargs.get("digits", 2)
 
-        scale, _, lim = self.get_scale_functions(ax, self.axis)
-
-        if isinstance(arr, (tuple, list)):
-            arr = np.array(arr)
-        elif arr is None:
-            arr = get_plot_data(ax, self.axis)
+        if isinstance(arr, Axes):
+            arr = get_plot_data(arr, self.axis)
+        else:
+            arr = np.asarray(arr)
 
         arr = self.filter_outliers(arr, kwargs.get("quantile", 5))
 
@@ -912,91 +915,232 @@ class LinScaler(AbstractScaler):
             -1 * sig_figs_ceil((-1 * arr).max() * (1 + pad), digits),
             -1 * sig_figs_ceil((-1 * arr).max() * (1 - pad), digits),
         ]
+
+        return min(lims), max(lims)
+
+    @log_exceptions
+    def scale(self, ax, arr, **kwargs) -> Any:
+        """Applies linear scaling to the specified axis of the given Axes object."""
+        scale, _, lim = self.get_scale_functions(ax, self.axis)
+
         scale("linear")
-        lim([min(lims), max(lims)])
+        lim(self.calc_lims(ax if arr is None else arr, **kwargs))
         return ax
 
 
 class DegScaler(AbstractScaler):
     @log_exceptions
-    def scale(self, ax, arr, **kwargs):
+    def calc_lims(self, arr, **kwargs) -> tuple[float, float]:
+        """Applies log scaling to the specified axis of the given Axes object."""
+        return -100, 100
+
+    @log_exceptions
+    def scale(self, ax, arr, **kwargs) -> Any:
         """Applies linear scaling to the specified axis of the given Axes object."""
-        pad = kwargs.get("pad", 0.2)
         base = kwargs.get("base", 30)
 
         _, ticks, lim = self.get_scale_functions(ax, self.axis)
 
         ticks(np.arange(-90 - base, 90 + base, base))
-        lim(-100, 100)
+        lim(self.calc_lims(ax if arr is None else arr, **kwargs))
         return ax
 
 
 class DegFocusedScaler(AbstractScaler):
     @log_exceptions
-    def scale(self, ax, arr, **kwargs):
+    def calc_lims(self, arr, **kwargs) -> tuple[float, float]:
+        """Applies log scaling to the specified axis of the given Axes object."""
+        pad = kwargs.get("pad", 0.2)
+        base = kwargs.get("base", 30)
+
+        if isinstance(arr, Axes):
+            arr = get_plot_data(arr, self.axis)
+        elif isinstance(arr, (tuple, list)):
+            arr = np.asarray(arr)
+
+        if isinstance(arr, np.ndarray):
+            arr = self.filter_outliers(arr, kwargs.get("quantile", 5))
+            tmin = float(np.floor(arr.min() / base) * base)
+            tmax = float(np.ceil(arr.max() / base) * base)
+        else:
+            tmin, tmax = -120, 120
+
+        # ticks(np.arange(tmin - base, tmax + base, base))
+        return tmin - base * pad, tmax + base * pad
+
+    @log_exceptions
+    def scale(self, ax, arr, **kwargs) -> Any:
         """Applies linear scaling to the specified axis of the given Axes object."""
         pad = kwargs.get("pad", 0.2)
         base = kwargs.get("base", 30)
 
         _, ticks, lim = self.get_scale_functions(ax, self.axis)
 
-        if isinstance(arr, (tuple, list)):
-            arr = np.array(arr)
-        elif arr is None:
-            arr = get_plot_data(ax, self.axis)
+        lims = self.calc_lims(ax if arr is None else arr, **kwargs)
 
-        arr = self.filter_outliers(arr, kwargs.get("quantile", 5))
-
-        tmin = -120 if arr is None else np.floor(arr.min() / base) * base
-        tmax = 120 if arr is None else np.ceil(arr.max() / base) * base
-
-        ticks(np.arange(tmin - base, tmax + base, base))
-        lim(tmin - base * pad, tmax + base * pad)
+        # Tick range set to (tmin - base, tmax + base). Math extracts tmin/tmax from lims.
+        ticks(np.arange(lims[0] + base * (pad - 1), lims[1] + base * (1 - pad), base))
+        lim(lims)
         return ax
 
 
-class TopNAnnotator(AbstractAnnotator):
-    def annotate(self, ax, data, **kwargs):
-        arrowprops = kwargs.pop("arrowprops", self.arrowprops)
-        bbox = kwargs.pop("bbox", self.bbox)
+# class LogScaler(AbstractScaler):
+#     @log_exceptions
+#     def scale(self, ax, arr, **kwargs) -> Any:
+#         """Applies log scaling to the specified axis of the given Axes object."""
+#         pad = abs(kwargs.get("pad", 0.2))
+#         # digits = kwargs.get("digits", 2)
+#         allow_invert = kwargs.get("allow_invert", False)  # Option to invert data
+#         invert_threshold = kwargs.get("invert_threshold", 0.95)  # Threshold for inversion
+#         invert_threshold = invert_threshold if invert_threshold <= 1 else invert_threshold / 100
 
-        # Example logic: label the top N points based on the y-value
-        annotations = data.nlargest(
-            self.init_args[0], data.columns[1]
-        ).index.tolist()
-        old_annotation = kwargs.pop("annotation_positions", [])
-        scale_by_window = kwargs.pop("scale_by_window", True)
-        window = kwargs.pop("window", self.window)
-        if scale_by_window and window is None:
-            window = [ax.get_xlim(), ax.get_ylim()]
+#         scale, _, lim = self.get_scale_functions(ax, self.axis)
 
-        res = self.find_annotation_positions(
-            data,
-            annotations,
-            min_distance=kwargs.pop("min_distance", 0.05),
-            mag_off=kwargs.pop("mag_off", 0.1),
-            base_angle=kwargs.pop("base_angle", 10),
-            scale_by_window=scale_by_window,
-            window=window,
-            annotation_positions=old_annotation,
-            **kwargs,
-        )
-        for pos, lpos, annotation in zip(*res):
-            ax.annotate(
-                f"{annotation}",
-                xy=pos,
-                xytext=lpos,
-                textcoords="data",
-                ha="center",
-                arrowprops=arrowprops,
-                bbox=bbox,
-                **kwargs,
-            )
-        return ax, old_annotation + res[1]
+#         if isinstance(arr, (tuple, list)):
+#             arr = np.asarray(arr)
+#         elif arr is None:
+#             arr = get_plot_data(ax, self.axis)
+
+#         if allow_invert:
+#             scale_str = "log"
+#             inv = 1
+#             # Check if more than the threshold proportion of values are negative
+#             if (arr < 0).mean() > invert_threshold:
+#                 inv = -1
+#                 scale_str = "symlog"
+#             arr = self.filter_outliers(inv * arr, kwargs.get("quantile", 5))
+
+#             scale(scale_str)
+#             lim(
+#                 [
+#                     inv * 10 ** np.floor(np.log10(arr[arr > 0].min()) - pad),
+#                     inv * 10 ** np.ceil(np.log10(arr[arr > 0].max()) + pad),
+#                 ]
+#             )
+#         else:
+#             if (arr < 0).mean() > invert_threshold:
+#                 # Bypass log scaling if all values are negative
+#                 return ax
+
+#             arr = self.filter_outliers(arr, kwargs.get("quantile", 5))
+
+#             scale("log")
+#             lim(
+#                 [
+#                     10 ** np.floor(np.log10(arr[arr > 0].min()) - pad),
+#                     10 ** np.ceil(np.log10(arr[arr > 0].max()) + pad),
+#                 ]
+#             )
+#         return ax
+
+
+# class LinFrom0Scaler(AbstractScaler):
+#     @log_exceptions
+#     def scale(self, ax, arr, **kwargs) -> Any:
+#         """Applies linear scaling to the specified axis of the given Axes object."""
+#         pad = kwargs.get("pad", 0.2)
+#         digits = kwargs.get("digits", 2)
+
+#         scale, _, lim = self.get_scale_functions(ax, self.axis)
+
+#         if isinstance(arr, (tuple, list)):
+#             arr = np.array(arr)
+#         elif arr is None:
+#             arr = get_plot_data(ax, self.axis)
+
+#         arr = self.filter_outliers(arr, kwargs.get("quantile", 5))
+
+#         inv = 1
+#         if (arr < 0).mean() > 0.5:
+#             inv = -1
+
+#         lims = [
+#             0,
+#             inv * sig_figs_ceil((inv * arr).max() * (1 + pad), digits),
+#         ]
+#         scale("linear")
+#         lim([min(lims), max(lims)])
+#         return ax
+
+
+# class LinScaler(AbstractScaler):
+#     @log_exceptions
+#     def scale(self, ax, arr, **kwargs) -> Any:
+#         """Applies linear scaling to the specified axis of the given Axes object."""
+#         pad = kwargs.get("pad", 0.2)
+#         digits = kwargs.get("digits", 2)
+
+#         scale, _, lim = self.get_scale_functions(ax, self.axis)
+
+#         if isinstance(arr, (tuple, list)):
+#             arr = np.array(arr)
+#         elif arr is None:
+#             arr = get_plot_data(ax, self.axis)
+
+#         arr = self.filter_outliers(arr, kwargs.get("quantile", 5))
+
+#         lims = [
+#             sig_figs_ceil((arr).max() * (1 + pad), digits),
+#             sig_figs_ceil((arr).max() * (1 - pad), digits),
+#             -1 * sig_figs_ceil((-1 * arr).max() * (1 + pad), digits),
+#             -1 * sig_figs_ceil((-1 * arr).max() * (1 - pad), digits),
+#         ]
+#         scale("linear")
+#         lim([min(lims), max(lims)])
+#         return ax
+
+
+# class DegScaler(AbstractScaler):
+#     @log_exceptions
+#     def scale(self, ax, arr, **kwargs) -> Any:
+#         """Applies linear scaling to the specified axis of the given Axes object."""
+#         pad = kwargs.get("pad", 0.2)
+#         base = kwargs.get("base", 30)
+
+#         _, ticks, lim = self.get_scale_functions(ax, self.axis)
+
+#         ticks(np.arange(-90 - base, 90 + base, base))
+#         lim(-100, 100)
+#         return ax
+
+
+# class DegFocusedScaler(AbstractScaler):
+#     @log_exceptions
+#     def scale(self, ax, arr, **kwargs) -> Any:
+#         """Applies linear scaling to the specified axis of the given Axes object."""
+#         pad = kwargs.get("pad", 0.2)
+#         base = kwargs.get("base", 30)
+
+#         _, ticks, lim = self.get_scale_functions(ax, self.axis)
+
+#         if isinstance(arr, (tuple, list)):
+#             arr = np.array(arr)
+#         elif arr is None:
+#             arr = get_plot_data(ax, self.axis)
+
+#         arr = self.filter_outliers(arr, kwargs.get("quantile", 5))
+
+#         tmin = -120 if arr is None else np.floor(arr.min() / base) * base
+#         tmax = 120 if arr is None else np.ceil(arr.max() / base) * base
+
+#         ticks(np.arange(tmin - base, tmax + base, base))
+#         lim(tmin - base * pad, tmax + base * pad)
+#         return ax
 
 
 class DecadeAnnotator(AbstractAnnotator):
     def annotate(self, ax, data, **kwargs):
+        """
+        Annotate the plot with decade markers.
+        """
+        # Ensure data is a NumPy array
+        if not isinstance(data, np.ndarray):
+            data = np.array(data)
+
+        # Check that rows > columns
+        if data.shape[0] < data.shape[1]:
+            data = data.T
+
         annotations = kwargs.pop("annotations", None)
         if annotations is None:
             annotations = Annotations(
@@ -1005,12 +1149,14 @@ class DecadeAnnotator(AbstractAnnotator):
                 mag_off=kwargs.get("mag_off", 0.1),
                 min_distance=kwargs.pop("min_distance", 0.05),
             )
-        annotations_indices = np.unique(
-            np.floor(np.log10(data.iloc[:, 2])), return_index=True
-        )[1]
-        annotations_indices = sorted(
-            annotations_indices, key=lambda i: data.iloc[i, 2], reverse=True
-        )  # Sort annotations by frequency
+
+        # Find unique decades based on the third column (e.g., frequency)
+        exponents = rounded_floats(abs(data[:, 2]), True)
+        base = np.unique(10.0**exponents, return_index=False)
+        annotations_indices = [np.argmin(abs(data[:, 2] - b)) for b in base]
+        # annotations_indices = np.unique(np.floor(np.log10(data[:, 2])), return_index=True)[1]
+        # Sort annotations by frequency
+        annotations_indices = sorted(annotations_indices, key=lambda i: data[i, 2], reverse=True)
 
         scale_by_window = kwargs.pop("scale_by_window", True)
         window = annotations.window
@@ -1040,57 +1186,184 @@ class DecadeAnnotator(AbstractAnnotator):
         for pos, lpos, annotation in zip(*res):
             annotations.xy.append(pos)
             annotations.xyann.append(lpos)
-            annotations.text.append(
-                int(np.floor(np.log10(data.iloc[annotation, 2])))
-            )
+            annotations.text.append(int(exponents[annotation]))
 
         annotations.annotate(ax)
 
-        # return ax, res[1], annotations if annotations else ax, res[1]
+        return ax, annotations
+
+
+class TopNAnnotator(AbstractAnnotator):
+    def annotate(self, ax, data, **kwargs):
+        """
+        Annotate the plot with the top N peaks in the y-values.
+
+        Parameters:
+        - ax (matplotlib.axes.Axes): The axes to annotate.
+        - data (np.ndarray): A 2D NumPy array where the second column represents y-values.
+        - **kwargs: Additional keyword arguments for annotations.
+
+        Returns:
+        - ax (matplotlib.axes.Axes): The annotated axes.
+        - annotations (Annotations): The annotations object.
+        """
+        # Ensure data is a NumPy array
+        if not isinstance(data, np.ndarray):
+            data = np.array(data)
+
+        # Check that rows > columns
+        if data.shape[0] < data.shape[1]:
+            data = data.T
+
+        annotations = kwargs.pop("annotations", None)
+        if annotations is None:
+            annotations = Annotations(
+                ax,
+                base_angle=kwargs.get("base_angle", 10),
+                mag_off=kwargs.get("mag_off", 0.1),
+                min_distance=kwargs.pop("min_distance", 0.05),
+            )
+
+        # Extract kwargs for peak finding
+        peak_distance_percent = kwargs.pop("peak_distance_percent", 0.1)
+        target_num_peaks = kwargs.pop("target_num_peaks", None)
+
+        # Calculate the minimum distance between peaks in data units
+        peak_distance = peak_distance_percent * (data[:, 0].max() - data[:, 0].min())
+
+        # Find peaks in the y-values (second column)
+        peaks, _ = find_peaks(data[:, 1], distance=peak_distance)
+
+        # If a target number of peaks is specified, keep the largest peaks
+        if target_num_peaks is not None and len(peaks) > target_num_peaks:
+            peak_heights = data[peaks, 1]
+            largest_peaks_indices = np.argsort(peak_heights)[-target_num_peaks:]
+            peaks = peaks[np.sort(largest_peaks_indices)]
+
+        annotations_indices = peaks
+
+        scale_by_window = kwargs.pop("scale_by_window", True)
+        window = annotations.window
+
+        annotations.prev_kwargs(
+            arrowprops=kwargs.pop("arrowprops", self.arrowprops),
+            bbox=kwargs.pop("bbox", self.bbox),
+            textcoords="data",
+            ha="center",
+            **kwargs,
+        )
+
+        annotations.clear()
+
+        res = self.find_annotation_positions(
+            data,
+            annotations_indices,
+            min_distance=annotations.min_distance,
+            mag_off=annotations.mag_off,
+            base_angle=annotations.base_angle,
+            scale_by_window=scale_by_window,
+            window=window,
+            annotation_positions=annotations.all_xyann,
+            **kwargs,
+        )
+
+        for pos, lpos, annotation in zip(*res):
+            annotations.xy.append(pos)
+            annotations.xyann.append(lpos)
+            annotations.text.append("{:.1E}".format(np.log10(data[annotation, 2])))
+        # fmt = "{:.%dE}" % int(prec)
+        #     return fmt.format(num)
+        annotations.annotate(ax)
+
         return ax, annotations
 
 
 class CustomAnnotator(AbstractAnnotator):
     def annotate(self, ax, data, **kwargs):
-        arrowprops = kwargs.pop("arrowprops", self.arrowprops)
-        bbox = kwargs.pop("bbox", self.bbox)
+        """
+        Annotate the plot using a custom function.
 
-        # Apply custom logic to determine annotations
-        annotations = self.init_args[0](data)
-        old_annotation = kwargs.pop("annotation_positions", [])
+        Parameters:
+        - ax (matplotlib.axes.Axes): The axes to annotate.
+        - data (np.ndarray): A 2D NumPy array to be processed by the custom function.
+        - **kwargs: Additional keyword arguments for annotations.
+
+        Returns:
+        - ax (matplotlib.axes.Axes): The annotated axes.
+        - annotations (Annotations): The annotations object.
+        """
+        # Ensure data is a NumPy array
+        if not isinstance(data, np.ndarray):
+            data = np.array(data)
+
+        # Check that rows > columns
+        if data.shape[0] < data.shape[1]:
+            data = data.T
+
+        annotations = kwargs.pop("annotations", None)
+        if annotations is None:
+            annotations = Annotations(
+                ax,
+                base_angle=kwargs.get("base_angle", 10),
+                mag_off=kwargs.get("mag_off", 0.1),
+                min_distance=kwargs.pop("min_distance", 0.05),
+            )
+
+        # Check for a custom function in kwargs
+        custom_func = kwargs.pop("custom_func", None)
+        if custom_func is None:
+            # Fall back to the function provided in init_args
+            if not self.init_args or not callable(self.init_args[0]):
+                raise ValueError(
+                    "CustomAnnotator requires a callable function in init_args or kwargs['custom_func']"
+                )
+            custom_func = self.init_args[0]
+
+        # Apply the custom function to determine annotations
+        annotations_indices = custom_func(data)
+
         scale_by_window = kwargs.pop("scale_by_window", True)
-        window = kwargs.pop("window", self.window)
-        if scale_by_window and window is None:
-            window = [ax.get_xlim(), ax.get_ylim()]
-        res = self.find_annotation_positions(
-            data,
-            annotations,
-            min_distance=kwargs.pop("min_distance", 0.05),
-            mag_off=kwargs.pop("mag_off", 0.1),
-            base_angle=kwargs.pop("base_angle", 10),
-            scale_by_window=scale_by_window,
-            window=window,
-            annotation_positions=old_annotation,
+        window = annotations.window
+
+        annotations.prev_kwargs(
+            arrowprops=kwargs.pop("arrowprops", self.arrowprops),
+            bbox=kwargs.pop("bbox", self.bbox),
+            textcoords="data",
+            ha="center",
             **kwargs,
         )
+
+        annotations.clear()
+
+        res = self.find_annotation_positions(
+            data,
+            annotations_indices,
+            min_distance=annotations.min_distance,
+            mag_off=annotations.mag_off,
+            base_angle=annotations.base_angle,
+            scale_by_window=scale_by_window,
+            window=window,
+            annotation_positions=annotations.all_xyann,
+            **kwargs,
+        )
+
         for pos, lpos, annotation in zip(*res):
-            ax.annotate(
-                f"{annotation}",
-                xy=pos,
-                xytext=lpos,
-                textcoords="data",
-                ha="center",
-                arrowprops=arrowprops,
-                bbox=bbox,
-                **kwargs,
-            )
-        return ax, old_annotation + res[1]
+            annotations.xy.append(pos)
+            annotations.xyann.append(lpos)
+            annotations.text.append(f"Custom {annotation}")
+
+        annotations.annotate(ax)
+
+        return ax, annotations
 
 
 # %% Factory
 class PlotFactory:
+    """Factory class to create plot objects."""
+
     @staticmethod
     def get_plot(plot_type):
+        """Factory method to get the appropriate plot class based on the plot type."""
         if plot_type.lower() == "scatter":
             return ScatterPlot()
         elif plot_type.lower() == "line":
@@ -1102,6 +1375,8 @@ class PlotFactory:
 
     @staticmethod
     def get_scaler(*keys, axis="y"):
+        """Factory method to get the appropriate scaler class based on the keys."""
+
         def create_scaler(key, axis_type):
             if "log" in key.lower():
                 return LogScaler(axis_type)
@@ -1116,10 +1391,7 @@ class PlotFactory:
 
         try:
             if not isinstance(axis, str):
-                return [
-                    create_scaler(key, axis[num])
-                    for num, key in enumerate(keys)
-                ]
+                return [create_scaler(key, axis[num]) for num, key in enumerate(keys)]
             return [create_scaler(key, axis) for key in keys]
         except (TypeError, IndexError) as exc:
             raise TypeError(
@@ -1128,6 +1400,7 @@ class PlotFactory:
 
     @staticmethod
     def get_formatter(formatter_type="default"):
+        """Factory method to get the appropriate formatter class based on the formatter type."""
         if formatter_type.lower() == "two_axis":
             return TwoAxisFormatter()
         elif formatter_type.lower() == "stack":
@@ -1139,7 +1412,8 @@ class PlotFactory:
 
     @staticmethod
     def get_annotator(labeler_type, *args, **kwargs):
-        if labeler_type == "top_n":
+        """Factory method to get the appropriate annotator class based on the labeler type."""
+        if labeler_type == "top_n" or labeler_type.lower().startswith("topn"):
             return TopNAnnotator(*args, **kwargs)
         elif labeler_type == "decade":
             return DecadeAnnotator(*args, **kwargs)
@@ -1149,10 +1423,22 @@ class PlotFactory:
             raise ValueError(f"Unknown annotator type: {labeler_type}")
 
 
-class GeneratePlot:
+CURSOR_KWARGS = {
+    "useblit": True,  # Use blitting for better performance
+    "color": "gray",  # Gray color for the lines
+    "linewidth": 0.8,  # Thin lines
+    "alpha": 0.6,  # Semi-transparent
+    "horizOn": True,  # Show horizontal line
+    "vertOn": True,  # Show vertical line
+}
+
+
+class StylizedPlot:
+    """Class to generate plots with various formatting and scaling options."""
+
     def __init__(
         self,
-        ax,
+        ax: Any,
         formatter="stack",
         scales=None,
         annotator="decade",
@@ -1160,19 +1446,23 @@ class GeneratePlot:
         init_formats=None,
         **kwargs,
     ):
-        self.ax = ax if isinstance(ax, (list, tuple, np.ndarray)) else [ax]
-        self.data = None  # Attribute to store data
+        self.ax = list(ax) if isinstance(ax, (list, tuple, np.ndarray)) else [ax]
+        # self.data = {}  # Attribute to store data
+        self.directory = OrderedDict()
+        self._cursors = []
+        # self._cross_lines = []
+        self._prev_scales = []
 
         self.count = 0
-        self.init_formats = (
-            init_formats
-            if init_formats is not None
-            else ["formatting", "scale"]
-        )
-        self.fkwargs = kwargs.get("fkwargs", {})
+        self.init_formats = init_formats if init_formats is not None else ["formatting", "scale"]
+
+        # self.all_annotations = {}
+
+        self.f_kwargs = kwargs.get("f_kwargs", {})
         self.lkwargs = kwargs.get("lkwargs", {})
         self.skwargs = kwargs.get("skwargs", {})
-        self.annotations_arr = []
+        self.ckwargs = CURSOR_KWARGS | kwargs.get("ckwargs", {})
+        # self.a_kwargs = kwargs.get("a_kwargs", {})
 
         self.labels = labels
         self.scales = scales
@@ -1182,33 +1472,35 @@ class GeneratePlot:
         self.annotator = annotator
 
         # Initialize properties from kwargs
-        self.xscale = kwargs.get("xscale", None)
-        self.yscales = kwargs.get("yscales", None)
+        self.x_scale = kwargs.get("x_scale", None)
+        self.y_scales = kwargs.get("y_scales", None)
 
-        self.title = kwargs.get("title", self.fkwargs.get("title", None))
-        self.xlabel = kwargs.get("xlabel", self.fkwargs.get("xlabel", None))
-        self.ylabels = kwargs.get("ylabels", self.fkwargs.get("ylabels", []))
+        self.title = kwargs.get("title", self.f_kwargs.get("title", None))
+        self.xlabel = kwargs.get("xlabel", self.f_kwargs.get("xlabel", None))
+        self.ylabels = kwargs.get("ylabels", self.f_kwargs.get("ylabels", []))
 
     @property
     def scales(self):
-        return [self.xscale] + self.yscales
+        """Returns the scales for the x and y axes."""
+        return [self.x_scale] + self.y_scales
 
     @scales.setter
     def scales(self, scales):
         if isinstance(scales, str):
             scales = [scales] * (1 + len(self.ax))
         if isinstance(scales, (tuple, list)):
-            self.xscale = scales[0]
-            self.yscales = scales[1:]
+            self.x_scale = scales[0]
+            self.y_scales = scales[1:]
 
     @property
-    def xscale(self):
+    def x_scale(self):
+        """Returns the scale for the x-axis."""
         if not hasattr(self, "_xscale"):
-            self.xscale = "lin"
+            self.x_scale = "lin"
         return self._xscale
 
-    @xscale.setter
-    def xscale(self, scale):
+    @x_scale.setter
+    def x_scale(self, scale):
         if isinstance(scale, (tuple, list)):
             scale = scale[0]
         if isinstance(scale, str):
@@ -1218,25 +1510,22 @@ class GeneratePlot:
                 self._xscale = PlotFactory.get_scaler("lin", axis="x")[0]
 
     @property
-    def yscales(self):
+    def y_scales(self):
+        """Returns the scales for the y-axes."""
         if not hasattr(self, "_yscales"):
-            self.yscales = "lin"
+            self.y_scales = "lin"
         return self._yscales
 
-    @yscales.setter
-    def yscales(self, scales):
+    @y_scales.setter
+    def y_scales(self, scales):
         if isinstance(scales, str):
             scales = [scales] * len(self.ax)
-        if isinstance(scales, (tuple, list)) and all(
-            isinstance(s, str) for s in scales
-        ):
+        if isinstance(scales, (tuple, list)) and all(isinstance(s, str) for s in scales):
             if len(scales) == len(self.ax):
                 self._yscales = PlotFactory.get_scaler(*scales)
             elif len(scales) > len(self.ax):
-                self._yscales = PlotFactory.get_scaler(
-                    *scales[1 : len(self.ax) + 1]
-                )
-                self.xscale = scales[0]
+                self._yscales = PlotFactory.get_scaler(*scales[1 : len(self.ax) + 1])
+                self.x_scale = scales[0]
             else:
                 scales = [scales[0]] * len(self.ax)
                 self._yscales = PlotFactory.get_scaler(*scales)
@@ -1246,36 +1535,38 @@ class GeneratePlot:
                 self._yscales = PlotFactory.get_scaler(*scales)
 
     @property
-    def fkwargs(self):
-        return self._fkwargs
+    def f_kwargs(self):
+        """Returns the formatting kwargs."""
+        return self._f_kwargs
 
-    @fkwargs.setter
-    def fkwargs(self, kwargs):
-        if not hasattr(self, "_fkwargs"):
-            self._fkwargs = {}
+    @f_kwargs.setter
+    def f_kwargs(self, kwargs):
+        if not hasattr(self, "_f_kwargs"):
+            self._f_kwargs = {}
         if kwargs is None:
-            self._fkwargs = {}
+            self._f_kwargs = {}
         elif isinstance(kwargs, dict):
             self.xlabel = (kwargs.pop("xlabel", self.xlabel),)
             self.ylabels = (kwargs.pop("ylabels", self.ylabels),)
             self.title = (kwargs.pop("title", self.title),)
 
-            self._fkwargs = {**self._fkwargs, **kwargs.copy()}
+            self._f_kwargs = {**self._f_kwargs, **kwargs.copy()}
 
-            if self._fkwargs.get("power_lim") is not None:
-                self._fkwargs["x_power_lim"] = (
-                    self._fkwargs["power_lim"]
-                    if self._fkwargs.get("x_power_lim") is None
-                    else self._fkwargs["x_power_lim"]
+            if self._f_kwargs.get("power_lim") is not None:
+                self._f_kwargs["x_power_lim"] = (
+                    self._f_kwargs["power_lim"]
+                    if self._f_kwargs.get("x_power_lim") is None
+                    else self._f_kwargs["x_power_lim"]
                 )
-                self._fkwargs["y_power_lim"] = (
-                    self._fkwargs["power_lim"]
-                    if self._fkwargs.get("y_power_lim") is None
-                    else self._fkwargs["y_power_lim"]
+                self._f_kwargs["y_power_lim"] = (
+                    self._f_kwargs["power_lim"]
+                    if self._f_kwargs.get("y_power_lim") is None
+                    else self._f_kwargs["y_power_lim"]
                 )
 
     @property
     def title(self):
+        """Returns the title of the plot."""
         if not hasattr(self, "_title"):
             self._title = None
         return self._title
@@ -1287,6 +1578,7 @@ class GeneratePlot:
 
     @property
     def labels(self):
+        """Returns the labels for the x and y axes."""
         if self.ylabels is None:
             return None
         return [self.xlabel] + self.ylabels
@@ -1301,6 +1593,7 @@ class GeneratePlot:
 
     @property
     def xlabel(self):
+        """Returns the label for the x-axis."""
         if not hasattr(self, "_xlabel"):
             self._xlabel = None
         return self._xlabel
@@ -1313,20 +1606,19 @@ class GeneratePlot:
             self._xlabel = label
 
     @property
-    def ylabels(self):
+    def ylabels(self) -> list[str] | None:
+        """Returns the labels for the y-axes."""
         if not hasattr(self, "_ylabels"):
             self._ylabels = None
         return self._ylabels
 
     @ylabels.setter
     def ylabels(self, labels):
-        if isinstance(labels, (tuple, list)) and all(
-            isinstance(lb, str) for lb in labels
-        ):
+        if isinstance(labels, (tuple, list)) and all(isinstance(lb, str) for lb in labels):
             if len(labels) == len(self.ax):
-                self._ylabels = labels
+                self._ylabels = list(labels)
             elif len(labels) > len(self.ax):
-                self._ylabels = labels[1 : len(self.ax) + 1]
+                self._ylabels = list(labels[1 : len(self.ax) + 1])
                 self.xlabel = labels[0]
             elif labels == []:
                 self._ylabels = None
@@ -1337,6 +1629,7 @@ class GeneratePlot:
 
     @property
     def formatter(self):
+        """Returns the formatter for the plot."""
         if not hasattr(self, "_formatter"):
             self.formatter = "stack"
         return self._formatter
@@ -1347,172 +1640,134 @@ class GeneratePlot:
             self._formatter = PlotFactory.get_formatter(formatter)
 
     @property
-    def annotator(self):
-        if not hasattr(self, "_annotator"):
-            self.annotator = "decade"
-        return self._annotator
-
-    @annotator.setter
-    def annotator(self, annotator):
-        if isinstance(annotator, str):
-            self._annotator = PlotFactory.get_annotator(annotator)
-
-    @property
     def _formating_methods(self):
+        """Returns the list of formatting methods."""
         return ["scale", "formatting", "annotate", "square"]
 
     def formatting(self, **kwargs):
         """Apply formatting to the axes."""
-        self.fkwargs = kwargs
+        self.f_kwargs = kwargs
 
-        self.ax = self.formatter.apply_formatting(
+        form_res = self.formatter.apply_formatting(
             *self.ax,
             xlabel=self.xlabel,
             ylabel=self.ylabels,
             title=self.title,
-            **self.fkwargs,
+            **self.f_kwargs,
         )
+        self.ax = list(form_res) if isinstance(form_res, (list, tuple)) else [form_res]
 
-    def scale(self, data=None, axis=None, label=None, **kwargs):
+    def get_plot_data(self, axis=None, label="", as_dict=False):
+        """
+        Retrieve data from the plot based on the specified axis and label.
+
+        Args:
+            ax (matplotlib.axes.Axes): The axes object to retrieve data from.
+            axis (str or int): The axis to retrieve data from ('x', 'y', or None for both).
+            label (str): The label to filter data from the plot.
+
+        Returns:
+            list: The data retrieved from the plot.
+        """
+        res_format = "dict" if as_dict else ""
+        return [get_plot_data(ax, axis, label, res_format) for ax in self.ax]
+
+    def get_plot_data_labels(self, index=None):
+        """
+        Retrieve data labels from the plot or a specific label by index.
+
+        Args:
+            index (int, optional): The index of the label to retrieve. If None, all labels are returned.
+
+        Returns:
+            list or str: A list of all labels if index is None, or a single label if index is provided.
+        """
+        all_labels = []
+        for ax in self.ax:
+            labels = get_plot_data(ax, None, "", "labels")
+            if labels is not None:
+                all_labels.extend(labels)
+
+        if index is not None:
+            try:
+                return all_labels[index]  # Return the label at the specified index
+            except IndexError as exc:
+                raise ValueError(f"Index {index} is out of range for available labels.") from exc
+        return all_labels  # Return all labels if no index is specified
+
+    def scale(
+        self,
+        data: ArrayLike | list[Any] | tuple[Any, ...] | str | None = None,
+        axis: str | int | None = None,
+        label: str = "",
+        use_prior: bool = False,
+        **kwargs,
+    ):
+        """
+        Scale the axes based on the provided data or retrieve data from the plot.
+
+        Args:
+            data (list): A list of np.ndarrays, lists, or min/max pairs for scaling.
+            axis (str or int): The axis to scale ('x', 'y', or None for both).
+            label (str): The label to filter data from the plot.
+            **kwargs: Additional keyword arguments for scaling.
+
+        Returns:
+            None
+        """
+        if use_prior and self._prev_scales and len(self._prev_scales) == len(self.ax):
+            for n, ax in enumerate(self.ax):
+                prev = self._prev_scales[n]
+                ax.set_xscale(prev["xscale"])
+                ax.set_yscale(prev["yscale"])
+                ax.set_xlim(prev["xlim"])
+                ax.set_ylim(prev["ylim"])
+            return
+
+        if isinstance(data, str):
+            if data in self.directory:
+                data = self.directory[data]["data"]
+
+        # Validate data input
+        if isinstance(data, (tuple, list)) and len(data) == 1 + len(self.ax):
+            processed_data = []
+            for i, d in enumerate(data):
+                # Convert lists to arrays and handle min/max pairs
+                if isinstance(d, (tuple, list)):
+                    d = np.array(d)
+                if len(d) == 2:
+                    d = np.linspace(d[0], d[1], num=50)
+                if d.ndim == 2 and 1 in d.shape:
+                    d = d.flatten()
+                if d.ndim != 1:
+                    processed_data = None
+                    break
+                if i > 0:
+                    processed_data.append(np.column_stack((data[0], d)))
+
+            data = processed_data
+
         if (
-            not isinstance(data, list)
+            not isinstance(data, (tuple, list))
             or len(data) != len(self.ax)
-            or not all(isinstance(d, np.ndarray) for d in data)
+            or not all(isinstance(d, (np.ndarray, pd.DataFrame)) for d in data)
         ):
             data = None
+        # Scale each axis
         for i, ax in enumerate(self.ax):
             if data is None:
                 ax_data = get_plot_data(ax, axis, label)
             else:
                 ax_data = data[i]
-
-            if axis is None or axis == "x" or axis == 0:
-                self.ax[i] = self.xscale.scale(ax, ax_data[:, 0], **{**self.skwargs, **kwargs})
-            if axis is None or axis == "y" or axis > 0:
-                self.ax[i] = self.yscales[i].scale(ax, ax_data[:, 1], **{**self.skwargs, **kwargs})
-        return
-
-    def clear(self):
-        """Clear all plots from the axes."""
-        self.count = 0
-        self.annotations_arr = []
-        for ax in self.ax:
-            if ax.get_xscale() == "log":
-                ax.set_xscale("linear")
-            if ax.get_yscale() == "log":
-                ax.set_yscale("linear")
-            ax.clear()
-
-    def clear_annotations(self):
-        """Clear annotations for the specified group of positions."""
-        self.annotations_arr = []
-
-    def update_annotation(self, data=None, index=None, cols=None, **kwargs):
-        """Update annotations by clearing old ones and adding new ones."""
-        if index is not None and index < len(self.annotations_arr):
-            anno_list = self.annotations_arr[index]
-            for anno in anno_list:
-                _, kwargs["base_angle"], kwargs["mag_off"] = (
-                    anno.prepare_update()
+            if isinstance(ax_data, pd.DataFrame):
+                ax_data = ax_data.to_numpy(copy=True)
+            ax_data = np.asarray(ax_data)
+            if axis is None or axis == "x" or (isinstance(axis, int) and axis == 0):
+                self.ax[i] = self.x_scale.scale(ax, ax_data[:, 0], **{**self.skwargs, **kwargs})
+            if axis is None or axis == "y" or (isinstance(axis, int) and axis > 0):
+                self.ax[i] = self.y_scales[i].scale(
+                    ax, ax_data[:, 1], **{**self.skwargs, **kwargs}
                 )
-
-        self.annotate(data, index, cols, **kwargs)
-
-    def annotate(self, data=None, index=None, cols=None, **kwargs):
-        """Apply labeling to the axes.  lkwargs=dict(min_distance=0.05, mag_off=0.1, base_angle=10)"""
-        if data is None:
-            data = self.data
-
-        if isinstance(data, pd.DataFrame):
-            data = [data] * len(self.ax)
-        elif isinstance(data, list):
-            if len(data) != len(self.ax):
-                raise ValueError(
-                    "Length of data list must match the number of axes."
-                )
-        else:
-            raise TypeError(
-                "Data must be a DataFrame or a list of DataFrames."
-            )
-
-        # annotations_arr = self.lkwargs.get("positions", [])
-        index = (
-            int(index)
-            if index is not None and index < len(self.annotations_arr)
-            else None
-        )
-
-        annotations_list = (
-            self.annotations_arr[index] if index is not None else []
-        )
-
-        angles = []
-        offs = []
-        if annotations_list == []:
-            for i, annos in enumerate(self.annotations_arr):
-                angles.append(annos[0].base_angle)
-                offs.append(annos[0].mag_off)
-                if annos[0].xyann == []:
-                    annotations_list = annos
-                    index = i
-                    break
-            else:
-                base_angle = (
-                    angles[-1]
-                    if angles != []
-                    else kwargs.pop("base_angle", 10)
-                )
-                mag_off = (
-                    offs[-1] if offs != [] else kwargs.pop("base_angle", 0.1)
-                )
-
-                annotations_list = [
-                    Annotations(
-                        ax,
-                        base_angle=base_angle,
-                        mag_off=mag_off,
-                    )
-                    for ax in self.ax
-                ]
-
-        # allow for passing kwargs but
-        base_angle = kwargs.pop("base_angle", annotations_list[0].base_angle)
-        mag_off = kwargs.pop("mag_off", annotations_list[0].mag_off)
-        min_distance = kwargs.pop(
-            "min_distance", annotations_list[0].min_distance
-        )
-
-        for annos in annotations_list:
-            annos.min_distance = min_distance
-            if (
-                index is None
-            ):  # if index is not None then break called, so no need to shift location
-                annos.base_angle = base_angle
-                annos.mag_off = mag_off
-                if base_angle in angles and mag_off in offs:
-                    annos.shift_location()
-
-        new_annotations_list = []
-        for ax, df, anno in zip(self.ax, data, annotations_list):
-            if cols is None:
-                cols = list(df.columns)[:3]
-
-            # Ensure axis is up to date
-            anno.ax = ax
-
-            ax, new_annotations = self.annotator.annotate(
-                ax,
-                df[cols].copy(),
-                annotations=anno,
-                **kwargs,
-            )
-
-            new_annotations_list.append(new_annotations)
-
-        if index is None:
-            self.annotations_arr.append(new_annotations_list)
-        else:
-            self.annotations_arr[index] = new_annotations_list
 
     def square(self):
         """Set the aspect ratio to be equal and match x-ticks to y-ticks for all axes."""
@@ -1529,42 +1784,287 @@ class GeneratePlot:
                 share=True,
             )
 
-    def plot(
-        self, plot_type, data, keys=None, cols=None, rescale=True, **kwargs
-    ):
+    def clear(self):
+        """Clear all plots from the axes."""
+        self.count = 0
+        self.directory = {}
+
+        for ax in self.ax:
+            if ax.get_xscale() == "log":
+                ax.set_xscale("linear")
+            if ax.get_yscale() == "log":
+                ax.set_yscale("linear")
+            ax.clear()
+
+    def scale_history(self, save=True):
+        """Clear all plots from the axes."""
+        self._prev_scales = []
+        if save:
+            for ax in self.ax:
+                ax_settings = {
+                    "xscale": ax.get_xscale(),
+                    "xlim": ax.get_xlim(),
+                    "yscale": ax.get_yscale(),
+                    "ylim": ax.get_ylim(),
+                }
+                self._prev_scales.append(ax_settings)
+
+    def update_annotation(self, key=None, **kwargs):
+        """
+        Update annotations by clearing old ones and adding new ones.
+
+        Args:
+            data (pd.DataFrame or list): The data to annotate.
+            key (int or str): The key for the annotations. If int, it is treated as an index for the plot label.
+            cols (list): The columns to use for annotations.
+            **kwargs: Additional keyword arguments for annotations.
+        """
+        # Handle backward compatibility for key as an integer
+        if isinstance(key, int):
+            # key = self.get_plot_data_labels(index=key)
+            key = list(self.directory.keys())[key]
+
+        if key is None:
+            # Iterate through all keys in self.all_annotations
+            all_annotations = [k for k, v in self.directory.items() if v.get("annotated", False)]
+            for c_key in all_annotations:
+                self.update_annotation(key=c_key, **kwargs)
+            return
+
+        if key in self.directory and self.directory[key].get("annotated", False):
+            anno_list = self.directory[key]["annotations"]
+            for anno in anno_list:
+                _, kwargs["base_angle"], kwargs["mag_off"] = anno.prepare_update()
+
+        self.annotate(key, **kwargs)
+
+    def annotate(self, key=None, **kwargs):
+        """
+        Apply labeling to the axes.
+
+        Args:
+            data (pd.DataFrame or list): The data to annotate.
+            key (int or str): The key for the annotations. If int, it is treated as an index for the plot label.
+            cols (list): The columns to use for annotations.
+            **kwargs: Additional keyword arguments for annotations.
+        """
+        if key is None:
+            raise ValueError("Key must be specified for annotation.")
+
+        if key not in self.directory:
+            raise ValueError(f"Key '{key}' not found in the directory.")
+
+        entry = self.directory[key]
+
+        # If the annotator is a string, replace it with the corresponding annotator object
+        if isinstance(entry["annotator"], str):
+            entry["annotator"] = PlotFactory.get_annotator(entry["annotator"])
+
+        annotations_list = entry.get("annotations", [])
+        kwargs = {**entry.get("a_kwargs", {}), **kwargs}
+
+        angles = []
+        offs = []
+        if not annotations_list:
+            # for existing_key, annos in self.all_annotations.items():
+            for existing_key, annos in {
+                k: v.get("annotations", [])
+                for k, v in self.directory.items()
+                if v.get("annotated", False)
+            }.items():
+                if not annos:
+                    continue
+                angles.append(annos[0].base_angle)
+                offs.append(annos[0].mag_off)
+                if not annos[0].xyann:
+                    annotations_list = annos
+                    key = existing_key
+                    break
+            else:
+                base_angle = angles[-1] if angles else kwargs.pop("base_angle", 10)
+                mag_off = offs[-1] if offs else kwargs.pop("mag_off", 0.1)
+
+                annotations_list = [
+                    Annotations(ax, base_angle=base_angle, mag_off=mag_off) for ax in self.ax
+                ]
+
+        base_angle = kwargs.pop("base_angle", annotations_list[0].base_angle)
+        mag_off = kwargs.pop("mag_off", annotations_list[0].mag_off)
+        min_distance = kwargs.pop("min_distance", annotations_list[0].min_distance)
+
+        for annos in annotations_list:
+            annos.min_distance = min_distance
+            if key is None:
+                annos.base_angle = base_angle
+                annos.mag_off = mag_off
+                if base_angle in angles and mag_off in offs:
+                    annos.shift_location()
+
+        new_annotations_list = []
+        for ax, d, anno in zip(self.ax, entry["data"], annotations_list):
+            if isinstance(d, pd.DataFrame):
+                d = d.to_numpy(copy=True)
+            if isinstance(d, np.ndarray) and d.shape[0] < d.shape[1]:
+                d = d.T
+
+            # Annotate the axis
+            ax, new_annotations = entry["annotator"].annotate(
+                ax, d[:, :3].copy(), annotations=anno, **kwargs.copy()
+            )
+            new_annotations_list.append(new_annotations)
+
+        # Store the new annotations in the directory
+        entry["annotations"] = new_annotations_list
+        entry["a_kwargs"] = kwargs
+
+        self.directory[key] = entry
+
+    def prepare_data(self, data, y_int=1):
+        """
+        Prepare a list of reordered DataFrames for plotting.
+
+        Args:
+            data (pd.DataFrame or list): The input data to prepare.
+            y_int (int): The interval for y-columns (default is 1).
+
+        Returns:
+            list: A list of reordered DataFrames, one for each axis.
+        """
+        if isinstance(data, list):
+            # If data is already a list, return it as is
+            return data
+
+        keys = data.columns.to_list()
+        reordered_data = []
+
+        for n in range(len(self.ax)):
+            reordered_keys = (
+                [keys[0]]
+                + keys[1:][(n * y_int) % (len(keys) - 1) :]
+                + keys[1:][: (n * y_int) % (len(keys) - 1)]
+            )
+            reordered_data.append(data[reordered_keys].copy())
+
+        return reordered_data
+
+    def update_data(self, key, data):
+        """
+        Update the plot and directory with new data.
+
+        Args:
+            key (str): The key identifying the plot in the directory.
+            data (pd.DataFrame or list): The new data to update the plot with.
+        """
+        if isinstance(key, (tuple, list)):
+            if not isinstance(data, (tuple, list)) or isinstance(data[0], pd.DataFrame):
+                data = [data] * len(key)
+            for k, d in zip(key, data):
+                self.update_data(k, d)
+        # Parse the data using prepare_data
+        parsed_data = self.prepare_data(data, self.directory[key]["y_dims"])
+
+        # Ensure the key exists in the directory
+        if key not in self.directory:
+            raise KeyError(f"Key '{key}' not found in the directory.")
+
+        for p_df, df in zip(parsed_data, self.directory[key]["data"]):
+            if not isinstance(p_df, pd.DataFrame):
+                raise ValueError("Each parsed data item must be a DataFrame.")
+            if p_df.shape != df.shape:
+                raise ValueError(
+                    f"Parsed data shape {p_df.shape} does not match existing data shape {df.shape}."
+                )
+        # Update the directory with the new data
+        self.directory[key]["data"] = parsed_data
+
+        # # Update the plot using set_xdata and set_ydata
+        # for ax, df in zip(self.ax, parsed_data):
+        #     if not ax.lines:
+        #         raise ValueError(f"No lines found in the axes for key '{key}'.")
+        #     line = ax.lines[0]  # Assuming the first line corresponds to the plot
+
+        #     line.set_xdata(df.iloc[:, 0])  # Set x-data using the first column
+        #     line.set_ydata(df.iloc[:, 1:self.directory[key]["y_dims"] + 1])  # Set y-data using the second column
+
+        # # Redraw the updated plots
+        # for ax in self.directory[key]["ax"]:
+        #     ax.figure.canvas.draw_idle()
+
+    def plot(self, plot_type, data, add_to_annotations=False, exclude_from_all=False, **kwargs):
         """Add a plot to the existing axes."""
+        # keys=None, cols=None, rescale=True,
         if not isinstance(plot_type, str):
             plot_type = "scatter"
 
         plot = PlotFactory.get_plot(plot_type)
 
+        if isinstance(data, list) and len(data) >= len(self.ax):
+            data = [d if isinstance(d, pd.DataFrame) else pd.DataFrame(d) for d in data]
+        elif not isinstance(data, pd.DataFrame):
+            data = pd.DataFrame(data)
+
         y_int = 1
         if any(m_col in plot.primary_kwargs for m_col in ["x2", "y2"]):
             y_int = 2
 
-        ordered, keys = self.filter_data(data, keys, cols, y_int, kwargs.get("styling", "b"))
+        # ordered, keys = self.filter_data(data, keys, cols, y_int, kwargs.get("styling", "b"))
+        key = kwargs.get("label", f"plot_{len(self.directory) + 1}")
+        a_kwargs = kwargs.pop("a_kwargs", {})
 
-        # Data is now a dictionary of dataframes with columns in the correct plot order
-        for n, ax in enumerate(self.ax):
-            try:
-                self.ax[n] = plot.plot(
-                    ax,
-                    ordered[keys[n]],
-                    list(ordered[keys[n]].columns),
-                    **kwargs,
+        kwargs["label"] = key
+        name = kwargs.pop("name", key)
+        # Store metadata in the directory
+        self.directory[name] = {
+            "data": [],  # the data of the figure
+            "plot_type": plot_type,  # the type of plot
+            # "ax": [], # the axes of the figure
+            "y_dims": y_int,  # the number of y dimensions
+            "kwargs": kwargs,
+            "annotated": add_to_annotations,
+            "annotator": kwargs.pop("annotator", a_kwargs.pop("annotator", "decade")),
+            "annotations": [],
+            "a_kwargs": a_kwargs,
+            "attrs": kwargs.pop("attrs", {}),
+        }
+
+        # if "All" not in self.directory:
+        #     self.directory["All"] = {
+        #         "data": [],
+        #         "plot_type": [plot_type],
+        #     }
+        # else:
+        #     self.directory["All"]["plot_type"].append(plot_type)
+
+        data = self.prepare_data(data, y_int=y_int)
+
+        for n, (ax, df) in enumerate(zip(self.ax, data)):
+            self.ax[n] = plot.plot(
+                ax,
+                df,
+                df.columns.to_list(),
+                **kwargs,
+            )
+            # self.data[key].append(df.copy())
+            self.directory[name]["data"].append(df.copy())
+            # self.directory[name]["ax"].append(ax)
+
+            if "All" in self.directory and not exclude_from_all:
+                self.directory["All"]["data"][n] = pd.concat(
+                    [self.directory["All"]["data"][n], df.copy()],
+                    ignore_index=True,
                 )
 
-            except IndexError as exc:
-                raise IndexError(
-                    "Length of y cols must match the number of axes"
-                ) from exc
-        self.data = ordered
+        if "All" not in self.directory and not exclude_from_all:
+            self.directory["All"] = {
+                "data": [df.copy() for df in data],
+                "plot_type": [plot_type],
+            }
+        elif not exclude_from_all:
+            self.directory["All"]["plot_type"].append(plot_type)
+
         if self.count == 0:
             # self.apply_formats(self.init_formats)
-            if (
-                "format" in self.init_formats
-                or "formatting" in self.init_formats
-            ):
+            if "format" in self.init_formats or "formatting" in self.init_formats:
                 self.formatting()
             if "scale" in self.init_formats:
                 self.scale()
@@ -1572,43 +2072,6 @@ class GeneratePlot:
                 self.square()
 
         self.count += 1
-
-    def filter_data(self, data, keys=None, cols=None, y_int=1, styling="b"):
-        """Filter data to only include items in keys and organize by cols."""
-        ordered = {}
-        if isinstance(data, dict):  # Ensure each dataframe is sorted by cols
-            if keys is None:
-                keys = list(data.keys())
-            if cols is None:
-                cols = list(data[keys[0]].columns)[
-                    : 1 + y_int
-                ]  # assumes all df are the same
-            for key in keys:
-                df = data[key].copy()
-                ordered[key] = df[
-                    cols + [col for col in df.columns if col not in cols]
-                ]
-        elif isinstance(
-            data, pd.DataFrame
-        ):  # Duplicate data, reorganizing columns for each key
-            if (
-                cols is None
-            ):  # Should not be None but maybe cols was passed through keys
-                cols = list(data.columns) if keys is None else keys
-            keys = []
-            df = data.copy()
-            for i in range(1, len(cols), y_int):
-                key = cols[i : i + y_int]
-                cols_reordered = (
-                    [cols[0]]
-                    + key
-                    + [col for col in df.columns if col not in [cols[0]] + key]
-                )
-                ordered[", ".join(key)] = df[cols_reordered]
-                keys.append(", ".join(key))
-
-        final_data = {k: ordered[k] for k in keys}
-        return final_data, keys
 
     def apply_formats(self, formats=None):
         """Apply formatting to the axes."""
@@ -1623,103 +2086,370 @@ class GeneratePlot:
             elif "square" in method:
                 self.square()
 
+    def toggle_crosshair(self, visible=False):
+        """
+        Toggle crosshair cursor visibility on all axes.
+
+        Args:
+            visible (bool, optional): If provided, explicitly set crosshair visibility.
+                                    If None, toggle the current visibility state.
+
+        Returns:
+            bool: The new visibility state.
+        """
+        # if "line" in cross_type.lower():
+        #     if not self._cross_lines or len(self._cross_lines) != len(self.ax):
+        #         self._cross_lines = []
+        #         for ax in self.ax:
+        #             vline = ax.axvline(color="gray", lw=0.8, alpha=0.6, visible=False)
+        #             hline = ax.axhline(color="gray", lw=0.8, alpha=0.6, visible=False)
+        #             self._cross_lines.append((vline, hline))
+
+        #     for vline, hline in self._cross_lines:
+        #         vline.set_visible(visible)
+        #         hline.set_visible(visible)
+        #         # Make sure to draw the figure containing the axis
+        #         # vline.figure.canvas.draw_idle()
+        # else:
+        if not self._cursors or len(self._cursors) != len(self.ax):
+            self._cursors = [Cursor(ax, **self.ckwargs) for ax in self.ax]
+
+        # Create or update cursors for each axis
+        for i, ax in enumerate(self.ax):
+            # Set visibility
+            self._cursors[i].visible = visible
+            # Make sure to draw the figure containing the axis
+            # ax.figure.canvas.draw_idle()
+        # return visible  # Return the new visibility state
+
+    # def update_crosshair(self, *values):
+    #     """
+    #     Update crosshair cursor properties on all axes.
+
+    #     Args:
+    #         **kwargs: Properties to update for the crosshair cursors.
+    #     """
+    #     if self._cross_lines:
+    #         for vline, hline in self._cross_lines:
+    #             for vals in values:
+    #                 vline.set_xdata(vals[0])
+    #                 hline.set_ydata(vals[1])
+
     @staticmethod
     def subplots(*args, **kwargs):
+        """Create subplots with the specified arguments."""
         return plt.subplots(*args, **kwargs)
 
     @staticmethod
     def get_cmap(name=None, lut=None):
+        """Get a colormap by name or LUT."""
         return plt.get_cmap(name=name, lut=lut)
 
     @staticmethod
     def get_line(ax):
+        """Get all line objects from the axes."""
         return [line for line in ax.lines]
 
     @staticmethod
     def get_scatter(ax):
-        return [
-            scatter
-            for scatter in ax.collections
-            if isinstance(scatter, PathCollection)
-        ]
+        """Get all scatter objects from the axes."""
+        return [scatter for scatter in ax.collections if isinstance(scatter, PathCollection)]
 
     @staticmethod
     def get_fill(ax):
+        """Get all fill objects from the axes."""
         return [
-            collection
-            for collection in ax.collections
-            if isinstance(collection, PolyCollection)
+            collection for collection in ax.collections if isinstance(collection, PolyCollection)
         ]
 
     @staticmethod
     def LogNorm(**kwargs):
-        return plt.matplotlib.colors.LogNorm(**kwargs)
+        """Generate a logarithmic normalization."""
+        return plt.matplotlib.colors.LogNorm(**kwargs)  # type: ignore
 
     @staticmethod
     def BoundaryNorm(boundaries, ncolors, clip=False, extend="neither"):
-        return plt.matplotlib.colors.BoundaryNorm(
+        """Generate a BoundaryNorm for discretizing a colormap."""
+        return plt.matplotlib.colors.BoundaryNorm(  # type: ignore
             boundaries=boundaries, ncolors=ncolors, clip=clip, extend=extend
         )
 
     @staticmethod
     def LogCmapNorm(cmap="coolwarm", **kwargs):
-        return {"cmap": cmap, "norm": plt.matplotlib.colors.LogNorm(**kwargs)}
+        """Generate a colormap and normalization for logarithmic data."""
+        return {"cmap": cmap, "norm": plt.matplotlib.colors.LogNorm(**kwargs)}  # type: ignore
 
     @staticmethod
     def DecadeCmapNorm(data, cmap="coolwarm", clip=True, extend="neither"):
+        """ "Generate a colormap and normalization for decade-based data."""
         # Calculate the number of decades
-        decade_min = np.floor(np.log10(data.min()))
-        decade_max = np.ceil(np.log10(data.max()))
-        num_decades = int(decade_max - decade_min)
+        try:
+            decade_min = np.floor(np.log10(data.min()))
+            decade_max = np.ceil(np.log10(data.max()))
+            num_decades = int(decade_max - decade_min)
 
-        # Define the boundaries for each decade
-        decades = np.logspace(decade_min, decade_max, num=num_decades + 1)
+            # Define the boundaries for each decade
+            decades = np.logspace(decade_min, decade_max, num=num_decades + 1)
+        except FloatingPointError:
+            decade_min = np.floor(data.min())
+            decade_max = np.ceil(data.max())
+            num_decades = int(decade_max - decade_min)
+
+            # Define the boundaries for each decade
+            decades = np.linspace(decade_min, decade_max, num=num_decades + 1)
 
         # Create a colormap with a specified number of colors
         mod_cmap = plt.get_cmap(cmap, num_decades)
 
         # Create a BoundaryNorm to discretize the colormap
-        norm = plt.matplotlib.colors.BoundaryNorm(
+        norm = plt.matplotlib.colors.BoundaryNorm(  # type: ignore
             boundaries=decades, ncolors=num_decades, clip=clip, extend=extend
         )
 
         return {"cmap": mod_cmap, "norm": norm}
 
+    @staticmethod
+    def mod_cmap(cmap, mod_factor=1.0, reverse=False):
+        """
+        Modify a colormap by darkening or limiting its brightness range and optionally reversing it.
+
+        Args:
+            cmap (str or Colormap): The name of the colormap or a Colormap instance.
+            mod_factor (float or tuple): If float, darken the colormap by scaling RGB values (0 < mod_factor <= 1).
+                                        If tuple, limit brightness as (min_brightness, max_brightness) (0.0 to 1.0).
+            reverse (bool): If True, reverse the colormap.
+
+        Returns:
+            ListedColormap: A modified colormap.
+        """
+        if isinstance(cmap, str):
+            cmap = plt.get_cmap(cmap)
+
+        if isinstance(mod_factor, float):
+            # Darken the colormap by scaling RGB values
+            colors = cmap(np.linspace(0, 1, cmap.N))
+            colors[:, :3] *= mod_factor  # Scale RGB values
+        elif isinstance(mod_factor, tuple) and len(mod_factor) == 2:
+            # Limit brightness range
+            min_brightness, max_brightness = mod_factor
+            colors = cmap(np.linspace(min_brightness, max_brightness, cmap.N))
+        else:
+            raise ValueError("mod_factor must be a float or a tuple of length 2.")
+
+        # Reverse the colormap if requested
+        if reverse:
+            colors = colors[::-1]
+
+        return mcolors.ListedColormap(colors)
+
+    @staticmethod
+    def DynamicColor(index=None, total=None, cmap="viridis", return_list=False):
+        """
+        Generate a dynamic color or a list of colors based on the index and total number of items.
+
+        Args:
+            index (int): The current index (0-based). Ignored if `return_list` is True.
+            total (int): The total number of items.
+            cmap (str): The name of the colormap to use (default: "viridis").
+            return_list (bool): If True, return a list of colors for all indices.
+
+        Returns:
+            list or tuple: A list of colors if `return_list` is True, otherwise a single color.
+        """
+
+        if total is None or total <= 0:
+            raise ValueError("Total must be a positive integer.")
+
+        # Normalize the index range
+        norm = Normalize(vmin=0, vmax=max(1, total - 1))
+        colormap = plt.get_cmap(cmap)
+
+        if return_list:
+            # Generate a list of colors for all indices
+            return [colormap(norm(i)) for i in range(total)]
+        elif index is not None:
+            # Return the color for the specified index
+            return colormap(norm(index))
+        else:
+            raise ValueError("Index must be specified if return_list is False.")
+
+    @staticmethod
+    def marker_list():
+        """
+        Return a list of predefined markers.
+
+        Returns:
+            list: A list of marker styles.
+        """
+        return ["o", "v", "^", "<", ">", "8", "s", "p", "*", ".", "h", "H", "D", "d", "P", "X"]
+
+    @staticmethod
+    def uniform_cmap_list(ignore=None, reverse=False):
+        """
+        Return a list of uniform sequential colormaps.
+        """
+        sequential_cmaps = ["viridis", "plasma", "inferno", "magma", "cividis"]
+        if reverse:
+            sequential_cmaps = [cmap + "_r" for cmap in sequential_cmaps]
+        if isinstance(ignore, str):
+            ignore = [ignore]
+        if isinstance(ignore, (tuple, list)):
+            sequential_cmaps = [cmap for cmap in sequential_cmaps if cmap not in ignore]
+
+        return sequential_cmaps
+
+    @staticmethod
+    def diverging_named_cmap_list(ignore=None, reverse=False):
+        """
+        Return a list of diverging colormaps.
+        """
+        diverging_cmaps = ["Spectral", "coolwarm", "managua", "seismic", "vanimo", "berlin"]
+        if reverse:
+            diverging_cmaps = [cmap + "_r" for cmap in diverging_cmaps]
+        if isinstance(ignore, str):
+            ignore = [ignore]
+        if isinstance(ignore, (tuple, list)):
+            diverging_cmaps = [cmap for cmap in diverging_cmaps if cmap not in ignore]
+
+        return diverging_cmaps
+
+    @staticmethod
+    def diverging_clr_cmap_list(ignore=None, reverse=False):
+        """
+        Return a list of diverging colormaps.
+        """
+        diverging_cmaps = ["PiYG", "RdYlGn", "PRGn", "RdYlBu", "BrBG", "PuOr", "RdBu", "RdGy"]
+        if reverse:
+            diverging_cmaps = [cmap + "_r" for cmap in diverging_cmaps]
+        if isinstance(ignore, str):
+            ignore = [ignore]
+        if isinstance(ignore, (tuple, list)):
+            diverging_cmaps = [cmap for cmap in diverging_cmaps if cmap not in ignore]
+
+        return diverging_cmaps
+
+    @staticmethod
+    def sequential_cmap_list(ignore=None, reverse=False):
+        """
+        Return a list of sequential colormaps.
+        """
+        sequential_cmaps = ["Blues", "Greens", "Oranges", "Purples", "Reds"]
+        if reverse:
+            sequential_cmaps = [cmap + "_r" for cmap in sequential_cmaps]
+        if isinstance(ignore, str):
+            ignore = [ignore]
+        if isinstance(ignore, (tuple, list)):
+            sequential_cmaps = [cmap for cmap in sequential_cmaps if cmap not in ignore]
+
+        return sequential_cmaps
+
+    @staticmethod
+    def qualitative_cmap_list(ignore=None, reverse=False):
+        """
+        Return a list of qualitative colormaps.
+        """
+        qualitative_cmaps = ["Set1", "Set2", "Set3", "Pastel1", "Pastel2"]
+        if reverse:
+            qualitative_cmaps = [cmap + "_r" for cmap in qualitative_cmaps]
+        if isinstance(ignore, str):
+            ignore = [ignore]
+        if isinstance(ignore, (tuple, list)):
+            qualitative_cmaps = [cmap for cmap in qualitative_cmaps if cmap not in ignore]
+
+        return qualitative_cmaps
+
+    @staticmethod
+    def get_cmaps(
+        axes: Any, cmap_groups: str | tuple | list = "diverging_named_cmap", reverse: bool = False
+    ):
+        """
+        Get a list of colormaps including current colormaps for each axis.
+        """
+        cycler_map = {
+            "uniform_cmap": StylizedPlot.uniform_cmap_list,
+            "diverging_named_cmap": StylizedPlot.diverging_named_cmap_list,
+            "diverging_clr_cmap": StylizedPlot.diverging_clr_cmap_list,
+            "sequential_cmap": StylizedPlot.sequential_cmap_list,
+            "qualitative_cmap": StylizedPlot.qualitative_cmap_list,
+        }
+        if isinstance(cmap_groups, str):
+            cmap_groups = [cmap_groups]
+        if isinstance(axes, (tuple, list)):
+            # save time by updating
+            cln_grps = []
+            for grp in cmap_groups:
+                if grp in cycler_map:
+                    cln_grps.append(grp)
+                else:
+                    for key, method in cycler_map.items():
+                        if grp in key:
+                            cln_grps.append(key)
+                            break
+            return [StylizedPlot.get_cmaps(ax, cln_grps, reverse) for ax in axes]
+
+        cmaps = [scatter.get_cmap().name for scatter in StylizedPlot.get_scatter(axes)]
+
+        combined_cmaps = cmaps.copy()
+        for grp in cmap_groups:
+            if grp in cycler_map:
+                combined_cmaps += cycler_map[grp](cmaps, reverse)
+            else:
+                for key, method in cycler_map.items():
+                    if grp in key:
+                        combined_cmaps += method(cmaps, reverse)
+                        break
+
+        return combined_cmaps
+
+    @staticmethod
+    def set_style(style=None, **kwargs):
+        """
+        Set the style of the plot using matplotlib's style context.
+
+        Args:
+            style (str or list): The style(s) to apply. If None, use the default style.
+            **kwargs: Additional keyword arguments for the style context.
+
+        Returns:
+            None
+        """
+        # if style is None:
+        #     style = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+        if style is None:
+            style = "ggplot"
+        elif isinstance(style, str):
+            plt.style.use(style)
+        elif isinstance(style, (tuple, list)):
+            plt.style.use(style)
+
+        plt.rcParams.update(kwargs)
+
 
 # %% Operations
 if __name__ == "__main__":
-    import matplotlib.pyplot as plt
     import numpy as np
     import pandas as pd
-    from IPython import get_ipython
-    from eis_analysis.data_treatment import ComplexSystem, ConfidenceAnalysis
+    import matplotlib.pyplot as plt
+    from IPython import get_ipython  # type: ignore
 
-    get_ipython().run_line_magic("matplotlib", "Qt5")  # inline
+    # from eis_analysis.data_treatment import ComplexSystem, ImpedanceConfidence
+    from testing.rc_ckt_sim import RCCircuit
+    from eis_analysis.z_system.system import ComplexSystem
+    from eis_analysis.z_system.impedance_band import ImpedanceConfidence
+
+    get_ipython().run_line_magic("matplotlib", "Qt5")  # inline # type: ignore
 
     data_sim = RCCircuit((-2, 6.5, 200))
 
     system_data = ComplexSystem(data_sim.Z_noisy, data_sim.freq, 450e-4, 25)
     system_fit = ComplexSystem(data_sim.Z, data_sim.freq, 450e-4, 25)
 
-    # data_df = system_data.df
-    # data_df.insert(0, "freq", data_sim.freq)
-    
-
-    # fit_df = system_fit.df
-    # fit_df.insert(0, "freq", data_sim.freq)
-
-    # data_df = system_data.get_df("freq", "real", "imag")
-
-    # fit_df = system_fit.get_df("freq", "real", "imag")
-
-
     # Generate confidence interval data_sim
-    ci_analysis = ConfidenceAnalysis(
-        10, data_sim.true_values, std=0.20, func=data_sim.circuit_func
-    )
+    ci_analysis = ImpedanceConfidence(10, data_sim.true_values, std=0.20)
     ci_df = ci_analysis.gen_conf_band(
         data_sim.freq,
-        num_freq_points=100,
+        num_x_points=100,
+        func=data_sim.circuit_func,
         target_form=["freq", "impedance.mag", "sigma.mag"],
         thickness=450e-4,
         area=25,
@@ -1744,21 +2474,19 @@ if __name__ == "__main__":
     }
 
     # Create a figure with two subplots sharing the x-axis for Bode plot
-    fig, ax = plt.subplots(2, 1, sharex=True, figsize=(10, 10))
+    fig, ax1 = plt.subplots(2, 1, sharex=True, figsize=(10, 10))
 
-    # Initialize the GeneratePlot class for Bode plot
-    bode_plot = GeneratePlot(
-        ax,
-        labels=pd.Series(defaults)[
-            ["freq/label", "mag/label", "phase/label"]
-        ].to_list(),
+    # Initialize the StylizedPlot class for Bode plot
+    bode_plot = StylizedPlot(
+        ax1,
+        labels=pd.Series(defaults)[["freq/label", "mag/label", "phase/label"]].to_list(),
         title="Bode Plot",
         scales=["log", "log", "log"],
         init_formats=["scale", "format"],
     )
 
     # # Create a BoundaryNorm to discretize the colormap
-    # norm = GeneratePlot.BoundaryNorm(boundaries=decades, ncolors=num_decades, clip=True)  # CHANGE: Create BoundaryNorm
+    # norm = StylizedPlot.BoundaryNorm(boundaries=decades, ncolors=num_decades, clip=True)  # CHANGE: Create BoundaryNorm
     perc_cols = [col for col in list(ci_df.values())[0].columns if "%" in col]
     min_col = perc_cols[0] if perc_cols else "min"
     max_col = perc_cols[-1] if perc_cols else "max"
@@ -1768,183 +2496,8 @@ if __name__ == "__main__":
         "scatter",
         # data_df[["freq", "mag", "phase"]],
         system_data.get_df("freq", "impedance.mag", "sigma.mag"),
-        styling="freq",
-        # **GeneratePlot.DecadeCmapNorm(data_df["freq"], "coolwarm"), #RdYlGn
-        **GeneratePlot.DecadeCmapNorm(
-            system_data["freq"], "Spectral_r"
-        ),  # RdYlGn Spectral
+        color="freq",
+        # **StylizedPlot.DecadeCmapNorm(data_df["freq"], "coolwarm"), #RdYlGn
+        **StylizedPlot.DecadeCmapNorm(system_data["freq"], "Spectral_r"),  # RdYlGn Spectral
         # cmap=plt.get_cmap('viridis', int(np.ceil(np.log10(data_df["freq"])).m ax() - np.floor(np.log10(data_df["freq"])).min()))
     )
-    # bode_plot.plot(
-    #     "line",
-    #     # fit_df[["freq", "mag", "phase"]],
-    #     system_fit.get_df("freq", "impedance.mag", "sigma.mag"),
-    #     styling="r",
-    #     )
-    # bode_plot.plot(
-    #     "band",
-    #     ci_df,
-    #     ["impedance.mag", "sigma.mag"],
-    #     ["freq", min_col, max_col],
-    #     styling="grey",
-    # )
-
-    # # # Create a figure for Nyquist plot
-    # # fig2, ax2 = plt.subplots(figsize=(6, 6))
-
-    # # # Initialize the GeneratePlot class for Nyquist plot
-    # # nyquist_plot = GeneratePlot(
-    # #     ax2,
-    # #     labels=[defaults["real/label"], defaults["inv_imag/label"]],
-    # #     title="Nyquist Plot",
-    # #     scales="LinFrom0Scaler",
-    # #     init_formats=["scale", "format", "square"],
-    # #     fkwargs=dict(power_lim=2),
-    # #     power_lim=2,
-    # # )
-
-    # # # Create a Nyquist plot
-    # # nyquist_plot.plot(
-    # #     "scatter",
-    # #     data_df[["real", "inv_imag", "freq"]],
-    # #     styling="freq",
-    # #     label="_data",
-    # #     **GeneratePlot.DecadeCmapNorm(data_df["freq"], "coolwarm"),
-    # # )
-    # # nyquist_plot.annotate(data_df[["real", "inv_imag", "freq"]])
-    # # nyquist_plot.plot(
-    # #     "line", fit_df[["real", "inv_imag", "freq"]], styling="r", label="_line",
-    # # )
-    # # nyquist_plot.annotate(fit_df[["real", "inv_imag", "freq"]])
-    # # # nyquist_plot.clear_annotation()
-    # # nyquist_plot.update_annotation(fit_df[["real", "inv_imag", "freq"]], index=0)
-    # # # nyquist_plot.plot(
-    # # #     "band",
-    # # #     ci_df,
-    # # #     ["nyquist"],
-    # # #     ["real", "min", "max"],
-    # # #     styling="grey",
-    # # #     step="mid",
-    # # #     label="_band",
-    # # # )
-
-    # # # line = ax2.lines[0]
-
-    # # # line.set_xdata(line.get_xdata()/2)
-
-    # # Show the plots
-    # plt.show()
-
-    # def scale(self, data=None, keys=None, **kwargs):
-    #     """Apply scaling to the data."""
-    #     if data is None:
-    #         data = self.data
-    #     if data is not None:
-    #         if not isinstance(data, dict) or len(data) != len(self.ax):
-    #             data, _ = self.filter_data(data, keys, kwargs.pop("cols", None), kwargs.pop("y_int", 1))
-
-    #         keys_was_none = False
-    #         if isinstance(keys, str):
-    #             keys = [keys]
-    #         elif keys is None:
-    #             keys = list(data.keys())
-    #             keys_was_none = True
-    #         for i, ((key, df), scaler) in enumerate(
-    #             zip(data.items(), self.yscales)
-    #         ):
-    #             cols = list(df.columns)
-    #             if keys_was_none:
-    #                 keys = [cols[0]] + keys if i == 0 else [cols[0]] + keys[1:]
-    #             try:
-    #                 if keys[0] == "x" or keys[0] == cols[0]:
-    #                     self.ax[i] = self.xscale.scale(
-    #                         self.ax[i], df.iloc[:, 0]
-    #                     )
-    #                 if keys[0] == "y" or (
-    #                     key in keys and key.split(", ")[0] == cols[1]
-    #                 ):
-    #                     self.ax[i] = scaler.scale(self.ax[i], df.iloc[:, 1])
-    #             except (TypeError, IndexError) as exc:
-    #                 raise TypeError(
-    #                     "keys must be a string or a list of strings"
-    #                 ) from exc
-
-    # def rescale_axes(self, data):
-    #     """Rescale the axes when the scale is changed."""
-    #     self.scale(data)
-    #     self.formatting()
-
-    # def update_annotation(self, data=None, cols=None, **kwargs):
-    #     """Update annotations by clearing old ones and adding new ones."""
-    #     index = kwargs.pop("index", None)
-    #     if index is not None:
-    #         self.clear_annotation(index)
-    #         # CHANGE: Reuse base_angle and mag_off
-    #         angle_mag_off = self.lkwargs.get("angle_mag_off", {})
-    #         for key, angles in angle_mag_off.items():
-    #             if index < len(angles):
-    #                 kwargs["base_angle"], kwargs["mag_off"] = angles[index]
-    #     self.annotate(data, cols, **kwargs)
-
-    # def annotate(self, data=None, cols=None, **kwargs):
-    #     """Apply labeling to the axes.  lkwargs=dict(min_distance=0.05, mag_off=0.1, base_angle=10)"""
-    #     if data is None:
-    #         data = self.data
-    #     if data is not None:
-    #         if not isinstance(data, dict) or len(data) != len(self.ax):
-    #             data, _ = self.filter_data(data, kwargs.get("keys", None), cols, kwargs.pop("y_int", 1))
-
-    #         offset = {}
-    #         if (
-    #             "base_angle" not in kwargs.keys()
-    #             and "mag_off" not in kwargs.keys()
-    #         ):
-    #             bump = 30 if self.count != 0 else 0
-    #             offset["base_angle"] = (
-    #                 self.lkwargs.get("base_angle", 10) + bump
-    #             )
-    #             offset["mag_off"] = self.lkwargs.get("mag_off", 0.1)
-    #             if offset["base_angle"] > 180:
-    #                 offset["base_angle"] = 10
-    #                 offset["mag_off"] *= 1.25
-
-    #         if kwargs == {}:
-    #             kwargs = self.lkwargs.copy()
-    #             kwargs.pop("positions", {})
-    #             kwargs.pop("angle_mag_off", {})
-    #         kwargs = {**kwargs, **offset}
-
-    #         keys = kwargs.pop("keys", list(data.keys()))
-    #         # positions = {**kwargs.pop("positions", {}), **self.lkwargs.get("positions", {k:[] for k in list(data.keys())})}
-    #         positions = self.lkwargs.get(
-    #             "positions", {k: [] for k in list(data.keys())}
-    #         ).copy()
-
-    #         angle_mag_off = self.lkwargs.pop(
-    #             "angle_mag_off", {k: [] for k in list(data.keys())}
-    #         ).copy()
-
-    #         for ax, (key, df) in zip(self.ax, data.items()):
-    #             if key not in keys:
-    #                 continue
-
-    #             if cols is None:
-    #                 cols = list(df.columns)[:3]
-
-    #             _, annotation_positions = self.annotator.annotate(
-    #                 ax,
-    #                 df[cols].copy(),
-    #                 annotation_positions=positions[key],
-    #                 **kwargs,
-    #             )
-
-    #             # positions[key] = annotation_positions
-    #             positions[key].append(annotation_positions)
-    #             angle_mag_off[key].append((kwargs["base_angle"], kwargs["mag_off"]))
-
-    #     self.lkwargs = {
-    #         **self.lkwargs,
-    #         **kwargs.copy(),
-    #         "positions": positions,
-    #         "angle_mag_off": angle_mag_off,  # CHANGE: Store angle_mag_off
-    #     }

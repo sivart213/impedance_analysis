@@ -5,16 +5,6 @@ Insert module description/summary.
 @author: j2cle
 Created on Thu Sep 19 11:17:48 2024
 """
-# from .plotters import (
-# 	measured_data_bode,
-# 	measured_data_nyquist,
-# 	plot_measured_data,
-# 	get_style,
-# 	map_plt,
-# 	scatter,
-# 	nyquist,
-# 	bode,
-# )
 
 # from .decorators import (
 # 	handle_collection,
@@ -30,7 +20,7 @@ Created on Thu Sep 19 11:17:48 2024
 # )
 
 # from .plot_factory import (
-# 	GeneratePlot,
+# 	StylizedPlot,
 # )
 
 # __all__ = [
@@ -52,5 +42,5 @@ Created on Thu Sep 19 11:17:48 2024
 # 	"raise_error_on_invalid",
 # 	"sanitized_after_recursion_w_error",
 # 	"sanitize_types",
-# 	"GeneratePlot",
+# 	"StylizedPlot",
 # ]
