@@ -7,26 +7,55 @@ Created on Wed Apr 11 17:05:01 2018.
 General function file
 """
 
-# Standard library imports
+
 import os
 import re
 import sys
-# from datetime import datetime as dt
-from pathlib import Path
-# import logging
-# import inspect
 import ctypes
 import itertools
+from pathlib import Path
 
-# Third-party imports
-# import h5py
 import numpy as np
-# import pandas as pd
-from ..string_ops import parse_path_str
+
 # Local application imports
 
 # Configure logging
 # logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+
+def parse_path_str(arg: str | Path | list | np.ndarray | tuple) -> list:
+    """
+    Parses a path string or a list of path strings into a normalized list of path components.
+
+    This function takes a single argument which can be a string, a pathlib.Path object, a list of strings,
+    or a numpy.ndarray of strings, representing one or more paths. It normalizes these paths by splitting them
+    into their individual components (directories and file names), filtering out any empty components or redundant
+    separators. The function is designed to handle various path formats and separators, making it useful for
+    cross-platform path manipulation.
+
+    Parameters:
+    - arg (str, Path, list, np.ndarray): The path or paths to be parsed. This can be a single path string,
+      a pathlib.Path object, a list of path strings, or a numpy.ndarray of path strings.
+
+    Returns:
+    - list: A list of the path components extracted from the input. If the input is a list or an array,
+      the output will be a flattened list of components from all the paths.
+
+    Note:
+    - The function uses regular expressions to split path strings on both forward slashes (`/`) and backslashes (`\\`),
+      making it suitable for parsing paths from both Unix-like and Windows systems.
+    - Path components are filtered to remove any empty strings that may result from consecutive separators or leading/trailing separators.
+    - The function handles string representations of paths by stripping enclosing quotes before parsing, which is particularly
+      useful when dealing with paths that contain spaces or special characters.
+    """
+    if isinstance(arg, (str, Path)):
+        return list(filter(None, re.split(r"[\\/]+", str(repr(str(arg))[1:-1]))))
+    elif isinstance(arg, (list, np.ndarray, tuple)):
+        if len(arg) == 1 and isinstance(arg[0], (list, np.ndarray, tuple)):
+            arg = list(arg[0])
+        return list(filter(None, arg))
+    return arg
+
 
 # %% Path resolving functions
 def find_path(*dir_in, base=None, as_list=False, by_re=True, by_glob=False, **kwargs):
@@ -85,9 +114,7 @@ def find_path(*dir_in, base=None, as_list=False, by_re=True, by_glob=False, **kw
             base_path = [p for d in drives for p in d.glob("*/" + str(Path(*dir_in)))]
             # Otherwise, check if dir in is two levels down
             if base_path == []:
-                base_path = [
-                    p for d in drives for p in d.glob("*/*/" + str(Path(*dir_in)))
-                ]
+                base_path = [p for d in drives for p in d.glob("*/*/" + str(Path(*dir_in)))]
 
             if base_path == []:
                 base = None
@@ -132,9 +159,7 @@ def find_path(*dir_in, base=None, as_list=False, by_re=True, by_glob=False, **kw
         paths = [p for b in bases for p in b.glob("*/" + str(Path(*dir_in)))]
     if by_re or not by_glob:
         for b in bases:
-            paths = paths + find_files(
-                b, "path", res_type, Path(*dir_in).parts, recursive=False
-            )
+            paths = paths + find_files(b, "path", res_type, Path(*dir_in).parts, recursive=False)
 
     # if paths are not found, do a recursive search
     n = 0
@@ -143,12 +168,7 @@ def find_path(*dir_in, base=None, as_list=False, by_re=True, by_glob=False, **kw
             paths = list(bases[n].glob("**/" + str(Path(*dir_in))))
         if by_re or not by_glob:
             paths = paths + find_files(
-                bases[n],
-                "path",
-                res_type,
-                Path(*dir_in).parts,
-                ignore=bases[:n],
-                recursive=True,
+                bases[n], "path", res_type, Path(*dir_in).parts, ignore=bases[:n], recursive=True
             )
         n += 1
 
@@ -160,6 +180,26 @@ def find_path(*dir_in, base=None, as_list=False, by_re=True, by_glob=False, **kw
         return paths[0]
 
     return base / Path(*dir_in)
+
+
+class RegexFilter:
+    def __init__(self, patterns: str | Path | tuple[str, ...] | list[str]):
+        if isinstance(patterns, Path):
+            patterns = parse_path_str(patterns)
+        elif isinstance(patterns, str):
+            patterns = [patterns]
+
+        self.patterns = []
+        for pattern in patterns:
+            try:
+                self.patterns.append(re.compile(pattern))
+            except re.error:
+                continue
+
+    def __call__(self, x):
+        if not self.patterns:
+            return True
+        return all(p.search(str(x)) for p in self.patterns)
 
 
 def find_files(
@@ -201,27 +241,11 @@ def find_files(
         raise ValueError("res_type must be 'file', 'dir', or None")
 
     # Purpose: find files or dirs which match desired
-    if isinstance(patterns, Path):
-        patterns = parse_path_str(patterns)
-    elif isinstance(patterns, str):
-        patterns = [patterns]
-
-    if patterns:
-        compiled_patterns = []
-        for pattern in patterns:
-            try:
-                compiled_patterns.append(re.compile(pattern))
-            except re.error:
-                continue
-        # compiled_patterns = [re.compile(pattern) for pattern in patterns]
-        f_filter = lambda x: all(
-            pattern.search(str(x)) for pattern in compiled_patterns
-        )
+    if patterns is None:
+        filesurvey = list(my_walk(Path(path), res_type, recursive, ignore))
     else:
-        f_filter = lambda x: True  # No-op lambda, always returns True
-        yield_first_match = False  # If no patterns, always return all matches
-
-    if yield_first_match or callable(f_filter):
+        f_filter = RegexFilter(patterns)
+        yield_first_match = yield_first_match if patterns else False
         filesurvey = list(
             my_filter(
                 f_filter,
@@ -229,8 +253,6 @@ def find_files(
                 yield_first_match,
             ),
         )
-    else:
-        filesurvey = list(my_walk(Path(path), res_type, recursive, ignore))
 
     if yield_shortest_match:
         filesurvey.sort(key=lambda x: x.inode())
@@ -244,6 +266,29 @@ def find_files(
     if hasattr(filesurvey[0].stat(), attr):
         return [getattr(f.stat(), attr) for f in filesurvey]
     return filesurvey
+
+    # if patterns:
+    #     compiled_patterns = []
+    #     for pattern in patterns:
+    #         try:
+    #             compiled_patterns.append(re.compile(pattern))
+    #         except re.error:
+    #             continue
+    #     f_filter = lambda x: all(pattern.search(str(x)) for pattern in compiled_patterns)
+    # else:
+    #     f_filter = lambda x: True  # No-op lambda, always returns True
+    #     yield_first_match = False  # If no patterns, always return all matches
+
+    # if yield_first_match or callable(f_filter):
+    #     filesurvey = list(
+    #         my_filter(
+    #             f_filter,
+    #             my_walk(Path(path), res_type, recursive, ignore),
+    #             yield_first_match,
+    #         ),
+    #     )
+    # else:
+    #     filesurvey = list(my_walk(Path(path), res_type, recursive, ignore))
 
 
 # %% Path resolving functions
@@ -287,7 +332,7 @@ def detect_windows_drives(letters="ABCDEFGHIJKLMNOPQRSTUVWXYZ", exclude_nonlocal
     resume = 0
     net_dr = []
     while 1:
-        net_res, _, resume = win32net.NetUseEnum(None, 0, resume)
+        net_res, _, resume = win32net.NetUseEnum(None, 0, resume)  # type: ignore
         for dr in net_res:
             net_dr.append(Path(dr["local"]))
             net_dr.append(Path(dr["remote"]))
@@ -338,38 +383,28 @@ def detect_posix_drives(pattern="m*/*", exclude_nonlocal=True):
         drives = [dr for dr in drives if os.path.realpath(dr) == str(dr)]
     return drives
 
-# def parse_path_str(arg):
-#     """
-#     Parses a path string or a list of path strings into a normalized list of path components.
 
-#     This function takes a single argument which can be a string, a pathlib.Path object, a list of strings,
-#     or a numpy.ndarray of strings, representing one or more paths. It normalizes these paths by splitting them
-#     into their individual components (directories and file names), filtering out any empty components or redundant
-#     separators. The function is designed to handle various path formats and separators, making it useful for
-#     cross-platform path manipulation.
+class IgnoreFilter:
+    """
+    Callable filter for ignoring paths during directory walks.
 
-#     Parameters:
-#     - arg (str, Path, list, np.ndarray): The path or paths to be parsed. This can be a single path string,
-#       a pathlib.Path object, a list of path strings, or a numpy.ndarray of path strings.
+    Accepts:
+    - None → always returns False (no ignores)
+    - list/np.ndarray of paths → ignores those paths
+    - callable → uses it directly
+    """
 
-#     Returns:
-#     - list: A list of the path components extracted from the input. If the input is a list or an array,
-#       the output will be a flattened list of components from all the paths.
+    def __init__(self, ignore=None):
+        self._ignore = set()
+        # normalize to Path for consistent comparison
+        if isinstance(ignore, (tuple, list, np.ndarray)) and len(ignore) > 0:
+            self._ignore = {Path(p) for p in ignore}
 
-#     Note:
-#     - The function uses regular expressions to split path strings on both forward slashes (`/`) and backslashes (`\\`),
-#       making it suitable for parsing paths from both Unix-like and Windows systems.
-#     - Path components are filtered to remove any empty strings that may result from consecutive separators or leading/trailing separators.
-#     - The function handles string representations of paths by stripping enclosing quotes before parsing, which is particularly
-#       useful when dealing with paths that contain spaces or special characters.
-#     """
-#     if isinstance(arg, (str, Path)):
-#         return list(filter(None, re.split(r"[\\/]+", str(repr(str(arg))[1:-1]))))
-#     elif isinstance(arg, (list, np.ndarray, tuple)):
-#         if len(arg) == 1 and isinstance(arg[0], (list, np.ndarray, tuple)):
-#             arg = list(arg[0])
-#         return list(filter(None, arg))
-#     return arg
+    def __call__(self, dir_entry):
+        if self._ignore:
+            return Path(dir_entry.path) in self._ignore
+        return False
+
 
 def my_walk(path, res_type=None, recursive=True, ignore=None, ignore_hidden=True):
     """
@@ -405,25 +440,23 @@ def my_walk(path, res_type=None, recursive=True, ignore=None, ignore_hidden=True
       in case of inaccessible or invalid directories.
     """
     try:
-
-        if isinstance(ignore, (list, np.ndarray)) and len(ignore) > 0:
-            ignore_list = ignore
-            ignore = (
-                lambda var: var.path in ignore_list or Path(var.path) in ignore_list
-            )
-        elif not callable(ignore):
-            ignore = lambda var: False
+        f_ignore = ignore if callable(ignore) else IgnoreFilter(ignore)
+        # if isinstance(ignore, (list, np.ndarray)) and len(ignore) > 0:
+        #     ignore_list = ignore
+        #     ignore = lambda var: var.path in ignore_list or Path(var.path) in ignore_list
+        # elif not callable(ignore):
+        #     ignore = lambda var: False
 
         for x in os.scandir(Path(path)):
-            if (
-                ignore_hidden and (x.name.startswith(".") or x.name.startswith("$"))
-            ) or ignore(x):
+            if (ignore_hidden and (x.name.startswith(".") or x.name.startswith("$"))) or f_ignore(
+                x
+            ):
                 continue
             elif x.is_dir(follow_symlinks=False):
                 if not res_type or "dir" in res_type.lower():
                     yield Path(x)
                 if recursive:
-                    yield from my_walk(x.path, res_type, True, ignore, ignore_hidden)
+                    yield from my_walk(x.path, res_type, True, f_ignore, ignore_hidden)
             elif not res_type or "file" in res_type.lower():
                 yield Path(x)
     except (PermissionError, NotADirectoryError):

@@ -12,17 +12,23 @@ Source for numbers and equations: `https://its90.nist.gov/OverviewThermo`
 """
 __all__ = ["Thermocouple"]
 
+# import os
 import re
 import json
-import os
 import warnings
-from typing import Callable, Optional, Union
-from collections.abc import Sequence
+import importlib.resources
+from collections.abc import Callable, Sequence
+
 import numpy as np
 
-# Load the JSON file with coefficients
-json_path = os.path.join(os.path.dirname(__file__), "its90nist_allcoeff.json")
-with open(json_path, "r", encoding="utf-8") as f:
+# # Load the JSON file with coefficients
+# json_path = os.path.join(os.path.dirname(__file__), "its90nist_allcoeff.json")
+# with open(json_path, "r", encoding="utf-8") as f:
+#     COEFFICIENTS = json.load(f, parse_float=np.float64)["coefficients"]
+json_path = importlib.resources.files("eis_analysis.equipment.temperature_devices").joinpath(
+    "its90nist_allcoeff.json"
+)
+with json_path.open("r", encoding="utf-8") as f:
     COEFFICIENTS = json.load(f, parse_float=np.float64)["coefficients"]
 
 BASIC_CONVERSIONS = {
@@ -36,15 +42,15 @@ BASIC_CONVERSIONS = {
     "mv_to_v": lambda mv: mv / 1000.0,
 }
 
-NumericArray = Union[Sequence[float], np.typing.NDArray[np.float64]]
+NumericArray = Sequence[float] | np.typing.NDArray[np.float64]
 
 
 def scale_to_target(
-    values: Union[float, NumericArray],
-    target_range: Union[float, NumericArray],
+    values: float | NumericArray,
+    target_range: float | NumericArray,
     number_base: float = 10,
     return_multiplier: bool = False,
-) -> Union[float, np.ndarray]:
+) -> float | np.ndarray:
     """
     Find (and optionally return) a multiplier to convert values to fit within an expected range.
 
@@ -68,8 +74,8 @@ def scale_to_target(
     float or np.ndarray
         Resulting values or the multiplier.
     """
-    values = np.asarray(values)
-    target_range = np.asarray(target_range)
+    values = np.asarray(values, dtype=np.float64)
+    target_range = np.asarray(target_range, dtype=np.float64)
     number_base = float(number_base)
 
     best_multiplier = 1
@@ -101,9 +107,15 @@ def scale_to_target(
                 best_fit = fit
                 best_multiplier = multiplier
 
-        in_range = np.mean([range_min < v < range_max for v in values * best_multiplier]).item()
-        if in_range < 1:
-            warnings.warn(f"{int(in_range*100)}% of the values fit within the target range.")
+        if values.size > 1:
+            in_range = np.mean(
+                [
+                    range_min < v < range_max
+                    for v in np.asarray(values * best_multiplier, dtype=np.float64)
+                ]
+            ).item()
+            if in_range < 1:
+                warnings.warn(f"{int(in_range*100)}% of the values fit within the target range.")
 
     if return_multiplier:
         return best_multiplier
@@ -140,12 +152,12 @@ def scale_array_to_target(
     np.ndarray
         Resulting values.
     """
-    values = np.asarray(values)
-    target_range = np.asarray(target_range)
+    values = np.asarray(values, dtype=np.float64)
+    target_range = np.asarray(target_range, dtype=np.float64)
     number_base = float(number_base)
 
     if np.all((values >= target_range.min()) & (values <= target_range.max())):
-        return scale_to_target(values, target_range, number_base, return_multiplier=False)
+        return scale_to_target(values, target_range, number_base, return_multiplier=False)  # type: ignore
 
     # Vectorize the scale_to_target function to apply it to each element in the array
     vectorized_scale_to_target = np.vectorize(
@@ -315,7 +327,7 @@ class Thermocouple:
         self,
         thermo_type: str = "K",
         unit: str = "C",
-        source: Optional[Callable[[], Union[int, float]]] = None,
+        source: Callable[[], int | float] | None = None,
         voltage_source: bool = True,
         error: bool = False,
         show_warnings: bool = True,
@@ -346,7 +358,7 @@ class Thermocouple:
         self.__dict__.update(state)
 
     @property
-    def source(self) -> Callable[[], Union[int, float]]:
+    def source(self) -> Callable[[], int | float]:
         """Get the source function."""
 
         def return_zero() -> int:
@@ -355,7 +367,7 @@ class Thermocouple:
         return self._source or return_zero
 
     @source.setter
-    def source(self, func: Optional[Callable[[], Union[int, float]]]):
+    def source(self, func: Callable[[], int | float] | None):
         """Set the source function and validate it."""
         if func is None:
             self._source = None
@@ -419,11 +431,11 @@ class Thermocouple:
 
     def get_conversion_function(
         self,
-        thermo_type: Optional[str] = None,
-        voltage_source: Optional[bool] = None,
-        error: Optional[bool] = None,
-        show_warnings: Optional[bool] = None,
-    ) -> Callable[[Union[float, np.ndarray]], Union[float, np.ndarray]]:
+        thermo_type: str | None = None,
+        voltage_source: bool | None = None,
+        error: bool | None = None,
+        show_warnings: bool | None = None,
+    ) -> Callable[[float | np.ndarray], float | np.ndarray]:
         """
         Generates a conversion function based on the given parameters.
 
@@ -440,7 +452,7 @@ class Thermocouple:
 
         Returns
         -------
-        Callable[[Union[float, np.ndarray]], Union[float, np.ndarray]]
+        Callable[[float | np.ndarray], float | np.ndarray]
             Conversion function to convert between mV and °C.
         """
         thermo_type = self._validate_thermo_type(thermo_type or self._thermo_type)
@@ -455,9 +467,12 @@ class Thermocouple:
             coeffs = COEFFICIENTS[thermo_type.upper()]["degC_to_mV"]
             type_range = COEFFICIENTS[thermo_type.upper()]["c_range"]
 
-        def equation_compiler(values: Union[float, np.ndarray]) -> Union[float, np.ndarray]:
+        def equation_compiler(values: float | np.ndarray) -> float | np.ndarray:
             """Converts mV to °C or vice versa. Values can be scalar or array."""
             values = np.asarray(values, dtype=np.float64)
+
+            if values.size == 0:
+                return np.array([])
 
             # Apply range limits
             below_min = values < type_range[0]
@@ -505,15 +520,48 @@ class Thermocouple:
             if error:
                 results = np.atleast_2d(results.T).T
                 results = np.concatenate((results, results + errors), axis=1)
-                return results if results.size > 3 else results.flatten().tolist()
+                return results if results.size > 3 else results.flatten().tolist()  # type: ignore
 
             return results if results.size > 1 else results.item()
 
         return equation_compiler
 
+    def revert(
+        self,
+        value: float | np.ndarray,
+        **kwargs,
+    ) -> float | np.ndarray:
+        """
+        Convert value(s) in the reverse direction of the current settings.
+
+        If the current instance converts mV to °C, this will convert °C to mV, and vice versa.
+
+        Parameters
+        ----------
+        value : float or np.ndarray
+            Value(s) to convert in the reverse direction.
+        **kwargs : dict, optional
+            Additional arguments for conversion function.
+
+        Returns
+        -------
+        float or np.ndarray
+            Converted value(s) in the reverse direction.
+        """
+        # Reverse the voltage_source flag for the conversion direction
+        reverse_kwargs = dict(kwargs)
+        reverse_kwargs["voltage_source"] = not self.voltage_source
+        conversion = self.get_conversion_function(**reverse_kwargs)
+        # print("Converted")
+        return conversion(value)
+
     def convert(
-        self, value: Union[float, np.ndarray], unit: Optional[str] = None, **kwargs
-    ) -> Union[float, np.ndarray]:
+        self,
+        value: float | np.ndarray,
+        unit: str | None = None,
+        ambient: float | None = None,
+        **kwargs,
+    ) -> float | np.ndarray:
         """
         Convert given thermocouple output value(s). Typically used to convert mV to °C but can also convert in reverse.
 
@@ -523,8 +571,12 @@ class Thermocouple:
             Temperature value(s) to convert.
         unit : str, optional
             Desired output unit, typically a temperature unit c or f. Default is None.
+        ambient : float, optional
+            Ambient temperature (in °C) or voltage (in mV) to adjust for cold junction compensation.
+            If provided, will be converted to the appropriate units and applied to the input value(s)
+            before conversion (added for mV to °C, subtracted for °C to mV).
         **kwargs : dict, optional
-            Additional arguments for conversion function.
+            Additional arguments for conversion function (e.g., voltage_source, error, show_warnings, etc.).
 
         Returns
         -------
@@ -532,6 +584,17 @@ class Thermocouple:
             Converted value(s).
         """
         unit = unit or self.unit
+
+        # Handle ambient adjustment if provided
+        if ambient is not None:
+            if kwargs.get("voltage_source", self.voltage_source):
+                # mV to °C: convert ambient (°C) to mV and add to value
+                ambient_mv = self.revert(ambient, **kwargs)
+                value = np.asarray(value, dtype=np.float64) + ambient_mv
+            else:
+                # °C to mV: convert ambient (mV) to °C and subtract from value
+                ambient_c = self.revert(ambient, **kwargs)
+                value = np.asarray(value, dtype=np.float64) - ambient_c
 
         if kwargs:
             conversion = self.get_conversion_function(**kwargs)
@@ -545,9 +608,7 @@ class Thermocouple:
             value = BASIC_CONVERSIONS["c_to_" + unit.lower()](value)
         return value
 
-    def get(
-        self, unit: Optional[str] = None, error: Optional[bool] = None
-    ) -> Union[float, np.ndarray]:
+    def get(self, unit: str | None = None, error: bool | None = None) -> float | np.ndarray:
         """
         Read the value from the source if available and convert.
 
@@ -575,11 +636,11 @@ class Thermocouple:
 
     def find_pre_conversion(
         self,
-        values: Union[float, NumericArray],
-        target_range: Union[float, NumericArray],
+        values: float | NumericArray,
+        target_range: float | NumericArray,
         number_base: float = 10,
         convert_range: bool = True,
-    ) -> Callable[[Union[float, NumericArray]], Union[float, np.ndarray]]:
+    ) -> Callable[[float | NumericArray], float | np.ndarray]:
         """
         Find a conversion function to convert values to fit within a target range before the primary conversion.
 
@@ -596,7 +657,7 @@ class Thermocouple:
 
         Returns
         -------
-        Callable[[Union[float, Sequence[float], np.ndarray]], Union[float, np.ndarray]]
+        Callable[[float | Sequence[float, np.ndarray]], float | np.ndarray]
             Conversion function to convert values to fit within the target range.
 
         Notes
@@ -610,8 +671,8 @@ class Thermocouple:
         is in mV. For this reason it is important to be aware of the class settings when defining the input arguments
         for this function.
         """
-        values = np.asarray(values)
-        target_range = np.asarray(target_range)
+        values = np.asarray(values, dtype=np.float64)
+        target_range = np.asarray(target_range, dtype=np.float64)
         number_base = float(number_base)
 
         if convert_range:
@@ -619,16 +680,16 @@ class Thermocouple:
 
         mult = scale_to_target(values, target_range, number_base, return_multiplier=True)
 
-        def conversion_func(val: Union[float, NumericArray]) -> Union[float, np.ndarray]:
-            return np.asarray(val) * mult
+        def conversion_func(val: float | NumericArray) -> float | np.ndarray:
+            return np.asarray(val, dtype=np.float64) * mult
 
         return conversion_func
 
     @staticmethod
     def wrap_source_function(
-        func: Callable[[], Union[int, float]],
-        conversion: Union[str, Callable[[Union[int, float]], Union[int, float]]],
-    ) -> Callable[[], Union[int, float]]:
+        func: Callable[[], int | float],
+        conversion: str | Callable[[int | float], int | float],
+    ) -> Callable[[], int | float]:
         """
         Wrap the output of a function in a secondary function that converts to mV or °C as required.
 
@@ -662,7 +723,7 @@ class Thermocouple:
                 "Conversion must be a callable or one of the available conversion types(F, K, V, and uV)."
             )
 
-        def wrapped_func() -> Union[int, float]:
+        def wrapped_func() -> int | float:
             value = func()
             return conversion_func(value)
 
@@ -678,7 +739,9 @@ class Thermocouple:
         dict
             Available thermocouple information.
         """
-        with open(json_path, "r", encoding="utf-8") as file:
+        # with open(json_path, "r", encoding="utf-8") as file:
+        #     data = json.load(file)
+        with json_path.open("r", encoding="utf-8") as file:
             data = json.load(file)
         return data
 

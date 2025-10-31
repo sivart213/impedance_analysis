@@ -1,0 +1,353 @@
+{
+    "model": "R0-p(R1,CPE1,R2-CPE2)",
+    "load_dir": {
+        "__path__": "D:\\Online\\ASU Dropbox\\Jacob Clenney\\Work Docs\\Data\\Analysis\\IS\\EVA\\Fit_Results\\2025"
+    },
+    "save_dir": {
+        "__path__": "D:\\Online\\ASU Dropbox\\Jacob Clenney\\Work Docs\\Data\\Analysis\\IS\\EVA\\Fit_Results\\2025"
+    },
+    "export_dir": {
+        "__path__": "C:\\Users\\j2cle\\Documents"
+    },
+    "error_var": "Root Mean Squared Err",
+    "sel_error_var": "Z",
+    "afit_inputs": {
+        "Match String": {
+            "default": "fit2",
+            "tooltip": "A regex string to match datasets to fit."
+        },
+        "New Name Suffix": {
+            "default": "fit",
+            "tooltip": "The suffix to append to the dataset name (should not include number)."
+        },
+        "Fit Type": {
+            "default": "Iterative",
+            "tooltip": "The type of fit to perform.",
+            "widget": "QComboBox",
+            "limits": [
+                "Normal",
+                "Iterative",
+                "Bootstrap"
+            ]
+        },
+        "Iterations": {
+            "default": 3,
+            "tooltip": "The number of iterations to perform for Iterative or Bootstrap fitting.",
+            "widget": "QSpinBox",
+            "limits": [
+                1,
+                100000,
+                1
+            ]
+        },
+        "Fit All Datasets": {
+            "default": false,
+            "tooltip": "Forces a fit of all datasets. Ignores pinned data and uses the current model.",
+            "widget": "QCheckBox"
+        },
+        "Use Current Model": {
+            "default": false,
+            "tooltip": "Whether to use the current model or the pin-specific models.",
+            "widget": "QCheckBox"
+        },
+        "Use Locked Parameter Value": {
+            "default": false,
+            "tooltip": "Whether to use the parameter value or the pinned value (if available) as the constant.",
+            "widget": "QCheckBox"
+        },
+        "Respect Bound Locks": {
+            "default": true,
+            "tooltip": "Whether to shift locked bounds for new initial guess conflicts.",
+            "widget": "QCheckBox"
+        },
+        "Fit Parameters Separately": {
+            "default": false,
+            "tooltip": "Whether to fit each parameter separately (ie sequentially).",
+            "widget": "QCheckBox"
+        },
+        "Value Override": {
+            "default": "",
+            "tooltip": "Redefine any parameters (in dict notation) to be applied to all fits. Note that this only changes the start point."
+        }
+    },
+    "plot_var": {
+        "ny_x": "Z'/max(|Z|)",
+        "ny_y": "-Z''/max(|Z|)",
+        "bd_x": "Frequency",
+        "bd_y1": "\u03b5\u1d63'",
+        "bd_y2": "M''"
+    },
+    "is_log": {
+        "ny_x": false,
+        "ny_y": false,
+        "bd_x": true,
+        "bd_y1": false,
+        "bd_y2": true
+    },
+    "var_units": {
+        "f": "Hz",
+        "\u03c9": "rad/s",
+        "\u03c3_dc": "S/cm",
+        "Z": "\u03a9",
+        "Y": "S",
+        "M": "cm/F",
+        "C": "F",
+        "\u03b5\u1d63": "1",
+        "\u03b5\u1d63_dc": "1",
+        "\u03c3": "S/cm",
+        "\u03c1": "\u03a9 cm"
+    },
+    "option_inits": {
+        "general": {
+            "additional_save_forms": "e_r",
+            "save_current_parameters": false,
+            "save_current_profile": false,
+            "save_pinned_results": true,
+            "include_unfit_datasets": false,
+            "error_forms": [
+                "Z.real",
+                "Z.imag"
+            ],
+            "backup pins": true,
+            "number of backups": 10,
+            "backup path ('~' == home dir)": "~/Documents/z_fit/backups",
+            "limit_error": false,
+            "debounce_interval": 100
+        },
+        "plotting": {
+            "style": "seaborn-v0_8-darkgrid",
+            "background": "",
+            "always plot to fullrange": false,
+            "allow inv log": true,
+            "suplots: use numbers": true,
+            "suplots: shift by real": true,
+            "suplots: shift using max": true,
+            "window padding": 0.2,
+            "outlier percent": 2.5,
+            "inversion threshold": 0.95,
+            "plot1 as nyquist": true,
+            "Data options": {
+                "s": 30,
+                "alpha": 1,
+                "zorder": 1,
+                "a_kwargs": {
+                    "mag_off": 0.01
+                }
+            },
+            "Model options": {
+                "color": "red",
+                "alpha": 0.95,
+                "zorder": 2
+            },
+            "Sub Model options": {
+                "cmap": "autumn",
+                "linestyle": "--",
+                "alpha": 0.95,
+                "zorder": 2
+            },
+            "connect points": {
+                "show": true,
+                "color": "grey",
+                "alpha": 0.5,
+                "linestyle": "--",
+                "linewidth": 0.75,
+                "zorder": 0
+            }
+        },
+        "simulation": {
+            "sim_param_freq": true,
+            "interp": true,
+            "freq_start": -3.5,
+            "freq_stop": 6.5,
+            "freq_num": 221,
+            "area": 25,
+            "thickness": 0.04,
+            "savgol_kwargs": {
+                "window_length": 6,
+                "polyorder": 3,
+                "pre_interp": true
+            },
+            "interp_kwargs": "",
+            "norm_kwargs": {
+                "normalize_to": "f@10**-3",
+                "x_array": "freq"
+            }
+        },
+        "bands": {
+            "band_color": "gray",
+            "band_alpha": 0.2,
+            "band_freq_num": 250,
+            "band_mult": 50,
+            "percentile": 5,
+            "std_devs": 0.2,
+            "conf_band_upper": "97.5%",
+            "conf_band_lower": "2.5%"
+        },
+        "fit": {
+            "function": "diff_e",
+            "type": "e_r.real",
+            "modes": [
+                "real",
+                "imag"
+            ],
+            "Rs": "R0",
+            "f_max": 1000000,
+            "f_min": 0.01,
+            "scale": "lin",
+            "weight_by_mode": "M.imag",
+            "bootstrap_percent": 98,
+            "prioritize_bounds": true,
+            "rebound_before_fit": true,
+            "resort_by_RC": false,
+            "sequential_fit": false,
+            "sequential_fit_update": false
+        },
+        "curve_fit": {
+            "absolute_sigma": false,
+            "check_finite": null,
+            "method": null,
+            "jac": "3-point",
+            "x_scale": "jac",
+            "ftol": 1e-14,
+            "xtol": 1e-06,
+            "gtol": 1e-08,
+            "loss": "huber",
+            "diff_step": null,
+            "tr_solver": null,
+            "tr_options": {},
+            "jac_sparsity": null,
+            "verbose": 0,
+            "maxfev": 1000000
+        },
+        "least_sq": {
+            "method": "trf",
+            "jac": "3-point",
+            "x_scale": "calc",
+            "ftol": 1e-14,
+            "xtol": 1e-15,
+            "gtol": 1e-15,
+            "loss": "soft_l1",
+            "diff_step": null,
+            "tr_solver": null,
+            "tr_options": {},
+            "jac_sparsity": null,
+            "verbose": 0,
+            "max_nfev": 1000
+        },
+        "diff_evolution": {
+            "strategy": "best1exp",
+            "maxiter": 5000,
+            "popsize": 25,
+            "tol": 0.0001,
+            "recombination": 0.6,
+            "seed": null,
+            "disp": false,
+            "polish": true,
+            "init": "latinhypercube",
+            "atol": 0,
+            "updating": "immediate",
+            "workers": 5
+        },
+        "basinhopping": {
+            "niter": 100,
+            "T": 1,
+            "stepsize": 0.5,
+            "minimizer_kwargs": {
+                "method": "L-BFGS-B",
+                "jac": "3-point"
+            },
+            "interval": 50,
+            "disp": false,
+            "niter_success": null,
+            "seed": null,
+            "target_accept_rate": 0.5,
+            "stepwise_factor": 0.9
+        },
+        "linkk": {
+            "f_max": 1000000,
+            "f_min": 0.001,
+            "c": 0.5,
+            "max_M": 200,
+            "add_cap": false,
+            "fit_type": "complex"
+        },
+        "element": {
+            "R": 1000000000,
+            "C": 1e-10,
+            "CPE": [
+                1e-10,
+                1
+            ],
+            "ICPE": [
+                10000000000.0,
+                0
+            ],
+            "L": 100,
+            "W": 10000,
+            "K": [
+                1000000000.0,
+                1
+            ]
+        },
+        "element_range": {
+            "R": [
+                0,
+                {
+                    "__invalid_float__": "inf"
+                }
+            ],
+            "C": [
+                0,
+                1
+            ],
+            "CPE": [
+                [
+                    0,
+                    1
+                ],
+                [
+                    -1,
+                    1
+                ]
+            ],
+            "ICPE": [
+                [
+                    0,
+                    {
+                        "__invalid_float__": "inf"
+                    }
+                ],
+                [
+                    -1,
+                    1
+                ]
+            ],
+            "L": [
+                0,
+                {
+                    "__invalid_float__": "inf"
+                }
+            ],
+            "W": [
+                0,
+                {
+                    "__invalid_float__": "inf"
+                }
+            ],
+            "K": [
+                [
+                    0,
+                    {
+                        "__invalid_float__": "inf"
+                    }
+                ],
+                [
+                    0,
+                    {
+                        "__invalid_float__": "inf"
+                    }
+                ]
+            ]
+        }
+    }
+}

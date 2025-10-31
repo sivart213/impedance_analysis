@@ -481,5 +481,680 @@
             }
         ],
         "columns": []
+    },
+    "DC v2": {
+        "directory": "D:\\Online\\ASU Dropbox\\Jacob Clenney\\Work Docs\\Data\\Raw\\MFIA\\WebServer",
+        "patterns": [
+            [
+                "session",
+                0
+            ],
+            [
+                ".h5",
+                0
+            ],
+            [
+                "autosave",
+                2
+            ],
+            [
+                "stream",
+                2
+            ],
+            [
+                "scope",
+                2
+            ],
+            [
+                "Au",
+                0
+            ],
+            [
+                "9100",
+                0
+            ]
+        ],
+        "keywords": [
+            "2v",
+            "sweep",
+            "dc",
+            "2V"
+        ],
+        "groups": [
+            {
+                "search_terms": "cln0, cln1, cln2, 301, 300, 200, 100",
+                "reject_terms": "",
+                "keys": "cln0, cln1, cln2, 301, 300, 200, 100"
+            },
+            {
+                "search_terms": "pre, dh, dryout, dry",
+                "reject_terms": "",
+                "keys": "pre, dh, dryout, dry"
+            },
+            {
+                "search_terms": "\\s85c, \\s80c, \\s70c, \\s60c",
+                "reject_terms": "not c0$",
+                "keys": "85c, 80c, 70c, 60c"
+            }
+        ],
+        "columns": []
+    },
+    "Combined 4": {
+        "directory": "D:\\Online\\ASU Dropbox\\Jacob Clenney\\Work Docs\\Data\\Raw\\MFIA\\WebServer",
+        "patterns": [
+            [
+                "session",
+                0
+            ],
+            [
+                ".h5",
+                0
+            ],
+            [
+                "autosave",
+                2
+            ],
+            [
+                "sweep",
+                2
+            ],
+            [
+                "stream",
+                2
+            ],
+            [
+                "scope",
+                2
+            ],
+            [
+                "Au",
+                0
+            ],
+            [
+                "9100",
+                0
+            ]
+        ],
+        "keywords": [
+            "9100"
+        ],
+        "groups": [
+            {
+                "search_terms": "9100, 406",
+                "reject_terms": "",
+                "keys": "9100, 406"
+            },
+            {
+                "search_terms": "cln0, cln1, cln2, 301, 300, 200, 100",
+                "reject_terms": "",
+                "keys": "cln0, cln1, cln2, 301, 300, 200, 100"
+            },
+            {
+                "search_terms": "pre, dh, dryout, dry",
+                "reject_terms": "",
+                "keys": "pre, dh, dryout, dry"
+            },
+            {
+                "search_terms": "\\s85c, \\s80c, \\s70c, \\s60c",
+                "reject_terms": "not c0$",
+                "keys": "85c, 80c, 70c, 60c"
+            }
+        ],
+        "columns": [
+            "('imps', 'frequency')",
+            "('imps', 'realz')",
+            "('imps', 'imagz')",
+            "('imps', 'inv_imagz')",
+            "('imps', 'absz')",
+            "('imps', 'phasez')",
+            "('imps', 'param0')",
+            "('imps', 'param1')"
+        ]
+    },
+    "Combined 5": {
+        "directory": "D:\\Online\\ASU Dropbox\\Jacob Clenney\\Work Docs\\Data\\Raw\\MFIA\\WebServer",
+        "patterns": [
+            [
+                "session",
+                0
+            ],
+            [
+                ".h5",
+                0
+            ],
+            [
+                "autosave",
+                2
+            ],
+            [
+                "sweep",
+                2
+            ],
+            [
+                "stream",
+                2
+            ],
+            [
+                "scope",
+                2
+            ],
+            [
+                "Au",
+                0
+            ],
+            [
+                "9100",
+                0
+            ]
+        ],
+        "keywords": [
+            "9100"
+        ],
+        "groups": [
+            {
+                "search_terms": "9100, 406",
+                "reject_terms": "",
+                "keys": "9100, 406"
+            },
+            {
+                "search_terms": "cln0, cln1, cln2, _301, _300, _200, _100",
+                "reject_terms": "",
+                "keys": "cln0, cln1, cln2, _301, _300, _200, _100"
+            },
+            {
+                "search_terms": "pre, dh, dryout, dry",
+                "reject_terms": "",
+                "keys": "pre, dh, dryout, dry"
+            },
+            {
+                "search_terms": "\\s85c, \\s80c, \\s75c, \\s70c, \\s65c, \\s60c",
+                "reject_terms": "not c0$",
+                "keys": "85c, 80c, 75c, 70c, 65c, 60c"
+            }
+        ],
+        "columns": [
+            "('imps', 'frequency')",
+            "('imps', 'realz')",
+            "('imps', 'imagz')",
+            "('imps', 'absz')",
+            "('imps', 'phasez')",
+            "('imps', 'param0')",
+            "('imps', 'param1')",
+            "('demods', 'auxin0')",
+            "('demods', 'auxin1')"
+        ]
+    },
+    "DC v3": {
+        "directory": "D:\\Online\\ASU Dropbox\\Jacob Clenney\\Work Docs\\Data\\Raw\\MFIA\\WebServer",
+        "patterns": [
+            [
+                "session",
+                0
+            ],
+            [
+                ".h5",
+                0
+            ],
+            [
+                "autosave",
+                2
+            ],
+            [
+                "stream",
+                2
+            ],
+            [
+                "scope",
+                2
+            ],
+            [
+                "Au",
+                0
+            ],
+            [
+                "9100",
+                0
+            ],
+            [
+                "Dry",
+                0
+            ]
+        ],
+        "keywords": [
+            "2v",
+            "sweep",
+            "dc",
+            "2V"
+        ],
+        "groups": [
+            {
+                "search_terms": "_cln0, _cln1, _cln2, _301, _300, _200, _100",
+                "reject_terms": "",
+                "keys": "cln0, cln1, cln2, 301, 300, 200, 100"
+            },
+            {
+                "search_terms": "pre, dh, dryout, dry",
+                "reject_terms": "",
+                "keys": "pre, dh, dryout, dry"
+            },
+            {
+                "search_terms": "\\s85c, \\s80c, \\s75c, \\s70c, \\s65c, \\s60c",
+                "reject_terms": "not c0$",
+                "keys": "85c, 80c, 75c, 70c, 65c, 60c"
+            }
+        ],
+        "columns": []
+    },
+    "csv v1": {
+        "directory": "D:\\Online\\ASU Dropbox\\Jacob Clenney\\Work Docs\\Data\\Raw\\MFIA\\WebServer",
+        "patterns": [
+            [
+                "session",
+                0
+            ],
+            [
+                ".csv",
+                0
+            ]
+        ],
+        "keywords": [],
+        "groups": [
+            {
+                "search_terms": "9100, 406",
+                "reject_terms": "",
+                "keys": "9100, 406"
+            },
+            {
+                "search_terms": "cln0, cln1, cln2, _301, _300, _200, _100",
+                "reject_terms": "",
+                "keys": "cln0, cln1, cln2, _301, _300, _200, _100"
+            },
+            {
+                "search_terms": "pre, dh, dryout, dry",
+                "reject_terms": "",
+                "keys": "pre, dh, dryout, dry"
+            },
+            {
+                "search_terms": "\\s85c, \\s80c, \\s75c, \\s70c, \\s65c, \\s60c",
+                "reject_terms": "not c0$",
+                "keys": "85c, 80c, 75c, 70c, 65c, 60c"
+            }
+        ],
+        "columns": [
+            "('imps', 'frequency')",
+            "('imps', 'realz')",
+            "('imps', 'imagz')",
+            "('imps', 'absz')",
+            "('imps', 'phasez')",
+            "('imps', 'param0')",
+            "('imps', 'param1')",
+            "('demods', 'auxin0')",
+            "('demods', 'auxin1')"
+        ]
+    },
+    "Others": {
+        "directory": "D:\\Online\\ASU Dropbox\\Jacob Clenney\\Work Docs\\Data\\Raw\\MFIA\\WebServer",
+        "patterns": [
+            [
+                "session",
+                0
+            ],
+            [
+                "autosave",
+                2
+            ],
+            [
+                "stream",
+                2
+            ],
+            [
+                "scope",
+                2
+            ],
+            [
+                "9100",
+                2
+            ],
+            [
+                "406",
+                2
+            ],
+            [
+                "header",
+                2
+            ],
+            [
+                ".xml",
+                2
+            ],
+            [
+                "daq",
+                2
+            ]
+        ],
+        "keywords": [],
+        "groups": [
+            {
+                "search_terms": "Calibs, RC, cm, EVA, water, .*",
+                "reject_terms": "",
+                "keys": "Calibs, RC, cm, EVA, water, other"
+            },
+            {
+                "search_terms": "cln0, cln1, cln2, _301, _300, _200, _100",
+                "reject_terms": "",
+                "keys": "cln0, cln1, cln2, _301, _300, _200, _100"
+            },
+            {
+                "search_terms": "pre, dh, dryout, dry",
+                "reject_terms": "",
+                "keys": "pre, dh, dryout, dry"
+            },
+            {
+                "search_terms": "\\s85c, \\s80c, \\s75c, \\s70c, \\s65c, \\s60c",
+                "reject_terms": "not c0$",
+                "keys": "85c, 80c, 75c, 70c, 65c, 60c"
+            }
+        ],
+        "columns": []
+    },
+    "2025-05-07 13:42:11": {
+        "directory": "D:\\Online\\ASU Dropbox\\Jacob Clenney\\Work Docs\\Data\\Raw\\MFIA\\WebServer",
+        "patterns": [
+            [
+                "session",
+                0
+            ],
+            [
+                "autosave",
+                2
+            ],
+            [
+                "sweep",
+                2
+            ],
+            [
+                "stream",
+                2
+            ],
+            [
+                "scope",
+                2
+            ],
+            [
+                "9100",
+                2
+            ],
+            [
+                "all",
+                2
+            ],
+            [
+                "header",
+                2
+            ],
+            [
+                "structure",
+                2
+            ]
+        ],
+        "keywords": [],
+        "groups": [
+            {
+                "search_terms": "Calibs, EVA, cm, DH, Cond, water, RC|ckt|1G, .*",
+                "reject_terms": "",
+                "keys": "Calibs, EVA, cm, DH, Cond, water, RC, other"
+            },
+            {
+                "search_terms": "cln0, cln1, cln2, _301, _300, _200, _100",
+                "reject_terms": "",
+                "keys": "cln0, cln1, cln2, _301, _300, _200, _100"
+            },
+            {
+                "search_terms": "pre, dh, dryout, dry",
+                "reject_terms": "",
+                "keys": "pre, dh, dryout, dry"
+            },
+            {
+                "search_terms": "\\s85c, \\s80c, \\s75c, \\s70c, \\s65c, \\s60c",
+                "reject_terms": "not c0$",
+                "keys": "85c, 80c, 75c, 70c, 65c, 60c"
+            }
+        ],
+        "columns": [
+            "('imps', 'frequency')",
+            "('imps', 'realz')",
+            "('imps', 'imagz')",
+            "('imps', 'absz')",
+            "('imps', 'phasez')",
+            "('imps', 'param0')",
+            "('imps', 'param1')",
+            "('demods', 'auxin0')",
+            "('demods', 'auxin1')"
+        ]
+    },
+    "2025-05-07 15:21:11": {
+        "directory": "D:\\Online\\ASU Dropbox\\Jacob Clenney\\Work Docs\\Data\\Raw\\MFIA\\WebServer",
+        "patterns": [
+            [
+                "session",
+                0
+            ],
+            [
+                "autosave",
+                2
+            ],
+            [
+                "sweep",
+                2
+            ],
+            [
+                "stream",
+                2
+            ],
+            [
+                "scope",
+                2
+            ],
+            [
+                "9100",
+                2
+            ],
+            [
+                "all",
+                2
+            ],
+            [
+                "header",
+                2
+            ],
+            [
+                "structure",
+                2
+            ],
+            [
+                "cm",
+                0
+            ]
+        ],
+        "keywords": [],
+        "groups": [
+            {
+                "search_terms": "Calibs, EVA, 12cm, 5cm, 4cm, DH, Cond, water, RC|ckt|1G, .*",
+                "reject_terms": "",
+                "keys": "Calibs, EVA, 12cm, 5cm, 4cm, DH, Cond, water, RC, other"
+            },
+            {
+                "search_terms": "cln0, cln1, cln2, _301, _300, _200, _100",
+                "reject_terms": "",
+                "keys": "cln0, cln1, cln2, _301, _300, _200, _100"
+            },
+            {
+                "search_terms": "pre, dh, dryout, dry",
+                "reject_terms": "",
+                "keys": "pre, dh, dryout, dry"
+            },
+            {
+                "search_terms": "[\\s_]90c, [\\s_]85c, [\\s_]80c, [\\s_]75c, [\\s_]70c, [\\s_]65c, [\\s_]60c, .*",
+                "reject_terms": "not c0$",
+                "keys": "90c, 85c, 80c, 75c, 70c, 65c, 60c, other"
+            }
+        ],
+        "columns": []
+    },
+    "2025-05-07 16:11:10": {
+        "directory": "D:\\Online\\ASU Dropbox\\Jacob Clenney\\Work Docs\\Data\\Raw\\MFIA\\WebServer",
+        "patterns": [
+            [
+                "session",
+                0
+            ],
+            [
+                "autosave",
+                2
+            ],
+            [
+                "sweep",
+                2
+            ],
+            [
+                "stream",
+                2
+            ],
+            [
+                "scope",
+                2
+            ],
+            [
+                "9100",
+                2
+            ],
+            [
+                "all",
+                2
+            ],
+            [
+                "header",
+                2
+            ],
+            [
+                "structure",
+                2
+            ],
+            [
+                "cm",
+                0
+            ],
+            [
+                "0v",
+                2
+            ],
+            [
+                "vstarts",
+                2
+            ]
+        ],
+        "keywords": [],
+        "groups": [
+            {
+                "search_terms": "Calibs, EVA, 12cm, 5cm, 4cm, DH, Cond, water, RC|ckt|1G, .*",
+                "reject_terms": "",
+                "keys": "Calibs, EVA, 12cm, 5cm, 4cm, DH, Cond, water, RC, other"
+            },
+            {
+                "search_terms": "cln0, cln1, cln2, _301, _300, _200, _100",
+                "reject_terms": "",
+                "keys": "cln0, cln1, cln2, _301, _300, _200, _100"
+            },
+            {
+                "search_terms": "pre, dh, dryout, dry",
+                "reject_terms": "",
+                "keys": "pre, dh, dryout, dry"
+            },
+            {
+                "search_terms": "[\\s_]90c, [\\s_]85c, [\\s_]80c, [\\s_]75c, [\\s_]70c, [\\s_]65c, [\\s_]60c, .*",
+                "reject_terms": "not c0$",
+                "keys": "90c, 85c, 80c, 75c, 70c, 65c, 60c, other"
+            }
+        ],
+        "columns": []
+    },
+    "2025-05-17 20:02:52": {
+        "directory": "D:\\Online\\ASU Dropbox\\Jacob Clenney\\Work Docs\\Data\\Raw\\MFIA\\WebServer",
+        "patterns": [
+            "session",
+            [
+                "autosave",
+                true
+            ],
+            [
+                "sweep",
+                true
+            ],
+            [
+                "stream",
+                true
+            ],
+            [
+                "scope",
+                true
+            ],
+            [
+                "9100",
+                true
+            ],
+            [
+                "all",
+                true
+            ],
+            [
+                "header",
+                true
+            ],
+            [
+                "structure",
+                true
+            ],
+            "cm",
+            [
+                "0v",
+                true
+            ],
+            [
+                "vstarts",
+                true
+            ]
+        ],
+        "keywords": [],
+        "groups": [
+            {
+                "search_terms": "Calibs, EVA, 12cm, 5cm, 4cm, DH, Cond, water, RC|ckt|1G, .*",
+                "reject_terms": "",
+                "keys": "Calibs, EVA, 12cm, 5cm, 4cm, DH, Cond, water, RC, other"
+            },
+            {
+                "search_terms": "cln0, cln1, cln2, _301, _300, _200, _100",
+                "reject_terms": "",
+                "keys": "cln0, cln1, cln2, _301, _300, _200, _100"
+            },
+            {
+                "search_terms": "pre, dh, dryout, dry",
+                "reject_terms": "",
+                "keys": "pre, dh, dryout, dry"
+            },
+            {
+                "search_terms": "[\\s_]90c, [\\s_]85c, [\\s_]80c, [\\s_]75c, [\\s_]70c, [\\s_]65c, [\\s_]60c, .*",
+                "reject_terms": "not c0$",
+                "keys": "90c, 85c, 80c, 75c, 70c, 65c, 60c, other"
+            }
+        ],
+        "columns": [
+            "frequency",
+            "realz",
+            "imagz",
+            "absz",
+            "phasez",
+            "param0",
+            "param1"
+        ]
     }
 }

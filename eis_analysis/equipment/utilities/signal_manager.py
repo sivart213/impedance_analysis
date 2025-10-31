@@ -1,18 +1,10 @@
-
 import time
 import threading
-# from datetime import datetime
-from typing import Callable, List, Optional, Tuple, Union, NamedTuple
-# from collections import namedtuple
+from typing import Any, Literal, NamedTuple, overload
+from collections.abc import Callable
+
 import numpy as np
 
-# import pandas as pd
-# import matplotlib.pyplot as plt
-# from cycler import cycler
-
-# from .temperature_devices.watlow import Watlow
-# from .temperature_devices.uwtc import UWTC
-# Signal = namedtuple("Signal", [("obj", object), ("function", Callable), ("name", str), ("settable", bool), ("conditional", Callable)])
 
 def is_number(x):
     return isinstance(x, (int, float, np.integer, np.floating))
@@ -26,6 +18,7 @@ class Signal(NamedTuple):
     conditional: Callable = lambda x: True
     notes: str = ""
 
+
 class SignalManager:
     """
     SignalManager class to manage devices and their signals.
@@ -33,7 +26,7 @@ class SignalManager:
     Attributes
     ----------
     devices : list
-        List of devices added to the manager.
+        list of devices added to the manager.
     signals : dict
         Dictionary of signals with their associated callables and settable flags.
     signal_groups : dict
@@ -57,7 +50,7 @@ class SignalManager:
         # self.signal_groups = {}
         self._lock = threading.Lock()
 
-    def add_device(self, obj: object, *args: Union[str, Tuple[Callable, str, bool, Callable]]):
+    def add_device(self, obj: object, *args: Any):
         """
         Add a device and its signals to the manager.
 
@@ -67,17 +60,20 @@ class SignalManager:
             The device object to add.
         *args : tuple
             Each argument can be a string or a tuple (callable, name, settable).
+            [str | tuple[Callable, str, bool, Callable]]
         """
         self.devices.append(obj)
         for arg in args:
             if isinstance(arg, str):
                 arg = (arg, arg)
             elif isinstance(arg, Signal):
-                self._validate_signal_function(arg.function)
+                # self._validate_signal_function(arg.function)
                 self.signals[arg.name] = arg
                 continue
             elif not isinstance(arg, (tuple, list)) or len(arg) < 2:
-                raise ValueError("Each argument must be a tuple (callable or str, name, settable, conditional).")
+                raise ValueError(
+                    "Each argument must be a tuple (callable or str, name, settable, conditional)."
+                )
 
             func, name = arg[0], arg[1]
             settable = arg[2] if len(arg) > 2 else False
@@ -88,12 +84,18 @@ class SignalManager:
                     func = eval(f"obj.{func}", {}, {"obj": obj})
                 else:
                     raise AttributeError(f"Attribute '{func}' not found in the object.")
-            
-            self._validate_signal_function(func)
-            
-            self.signals[name] =  Signal(obj, func, name, settable, conditional)
-    
-    def define_signal(self, name: str, signals: List[str], combining_function: Optional[Callable] = None, **kwargs):
+
+            # self._validate_signal_function(func)
+
+            self.signals[name] = Signal(obj, func, name, settable, conditional)
+
+    def define_signal(
+        self,
+        name: str,
+        signals: list[str],
+        combining_function: Callable | None = None,
+        **kwargs,
+    ):
         """
         Define a new signal by associating a name with a list of signals.
 
@@ -102,23 +104,27 @@ class SignalManager:
         name : str
             The name of the new signal.
         signals : list
-            List of signal names to include in the new signal.
+            list of signal names to include in the new signal.
         """
         if name in self.signals:
             raise ValueError(f"Signal '{name}' already exists.")
-        
-        def make_comb_getter(source, comb_func=None):
+
+        def make_comb_getter(source, comb_func: Callable | None = None):
             comb_func = comb_func if callable(comb_func) else np.mean
+
             def get_combined_signal(values=None):
-                if values is not None:
-                    return float(comb_func(values))
-                return float(comb_func(source.get(output_format="list")))
-            
+                try:
+                    if values is not None:
+                        return float(comb_func(values))
+                    return float(comb_func(source.get(output_format="list")))
+                except (TypeError, ValueError):
+                    return values if values is not None else source.get()
+
             return get_combined_signal
-        
+
         if isinstance(signals, str):
             signals = [signals]
-        
+
         if len(signals) == 1:
             self.signals[name] = self.signals[signals[0]]
         else:
@@ -126,50 +132,65 @@ class SignalManager:
             for signal in signals:
                 sub_signal_manager.signals[signal] = self.signals[signal]
             func = make_comb_getter(sub_signal_manager, combining_function)
-            self.signals[name] = Signal(sub_signal_manager,func, name, False, is_number, ", ".join(signals))
-    
-    def _validate_signal_function(self, func: Callable):
-        """
-        Validate that the signal function returns an int, float, or numpy equivalent.
+            self.signals[name] = Signal(
+                sub_signal_manager, func, name, False, is_number, ", ".join(signals)
+            )
 
-        Parameters
-        ----------
-        func : Callable
-            The signal function to validate.
+    # def _validate_signal_function(self, func: Callable):
+    #     """
+    #     Validate that the signal function returns an int, float, or numpy equivalent.
 
-        Raises
-        ------
-        ValueError
-            If the function does not return an int, float, or numpy equivalent.
-        """
-        result = None
-        if callable(func):
-            result = func()
-        else:
-            raise ValueError("Signal function must be callable.")
-        if not isinstance(result, (int, float, np.integer, np.floating)):
-            raise ValueError("Signal function must return an int, float, or numpy equivalent.")
-        
+    #     Parameters
+    #     ----------
+    #     func : Callable
+    #         The signal function to validate.
 
+    #     Raises
+    #     ------
+    #     ValueError
+    #         If the function does not return an int, float, or numpy equivalent.
+    #     """
+    #     result = None
+    #     if callable(func):
+    #         result = func()
+    #     else:
+    #         raise ValueError("Signal function must be callable.")
+    #     if not isinstance(result, (int, float, np.integer, np.floating)):
+    #         raise ValueError("Signal function must return an int, float, or numpy equivalent.")
+    # @overload
+    # def get(self, name: str | list[str], output_format: str = "list") -> list: ...
+    # @overload
+    # def get(self, name: str | list[str], output_format: str = "tuple") -> list: ...
+    @overload
+    def get(self, name: str | list[str], output_format: Literal["list", "tuple"]) -> list: ...
+    @overload
+    def get(self, name: str | list[str], output_format: Literal["mean", "float"]) -> float: ...
+    @overload
+    def get(self, name: str | list[str], output_format: None = ...) -> dict: ...
+    @overload
+    def get(self, name: str | list[str]) -> dict: ...
 
-    def get(self, name: Union[str, List[str]] = "all", output_format: Optional[str] = None):
+    def get(
+        self, name: str | list[str] = "all", output_format: str | None = None
+    ) -> dict | list | float:
         """
         Retrieve the value(s) of the specified signal or signal group.
 
         Parameters
         ----------
-        name : Union[str, List[str]]
+        name : str | list[str]
             The name of the signal or signal group, or a list of signal names.
         output_format : str, optional
             The format to return the value(s) in. Default is None which returns single
-            values as floats and multiple values as lists. Other options are 
+            values as floats and multiple values as lists. Other options are
             'list', 'dict', 'mean', or 'float'.
 
         Returns
         -------
-        dict or float
+        dict or list
             The value(s) of the specified signal or signal group.
         """
+
         def get_signal_value(signal: Signal):
             """
             Get the value of a signal.
@@ -184,38 +205,40 @@ class SignalManager:
             float
                 The value of the signal.
             """
+            val = 0
             try:
                 if hasattr(signal.obj, "lock"):
-                    with signal.obj.lock:
-                        val = signal.function()
+                    with signal.obj.lock:  # type: ignore
+                        val = signal.function() if callable(signal.function) else signal.function
                 else:
                     for _ in range(5):
-                        val = signal.function()
+                        val = signal.function() if callable(signal.function) else signal.function
                         if signal.conditional(val):
                             break
                         time.sleep(0.5)
-            except (ValueError, PermissionError, FileNotFoundError):
+            except (ValueError, PermissionError, FileNotFoundError, IOError):
                 val = 0
             return val
-            
+
         with self._lock:
             if isinstance(name, str):
                 names = list(self.signals.keys()) if name.lower() == "all" else [name]
             else:
                 names = name
-    
+
             res = {}
             combined_signals = {}
             for n in names:
                 if n in self.signals:
                     signal = self.signals[n]
                     if signal.notes:
+                        # notes typically contain the list of source signals
                         combined_signals[n] = signal
                     else:
                         res[n] = get_signal_value(signal)
                 else:
                     raise ValueError(f"Signal '{n}' not found.")
-            
+
             for n, signal in combined_signals.items():
                 source_signals = signal.notes.split(", ")
                 source_vals = []
@@ -232,11 +255,11 @@ class SignalManager:
                 #     res[n] = signal.function(values)
                 # else:
                 #     res[n] = get_signal_value(signal)
-        
+
         if str(output_format).lower() in ["list", "tuple"]:
             return list(res.values())
         if str(output_format).lower() in ["mean", "float"]:
-            return np.mean(list(res.values()))
+            return float(np.mean(list(res.values())))
         return res
 
     def set_to(self, name: str, value: float):
@@ -255,9 +278,9 @@ class SignalManager:
         ValueError
             If the signal is not settable or not found.
         """
-        with self._lock:
-            signal = self.signals.get(name)
-            if isinstance(signal, Signal) and signal.settable:
-                signal.function(value)
-            else:
-                raise ValueError(f"Signal '{name}' is not settable or not found.")
+        # with self._lock:
+        signal = self.signals.get(name)
+        if isinstance(signal, Signal) and signal.settable:
+            signal.function(value)
+        else:
+            raise ValueError(f"Signal '{name}' is not settable or not found.")

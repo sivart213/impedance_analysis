@@ -11,14 +11,14 @@ __all__ = ["UWTC"]
 # import time
 # from serial import Serial
 
-from typing import  Optional, Union, NamedTuple
+from typing import NamedTuple
 
 import numpy as np
 
 try:
     from ..utilities.serial_manager import SerialManager
 except ImportError:
-    from equipment.utilities.serial_manager import SerialManager
+    from eis_analysis.equipment.utilities.serial_manager import SerialManager
 
 BASIC_CONVERSIONS = {
     "f_to_c": lambda f: (f - 32.0) / (9.0 / 5.0),
@@ -32,7 +32,8 @@ class UWTCOutput(NamedTuple):
     """
     Named tuple for the output data from the UWTC device.
     """
-    address: Optional[int] = None
+
+    address: int | None = None
     signal_strength: int = 0
     sensor_type: str = "None"
     measured: float = 0
@@ -100,7 +101,7 @@ class UWTC:
         self._sim_ambient = 75.5
         self._print_sim_events = print_events
 
-    def _parse_response(self, response: bytes) -> Optional[UWTCOutput]:
+    def _parse_response(self, response: bytes) -> UWTCOutput | None:
         """
         Parse the response from the thermocouple device.
 
@@ -111,7 +112,7 @@ class UWTC:
 
         Returns
         -------
-        Optional[UWTCOutput]
+        UWTCOutput | None
             A named tuple containing the parsed data.
         """
         if len(response) != 16:
@@ -133,15 +134,15 @@ class UWTC:
             battery_voltage=battery_voltage,
         )
 
-    def _build_request(self, param: Optional[str], value: Optional[str] = None) -> bytes:
+    def _build_request(self, param: str | None, value: str | int | float | None = None) -> bytes:
         """
         Build the read request for the UWTC device.
 
         Parameters
         ----------
-        param : Optional[str]
+        param : str | None
             The parameter to read.
-        value : Optional[str]
+        value : str | None
             The value to write.
 
         Returns
@@ -159,20 +160,20 @@ class UWTC:
 
     def write_param(
         self,
-        param: Optional[str] = None,
-        value: Optional[str] = None,
-        retries: Optional[int] = None,
-    ) -> UWTCOutput:
+        param: str | None = None,
+        value: str | int | float | None = None,
+        retries: int | None = None,
+    ) -> UWTCOutput:  # type: ignore
         """
         Writes a parameter to the UWTC device.
 
         Parameters
         ----------
-        param : Optional[str]
+        param : str | None
             The parameter to write.
-        value : Optional[str]
+        value : str | None
             The value to write.
-        retries : Optional[int]
+        retries : int | None
             Number of retries for communication.
 
         Returns
@@ -188,15 +189,15 @@ class UWTC:
             if self._print_sim_events:
                 print(f"UWTC simulated {read_write}: {value}")
             return UWTCOutput(
-                    address=201,
-                    signal_strength=25,
-                    sensor_type="k",
-                    measured=value,
-                    ambient=self._sim_ambient,
-                    battery_voltage=1300.0,
-                    error="Simulation mode",
-                )       
-            
+                address=201,
+                signal_strength=25,
+                sensor_type="k",
+                measured=float(value),
+                ambient=self._sim_ambient,
+                battery_voltage=1300.0,
+                error="Simulation mode",
+            )
+
         request = self._build_request(param, value)
         attempt = 0
         retries = retries if isinstance(retries, int) else self.retries
@@ -212,7 +213,7 @@ class UWTC:
                         raise ValueError("No response received from the device.")
                     self.previous_reply = output
                     return output
-            except (ValueError, PermissionError, FileNotFoundError) as e:
+            except (ValueError, PermissionError, FileNotFoundError, IOError) as e:
                 attempt += 1
                 if attempt >= retries:
                     output = UWTCOutput(error=str(e))
@@ -220,15 +221,15 @@ class UWTC:
                     return output
                 # time.sleep(self.timeout)
 
-    def read_param(self, param: Optional[str] = None, retries: Optional[int] = None) -> UWTCOutput:
+    def read_param(self, param: str | None = None, retries: int | None = None) -> UWTCOutput:
         """
         Reads a parameter from the UWTC device.
 
         Parameters
         ----------
-        param : Optional[str]
+        param : str | None
             The parameter to read.
-        retries : Optional[int]
+        retries : int | None
             Number of retries for communication.
 
         Returns
@@ -238,22 +239,20 @@ class UWTC:
         """
         return self.write_param(param, retries=retries)
 
-    def temp(
-        self, param: Optional[str] = None, temp_unit: Optional[str] = None
-    ) -> Union[float, UWTCOutput]:
+    def temp(self, param: str | None = None, temp_unit: str | None = None) -> float | UWTCOutput:
         """
         Reads the temperature from the thermocouple device.
 
         Parameters
         ----------
-        param : Optional[str]
+        param : str | None
             The parameter to read.
-        temp_unit : Optional[str]
+        temp_unit : str | None
             The temperature unit ('C' for Celsius, 'F' for Fahrenheit).
 
         Returns
         -------
-        Union[float, UWTCOutput]
+        float | UWTCOutput
             The temperature in the specified unit or the full output if requested.
         """
         parsed_data = self.read_param()

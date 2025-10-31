@@ -11,8 +11,9 @@ Created with the help of the following resources:
 """
 
 
-import threading
 import warnings
+import threading
+from typing import Any
 
 import serial as ser
 
@@ -113,7 +114,7 @@ class SerialManager:
         self.baudrate = baudrate
         self.timeout = timeout
         self._lock = threading.Lock()
-        self.serial = None
+        self.serial: Any = None
 
     def open(self):
         """

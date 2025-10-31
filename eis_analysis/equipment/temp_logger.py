@@ -5,29 +5,27 @@ Temperature Logger and Incrementor classes for logging temperature data and incr
 
 import time
 import threading
+from typing import Any
+from pathlib import Path
 from datetime import datetime
-from typing import List, Optional, Union
+
 # from collections import namedtuple
 import numpy as np
-
 import pandas as pd
 import matplotlib.pyplot as plt
 from cycler import cycler
 
 try:
-    from .temperature_devices.watlow import Watlow
+    from .utilities.thread_tools import SThread
     from .temperature_devices.uwtc import UWTC
     from .utilities.signal_manager import SignalManager
-    from .utilities.thread_tools import SThread
+    from .temperature_devices.watlow import Watlow
 except ImportError:
-    from equipment.temperature_devices.watlow import Watlow
-    from equipment.temperature_devices.uwtc import UWTC
-    from equipment.utilities.signal_manager import SignalManager
-    from equipment.utilities.thread_tools import SThread
+    from eis_analysis.equipment.utilities.thread_tools import SThread
+    from eis_analysis.equipment.temperature_devices.uwtc import UWTC
+    from eis_analysis.equipment.utilities.signal_manager import SignalManager
+    from eis_analysis.equipment.temperature_devices.watlow import Watlow
 
-# import threading
-# from typing import Callable, List, NamedTuple, Optional, Tuple, Union
-# import numpy as np
 
 class TempLogger:
     """
@@ -44,14 +42,14 @@ class TempLogger:
     """
 
     def __init__(
-        self, 
+        self,
         signal_manager: SignalManager,
-        signal_names: Union[str, List[str]] = "all",
-        interval: int = 30, 
-        ignore_below: Optional[float] = None,
-        ignore_above: Optional[float] = None,
-        auto_save: bool = False, 
-        save_path: str = "data_log.csv"
+        signal_names: str | list[str] = "all",
+        interval: int = 30,
+        ignore_below: float | None = None,
+        ignore_above: float | None = None,
+        auto_save: bool = False,
+        save_path: str | Path = "data_log.csv",
     ):
         self.signal_manager = signal_manager
         self.signal_names = signal_names
@@ -59,40 +57,25 @@ class TempLogger:
         self.ignore_below = ignore_below
         self.ignore_above = ignore_above
         self.auto_save = auto_save
-        self.save_path = save_path
+        self.save_path = Path(save_path)
         self.start_time = datetime.now()
-        self.df = pd.DataFrame(columns=["timestamp", "time"])
-        self._thread = None
+
+        if signal_names == "all":
+            signal_names = list(signal_manager.signals.keys())
+        elif isinstance(signal_names, str):
+            signal_names = [signal_names]
+
+        self.df = pd.DataFrame(columns=["timestamp", "time"] + signal_names)
+        self._thread: Any = None
         self._running = False
         self._paused = False
         self._plotting = False
         self._lock = threading.Lock()
         self._plot_kwargs = {}
 
-    # def add_device(self, obj: object, *args: Union[str, Tuple[Callable, str, bool]]):
-    #     """
-    #     Add a device to the logger.
-
-    #     Parameters
-    #     ----------
-    #     obj : object
-    #         The object to log data from.
-    #     *args : tuple
-    #         Each argument can be a string, a callable pair, or just a string.
-    #     """
-    #     self.signal_manager.add_device(obj, *args)
-    #     for arg in args:
-    #         if isinstance(arg, str):
-    #             name = arg
-    #         elif isinstance(arg, tuple) and len(arg) >= 2:
-    #             name = arg[1]
-    #         else:
-    #             continue
-    #         self.df[name] = None
-
     def _log_data(self):
         start_time = time.time()
-
+        elapsed_time = 0
         while self._running:
             if self._thread.thread_killed():
                 break
@@ -109,11 +92,13 @@ class TempLogger:
                 ):
                     continue
                 new_data = pd.DataFrame(
-                    [{"timestamp": timestamp, "time": elapsed_time, **data}]
+                    [{"timestamp": timestamp, "time": elapsed_time, **data}],
+                    columns=self.df.columns,
                 )
 
                 if self.df.empty:
                     self.df = new_data
+                    # self.df[0] = new_data.values()
                 elif not new_data.empty:
                     with self._lock:
                         self.df = pd.concat([self.df, new_data], ignore_index=True)
@@ -127,24 +112,19 @@ class TempLogger:
                 time.sleep(adjusted_sleep_time)
 
     def _plot_data(self):
-        cc = cycler(
-            marker=[".", "o", "v", "^", "<", ">", "1", "2", "3", "4"]
-        ) * cycler(ls=["-"]) + cycler(
-            color=plt.rcParams["axes.prop_cycle"].by_key()["color"]
-        )
-        plt.rcParams['date.converter'] = 'concise'
+        cc = cycler(marker=[".", "o", "v", "^", "<", ">", "1", "2", "3", "4"]) * cycler(
+            ls=["-"]
+        ) + cycler(color=plt.rcParams["axes.prop_cycle"].by_key()["color"])
+        plt.rcParams["date.converter"] = "concise"
         while self._plotting:
             with self._lock:
-                if (
-                    self._thread.thread_killed()
-                    or self._plot_thread.thread_killed()
-                ):
+                if self._thread.thread_killed() or self._plot_thread.thread_killed():
                     break
                 if len(self.df) >= 1:
 
-                    x_data = self.df["timestamp"].to_numpy()
+                    x_data = self.df["timestamp"].to_numpy(copy=True)
                     x_label = "Time"
-                    # x_data = self.df["time"].to_numpy()
+                    # x_data = self.df["time"].to_numpy(copy=True)
                     # x_label = "Time (s)"
                     # if max(x_data) > 3600:
                     #     x_data = x_data / 3600
@@ -162,9 +142,7 @@ class TempLogger:
                     self.ax.clear()
                     self.ax.set_prop_cycle(cc)
                     for name in self.df.columns[2:]:
-                        self.ax.plot(
-                            x_data, self.df[name], label=f"{name}"
-                        )
+                        self.ax.plot(x_data, self.df[name], label=f"{name}")
                     if not is_auto:
                         self.ax.set_ylim(*y_lim)
 
@@ -217,9 +195,7 @@ class TempLogger:
         if not self._plotting:
             self._plotting = True
             self.fig, self.ax = plt.subplots()
-            self._plot_thread = SThread(
-                target=self._plot_data, name=thread_name
-            )
+            self._plot_thread = SThread(target=self._plot_data, name=thread_name)
             self._plot_thread.start()
         else:
             self._plotting = False
@@ -232,13 +208,13 @@ class TempLogger:
         Save the logged data to a CSV file.
         """
         f_path = (
-            self.save_path
-            / (str(self.start_time.strftime("%Y%m%d %H%M%S")) + ".csv")
+            self.save_path / (str(self.start_time.strftime("%Y%m%d %H%M%S")) + ".csv")
             if self.save_path.is_dir()
             else self.save_path
         )
         with self._lock:
             self.df.to_csv(f_path, index=False)
+
 
 class Incrementor:
     """
@@ -251,7 +227,7 @@ class Incrementor:
     temp_controller : str
         Name of the settable signal in the SignalManager.
     values : list
-        List of values to set the temperature controller to.
+        list of values to set the temperature controller to.
     delay : float
         Delay time between setting values.
     delay_unit : str, optional
@@ -274,15 +250,16 @@ class Incrementor:
         self,
         signal_manager: SignalManager,
         temp_controller: str,
-        steps: List[float],
+        steps: list[int | float | np.number],
         delay: float,
         delay_unit: str = "seconds",
         loop: bool = False,
         n_loops: int = 1,
         stability_check: bool = False,
-        stability_signal: Optional[str] = None,
+        stability_signal: str = "",
         stability_tol: float = 0.5,
         stability_time: float = 120,
+        stability_adjust: float = 0,
     ):
         self.signal_manager = signal_manager
         self.temp_controller = temp_controller
@@ -295,20 +272,29 @@ class Incrementor:
         self.stability_signal = stability_signal
         self.stability_tol = stability_tol
         self.stability_time = stability_time
+        if isinstance(stability_adjust, (int, float)):
+            self.stability_adjust = abs(stability_adjust)
+        else:
+            self.stability_adjust = 0
+        self.stability_adjust = stability_adjust
         self._step = 0
         self._running = False
         self._paused = False
-        self._thread = None
+        self._thread: Any = None
         self._start_time = datetime.now()
         self._step_start = datetime.now()
         self._total_elapsed = 0
         self._elapsed_time = 0
+        self._stability = []
 
-        if not isinstance(stability_signal, str) or stability_signal not in self.signal_manager.signals:
+        if (
+            not isinstance(stability_signal, str)
+            or stability_signal not in self.signal_manager.signals
+            or not stability_signal
+        ):
             self.stability_check = False
 
-
-    def to_seconds(self, val: float = 0, unit: str = "") -> float:
+    def to_seconds(self, val: float | None = None, unit: str = "") -> float:
         """
         Convert the delay time to seconds based on the delay unit.
 
@@ -324,7 +310,7 @@ class Incrementor:
         float
             Delay time in seconds.
         """
-        val = val or self.delay
+        val = val if val is not None else self.delay
         unit = unit or self.delay_unit
         if not isinstance(val, (int, float)) or not isinstance(unit, str):
             raise ValueError("Invalid delay value or unit.")
@@ -351,7 +337,7 @@ class Incrementor:
     @property
     def step_runtime(self):
         if not self._step_start:
-            return
+            return 0.0
         time = (datetime.now() - self._step_start).total_seconds()
         if self.delay_unit.startswith("min"):
             return time / 60
@@ -368,7 +354,7 @@ class Incrementor:
         if self.delay_unit.startswith("h"):
             return time / 3600
         return self._total_elapsed
-    
+
     @property
     def time_stable(self):
         time = self._elapsed_time
@@ -380,12 +366,16 @@ class Incrementor:
         return self._total_elapsed
 
     @property
+    def is_stable(self):
+        return self._elapsed_time > self.stability_time
+
+    @property
     def step(self) -> float:
         """Return the current step value."""
-        return self.steps[self._step]
+        return float(self.steps[self._step])
 
     @step.setter
-    def step(self, value: Union[float, int]):
+    def step(self, value: float | int):
         if value in self.steps:
             self._step = self.steps.index(value)
         elif isinstance(value, int) and 0 <= value < len(self.steps):
@@ -418,23 +408,37 @@ class Incrementor:
 
                 value = self.steps[self._step]
                 print(f"Setting temperature to: {value}°C")
-                self.signal_manager.set_to(self.temp_controller, value)
+                self.signal_manager.set_to(self.temp_controller, float(value))
 
                 sleep_interval = min(1, delay_seconds)
                 stability_interval = min(sleep_interval * 60, max(1, delay_seconds / 5))
                 time_since_check = 0
+                temps = np.array([], dtype=float)
                 if self.stability_check:
-                    temps = np.array([self.signal_manager.get(self.stability_signal)], dtype=float)
+                    temps = np.array(
+                        [self.signal_manager.get(self.stability_signal, output_format="float")],
+                        dtype=float,
+                    )
                 while self._elapsed_time < delay_seconds:
                     if not self._running or self._thread.thread_killed():
                         break
+                    while self._paused and not self._thread.thread_killed():
+                        time.sleep(0.1)
                     if self.stability_check and time_since_check > stability_interval:
-                        temp = self.signal_manager.get(self.stability_signal)
-                        if temp > 0:
+                        temp = self.signal_manager.get(
+                            self.stability_signal, output_format="float"
+                        )
+                        if temp > 40:
                             time_since_check = 0
                             temps = np.append(temps, temp)
                         temp_std = np.ptp(temps)
+                        self._stability.append(temp_std)
                         if temp_std > self.stability_tol:
+                            if (
+                                self.stability_adjust
+                                and self.step_runtime / self.stability_adjust > self.delay
+                            ):
+                                self.stability_tol = min(temp_std, self.stability_tol * 2)
                             temps = np.array([temps[-1]], dtype=float)
                             self._elapsed_time = 0
 
@@ -513,115 +517,177 @@ class Incrementor:
         if step < 0:
             step = len(self.steps) - 1
         self.start(step)
- 
-#%%
+
+
+# %%
 if __name__ == "__main__":
     # import numpy as np
-    from pathlib import Path
     import sys
-    # try:
-    #     from .utilities.thread_tools import DeviceTrigger
-    #     from .mfia_base import MFIABase
-    # except ImportError:
-    #     from equipment.utilities.thread_tools import DeviceTrigger
-    #     from equipment.mfia_base import MFIABase
+    from pathlib import Path
+
+    try:
+        from .mfia_base import MFIABase
+        from .utilities.thread_tools import DeviceTriggers
+    except ImportError:
+        from eis_analysis.equipment.mfia_base import MFIABase
+        from eis_analysis.equipment.utilities.thread_tools import DeviceTriggers
 
     # Set the threading excepthook to print exceptions
     def thread_excepthook(args):
-        print(f"Exception in thread {args.thread.name}: {args.exc_type.__name__}: {args.exc_value}", file=sys.stderr)
+        print(
+            f"Exception in thread {args.thread.name}: {args.exc_type.__name__}: {args.exc_value}",
+            file=sys.stderr,
+        )
 
     threading.excepthook = thread_excepthook
 
     folder_path = Path(r"C:\Users\DEfECT\Documents\Omega")
-    #%%
-
-    # ez_zone_logger = WatlowLogger(port="com4", timeout=1, interval=60)
-    # ez_zone_logger.start_logging()
-    # ez_zone_logger = WatlowLogger(port="com4", interval=2)
-    # ez_zone_logger.start_logging()
-    # ez_zone_logger.plot_data()
+    # %%
 
     watlow_device = Watlow(
-        port="sim COM4", #COM4
+        port="COM4",  # COM4
         max_setpoint=90,
-        mode="normal",
-        duration="auto",
-        overshoot="auto"
+        mode="rapid",
+        mode_duration="auto",
+        mode_offset="auto",
         # duration=120,
         # overshoot=2.5
     )
-    uwtc_device = UWTC(port="sim COM3") #COM3
-    # uwtc_device._lock = threading.Lock()
+    uwtc_device = UWTC(port="COM3")  # COM3
+
     # mfia_device = MFIABase("localhost")
+    mfia_device = MFIABase("192.168.94.86")
 
     device_manager = SignalManager()
     device_manager.add_device(
         uwtc_device,
         ("temp", "Top Temp"),
         # (lambda: uwtc_device.previous_reply.ambient, "ambient"),
-        (lambda: uwtc_device.temp('ambient'), "ambient"),
+        (lambda: uwtc_device.temp("ambient"), "ambient"),
     )
-    device_manager.add_device(watlow_device, ("temp", "Bottom Temp"), ("setpoint", "setpoint", True))
+    device_manager.add_device(
+        watlow_device, ("temp", "Bottom Temp"), ("setpoint", "setpoint", True)
+    )
     device_manager.define_signal("Ave Temp", ["Top Temp", "Bottom Temp"])
     device_manager.define_signal(watlow_device.__name__, ["setpoint"])
-    
-    device_manager.get()
 
+    # device_manager.get("Ave Temp", "float")
 
-    #%%
+    # %%
     temp_logger = TempLogger(
         signal_manager=device_manager,
         signal_names=["Top Temp", "Ave Temp", "Bottom Temp", "setpoint"],
-        interval=15,
+        interval=60,
         ignore_below=0,
         ignore_above=200,
-        auto_save=False,
+        auto_save=True,
         save_path=folder_path,
     )
-
 
     temp_logger.start_logging()
     temp_logger.plot_data()
 
-
-    values = list(np.arange(60, 90, 5))
+    values = list(np.arange(60, 90, 5, dtype=float))
     # delay = 8  # 57.2  # 1 hour
     incrementor = Incrementor(
         signal_manager=device_manager,
         temp_controller=watlow_device.__name__,
         steps=values,
-        delay=2,
+        delay=40,
         delay_unit="min",
         loop=True,
         n_loops=0,
-        stability_check=False,
+        stability_check=True,
         stability_signal="Ave Temp",
-        stability_tol=0.6,
-        stability_time=150,
+        stability_tol=0.25,
+        stability_time=5 * 60,
     )
-    # incrementor.start()
-    
-    
+    incrementor.start()
 
-    # def check_condition():
-    #     # value = mfia_device.device["demods/0/sample"]()["frequency"].item()
-    #     return mfia_device.frequency >= 4.1e6  # Example condition
+    # %%
 
-    # def trigger_action():
-    #     t_stable = incrementor.to_seconds(incrementor.time_stable)
-    #     if mfia_device.impedance_run_status == 1:
-    #         mfia_device.toggle_imps_module()
-    #         # if stable for more than 5 min then this isnt a case of bad stepping
-    #         if t_stable > 5*60:
-    #             incrementor.next_step()
-    #     # if a bad step, while loop would just move on, otherwise will continue after stable for 5 min
-    #     n=0
-    #     while incrementor.to_seconds(incrementor.time_stable) < 5*60 and n < 30:
-    #         n+=1
-    #         time.sleep(1)
-    #     mfia_device.toggle_imps_module()
-    #     print(f"Condition met @ {datetime.now().strftime('%y%m%d %H%M%S')}")
-    
-    # # poller = DevicePoller(mfia_base.device, "demods/0/sample", "frequency", check_condition, trigger_action, true_count=1, wait_time=2.0)
-    # poller = DeviceTrigger(check_condition, trigger_action, true_count=1, wait_time=2.0)
-    # poller.start()
+    freq = []
+
+    def is_sorted(arr):
+        if len(arr) < 2:
+            return True
+        return all(arr[i] <= arr[i + 1] for i in range(len(arr) - 1)) or all(
+            arr[i] >= arr[i + 1] for i in range(len(arr) - 1)
+        )
+
+    def feq_not_sorted():
+        """Trigger to stop sweep and change temp"""
+        f = mfia_device.frequency()
+        if len(freq) < 1 or freq[-1] != f:
+            freq.append(f)
+
+        if not is_sorted(freq) and mfia_device.impedance_run_status() and incrementor.is_stable:
+            # primary: feq has delta and is running (ie new sweep), and t is stable
+            return True
+        elif not is_sorted(freq) and mfia_device.impedance_run_status():
+            # indications of new sweep and is running but t not stable -> clear freq to setup next round
+            freq.clear()
+        return False
+
+    def temp_stable_after_step():
+        """Trigger to start new sweep"""
+
+        # stable and off
+        return incrementor.is_stable and not mfia_device.impedance_run_status()
+
+    def trigger_next_step():
+
+        if incrementor.is_stable:
+            # only increment if stable
+            mfia_device.toggle_imps_module("off")
+            incrementor.next_step()
+            print("triggered change in T")
+        else:
+            print("next step triggered but T not stable")
+
+    def trigger_next_sweep():
+        freq.clear()
+        mfia_device.toggle_imps_module("on")
+        print("triggered next sweep")
+
+    poller = DeviceTriggers(
+        [feq_not_sorted, trigger_next_step],
+        [temp_stable_after_step, trigger_next_sweep],
+        true_count=1,
+        wait_time=2.0,
+    )
+    poller.start()
+# %%
+
+# def high_freq_trigger():
+#     # value = mfia_device.device["demods/0/sample"]()["frequency"].item()
+#     # High freq and running
+#     return mfia_device.frequency() >= 4.1e6 and mfia_device.impedance_run_status()# Example condition
+
+# def stable_signal_trigger():
+#     # value = mfia_device.device["demods/0/sample"]()["frequency"].item()
+#     # stable and off
+#     return incrementor.is_stable and not mfia_device.impedance_run_status() # Example condition
+# def trigger_action():
+#     t_stable = incrementor.to_seconds(incrementor.time_stable)
+#     if mfia_device.impedance_run_status() == 1:
+#         mfia_device.toggle_imps_module("off")
+#         # if stable for more than 5 min then this isnt a case of bad stepping
+#         if t_stable > 5*60:
+#             incrementor.next_step()
+
+#     # if a bad step, while loop would just move on, otherwise will continue after stable for 5 min
+#     n=0
+#     while (t_stable := incrementor.to_seconds(incrementor.time_stable)) < 5*60 and n < 30*60:
+#     # while t_stable < 5*60 and n < 30*60:
+#         # print(n)
+#         # print(t_stable)
+#         n+=1
+#         time.sleep(1)
+#     mfia_device.toggle_imps_module("on")
+#     print()
+#     print(f"Condition met @ {datetime.now().strftime('%y%m%d %H%M%S')}")
+#     # print(f"n = {n}; stable {t_stable}")
+
+# # poller = DevicePoller(mfia_base.device, "demods/0/sample", "frequency", high_freq_trigger, trigger_action, true_count=1, wait_time=2.0)
+# poller = DeviceTriggers(high_freq_trigger, trigger_action, true_count=1, wait_time=2.0)

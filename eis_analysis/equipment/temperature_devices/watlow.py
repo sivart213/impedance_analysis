@@ -16,21 +16,22 @@ Classes:
 
 __all__ = ["Watlow"]
 
-import struct
 import time
-
+import struct
+from typing import Any, NamedTuple
 from binascii import hexlify, unhexlify
-from typing import Optional, Union, NamedTuple
 
-import crcmod
 import numpy as np
+import crcmod
 
 try:
-    from ..utilities.serial_manager import SerialManager
+    from ..utilities.thread_tools import SThread
     from ..utilities.watlow_tables import crc_8_table, watlow_params
+    from ..utilities.serial_manager import SerialManager
 except ImportError:
-    from equipment.utilities.serial_manager import SerialManager
-    from equipment.utilities.watlow_tables import crc_8_table, watlow_params
+    from eis_analysis.equipment.utilities.thread_tools import SThread
+    from eis_analysis.equipment.utilities.watlow_tables import crc_8_table, watlow_params
+    from eis_analysis.equipment.utilities.serial_manager import SerialManager
 
 
 BASIC_CONVERSIONS = {
@@ -51,16 +52,16 @@ class WatlowOutput(NamedTuple):
         The address of the Watlow controller.
     param : int
         The parameter ID.
-    data : Union[int, float]
+    data : int | float
         The data value.
-    error : Optional[Exception]
+    error : Exception  | None
         The error message if an error occurred.
     """
 
-    address: int = None
-    param: int = None
-    data: Union[int, float] = None
-    error: Optional[Exception] = None
+    address: int | None = None
+    param: int | None = None
+    data: int | float | None = None
+    error: Exception | str | None = None
 
 
 class WatlowSerial:
@@ -102,7 +103,7 @@ class WatlowSerial:
 
     def __init__(
         self,
-        port: Optional[str] = None,
+        port: str = "",
         baudrate: int = 38400,
         timeout: float = 0.5,
         address: int = 1,
@@ -118,10 +119,9 @@ class WatlowSerial:
         self._simulate = False
         self._sim_value = 124.0
         self._print_sim_events = True
-        
+
         if "sim" in port.lower():
             self._simulation_mode()
-
 
     def _simulation_mode(self, print_events=True) -> None:
         """
@@ -131,7 +131,7 @@ class WatlowSerial:
         self._sim_value = 124.0
         self._print_sim_events = print_events
 
-    def _header_check_byte(self, header_bytes: bytearray) -> bytes:
+    def _header_check_byte(self, header_bytes: bytes | bytearray) -> bytes:
         """
         Takes the full header byte array bytes[0] through bytes[6] of the full
         command and returns a check byte (bytearray of length one) using Watlow's
@@ -161,7 +161,7 @@ class WatlowSerial:
         ] & (2**8 - 1)
         return bytes([intCheck])
 
-    def _data_check_byte(self, data_bytes: bytearray) -> bytes:
+    def _data_check_byte(self, data_bytes: bytes | bytearray) -> bytes:
         """
         Takes the full data byte array, bytes[8] through bytes[13] of the full
         command and calculates the data check byte using BacNET CRC-16.
@@ -186,7 +186,7 @@ class WatlowSerial:
         self,
         data_param: int,
         request_type: str,
-        value: Optional[float] = None,
+        value: float | None = None,
         instance: str = "01",
     ) -> bytearray:
         """
@@ -209,25 +209,30 @@ class WatlowSerial:
             The request byte array.
         """
         # Reformats data param from notation in the manual to hex string
-        data_param = format(int(data_param), "05d")
-        data_param = hexlify(
-            int(data_param[:2]).to_bytes(1, "big") + int(data_param[2:]).to_bytes(1, "big")
+        s_data_param = format(int(data_param), "05d")
+        s_data_param = hexlify(
+            int(s_data_param[:2]).to_bytes(1, "big") + int(s_data_param[2:]).to_bytes(1, "big")
         ).decode("utf-8")
 
+        b_value = None
         if request_type == "read":
             header_suffix = "000006"
             data_prefix = "010301"
             data_suffix = ""
         elif request_type == "write_float":
+            if value is None:
+                raise ValueError("Value must be provided for write_float request")
             header_suffix = "00000a"
             data_prefix = "0104"
             data_suffix = "08"
-            value = struct.pack(">f", float(value))
+            b_value = struct.pack(">f", float(value))
         elif request_type == "write_int":
+            if value is None:
+                raise ValueError("Value must be provided for write_int request")
             header_suffix = "030009"
             data_prefix = "0104"
             data_suffix = "0f01"
-            value = value.to_bytes(2, "big")
+            b_value = int(value).to_bytes(2, "big")
         else:
             raise ValueError("Invalid request type")
 
@@ -237,10 +242,10 @@ class WatlowSerial:
         header_chk = self._header_check_byte(hex_header)
 
         # Request Data: data prefix, data param in hex, instance, data suffix
-        hex_data = data_prefix + data_param + instance + data_suffix
+        hex_data = data_prefix + s_data_param + instance + data_suffix
         hex_data = unhexlify(hex_data)
-        if value is not None:
-            hex_data += value
+        if b_value is not None:
+            hex_data += b_value
         data_chk = self._data_check_byte(hex_data)
 
         # Assemble request byte array:
@@ -313,7 +318,7 @@ class WatlowSerial:
                     hexlify(bytes_response),
                 )
                 raise ValueError(f"Invalid response received from address {self.address}")
-        except (ValueError, PermissionError, FileNotFoundError) as e:
+        except (ValueError, PermissionError, FileNotFoundError, IOError) as e:
             return WatlowOutput(address=self.address, error=e)
         else:
             # Case where response data value is an int used to represent a state defined
@@ -374,9 +379,9 @@ class WatlowSerial:
         data_type: type,
         *,
         instance: str = "01",
-        retries: Optional[int] = None,
+        retries: int | None = None,
         **_,
-    ) -> WatlowOutput:
+    ) -> Any:
         """
         Takes a parameter and writes data to the watlow controller at
         object's internal address. Using this function requires knowing the data
@@ -416,7 +421,7 @@ class WatlowSerial:
                     response = serial.read(21) if data_type == float else serial.read(20)
                     output = self._parse_response(response)
                     return output
-            except (ValueError, PermissionError, FileNotFoundError) as e:
+            except (ValueError, PermissionError, FileNotFoundError, IOError) as e:
                 attempt += 1
                 if attempt >= retries:
                     return WatlowOutput(address=self.address, error=e)
@@ -425,13 +430,13 @@ class WatlowSerial:
     def write_param(
         self,
         param: int,
-        value: Union[int, float],
+        value: int | float,
         data_type: type,
         *,
         instance: str = "01",
-        retries: Optional[int] = None,
+        retries: int | None = None,
         **_,
-    ) -> WatlowOutput:
+    ) -> Any:
         """
         Changes the value of the passed watlow parameter ID. Using this function
         requires knowing the data type for the parameter (int or float).
@@ -473,7 +478,7 @@ class WatlowSerial:
                     response = serial.read(20) if data_type == float else serial.read(19)
                     output = self._parse_response(response)
                     return output
-            except (ValueError, PermissionError, FileNotFoundError) as e:
+            except (ValueError, PermissionError, FileNotFoundError, IOError) as e:
                 attempt += 1
                 if attempt >= retries:
                     return WatlowOutput(address=self.address, error=e)
@@ -536,13 +541,13 @@ class Watlow(WatlowSerial):
     https://github.com/BrendanSweeny/pywatlow.git, which is licensed under the GNU LGPL v3.
     """
 
-    def __init__(self, port=None, baudrate=38400, timeout=0.5, address=1, **kwargs):
+    def __init__(self, port="", baudrate=38400, timeout=0.5, address=1, **kwargs):
         super().__init__(port, baudrate, timeout, address)
         self.full_output = kwargs.get("full_output", False)
         self.temp_unit = kwargs.get("temp_unit", "C")
         self.mode = kwargs.get("mode", "normal")
-        self.mode_duration = kwargs.get("mode_duration", 300)
-        self.mode_offset = kwargs.get("mode_offset", 5)
+        self.mode_duration = kwargs.get("mode_duration", "auto")
+        self.mode_offset = kwargs.get("mode_offset", "auto")
         self.max_setpoint = kwargs.get("max_setpoint", None)
         self.min_setpoint = kwargs.get("min_setpoint", None)
 
@@ -695,11 +700,22 @@ class Watlow(WatlowSerial):
         offset = kwargs.get("offset", self.mode_offset)
 
         if mode == "rapid" or mode == "gradual":
-            return self._setpoint_mode_control(value, duration, offset, unit, mode)
+            thread = SThread(
+                target=self._setpoint_mode_control,
+                name=self.__name__ + "mode_control_run",
+                args=(value, duration, offset, unit, mode),
+            )
+            thread.start()
+            return
         return self.write_param(7001, value, float, convert=unit)
 
     def _setpoint_mode_control(
-        self, target_value, duration=300, offset=5, unit=None, mode="rapid"
+        self,
+        target_value,
+        duration: str | int | float = "auto",
+        offset: str | float = "auto",
+        unit=None,
+        mode="rapid",
     ):
         """
         Change the setpoint either aggressively (with an overshoot) or gradually (with an undershoot).
@@ -728,7 +744,7 @@ class Watlow(WatlowSerial):
         current_value = self.setpoint(unit=unit, mode="normal")
         if str(offset).lower() == "auto":
             offset = abs(target_value - current_value) / 2
-
+        offset = float(offset)
         if abs(target_value - current_value) < offset or offset < 0.5:
             return self.setpoint(target_value, unit=unit, mode="normal")
 
@@ -762,6 +778,7 @@ class Watlow(WatlowSerial):
                 n += 10
                 time.sleep(10)
         else:
+            duration = float(duration)
             time.sleep(duration / 4)
 
             # Calculate the number of steps and the step size
@@ -779,8 +796,6 @@ class Watlow(WatlowSerial):
         self.setpoint(target_value, unit=unit, mode="normal")
 
         return self.setpoint(unit=unit, mode="normal")
-
-
 
 
 if __name__ == "__main__":
