@@ -8,6 +8,7 @@ from eis_analysis.z_system.complexer import Complexer
 from eis_analysis.z_system.imped_parsing import BaseParser, ItemTransforms
 
 
+# %% ---- Complexer Section ----
 @pytest.fixture
 def complexer_test_arrays():
     """Fixture providing test arrays for Complexer tests."""
@@ -133,6 +134,7 @@ def test_complexer_operations(
         np.testing.assert_allclose(result, expected_func(arr, None))
 
 
+# %% ---- BaseParser Section ----
 class DummyParser(BaseParser, form_str="_form"):
     def __init__(self):
         self.value = np.array([1, 2, 3])
@@ -178,6 +180,7 @@ def test_add_valid_forms_and_getitem(dummy_parser):
         dummy_parser._parse_and_transform("unknown(value)")
 
 
+# %% ---- ItemTransforms Section ----
 class DummyTransforms(ItemTransforms):
     def __init__(self):
         super().__init__()

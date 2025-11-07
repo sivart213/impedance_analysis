@@ -13,6 +13,12 @@ BASE_COMPLEX_FORMS = {
     "impedance", "admittance", "modulus", "capacitance", "resistivity", "conductivity",
     "permittivity", "relative_permittivity", "relative_permittivity_corrected", "susceptibility",
 }
+CENTER_PHASE_FORMS = {
+    "impedance", "admittance", "resistivity", "conductivity",
+}
+OFFSET_PHASE_FORMS = BASE_COMPLEX_FORMS - CENTER_PHASE_FORMS
+
+OFFSET_FORMS = {"relative_permittivity_corrected", "susceptibility"}
 
 CONST_ALIASES = {
     "e_0": "permittivity_constant",
@@ -46,6 +52,19 @@ COMP_ALIAS_SETS = {
     "susceptibility": {"χ", "χₑ", "x_e", "chi", "chi_e"},
 }
 
+# COMP_ALIAS_SETS = {
+#     "impedance": {"z", "imp"},
+#     "admittance": {"y", "adm"},
+#     "capacitance": {"c", "cap"},
+#     "modulus": {"m", "mod"},
+#     "conductivity": {"cond", "sigma"},
+#     "resistivity": {"rho", "resis"},
+#     "permittivity": {"e", "perm", "epsilon"},
+#     "relative_permittivity": {"e_r", "epsilon_r", "perm_r", "permittivity_r"},
+#     "relative_permittivity_corrected": {"e_rdc", "e_r_dc", "epsilon_r_dc", "perm_r_dc", "permittivity_r_dc"},
+#     "susceptibility": {"x_e", "chi", "chi_e"},
+# }
+
 COMP_ALIASES = (
     {s: s for s in BASE_COMPLEX_FORMS}
     | {alias: key for key, aliases in COMP_ALIAS_SETS.items() for alias in aliases}
@@ -53,7 +72,7 @@ COMP_ALIASES = (
 
 ALIASES = CONST_ALIASES | ARR_ALIASES | COMP_ALIASES
 
-NEG_IMAG_FORMS = {"capacitance", "permittivity", "relative_permittivity", "relative_permittivity_corrected", "susceptibility"}
+NEG_IMAG_FORMS = {"permittivity", "relative_permittivity", "relative_permittivity_corrected", "susceptibility"}
 
 MOD_GRPS = {
     "cartesian": ["real", "imag"],
@@ -99,6 +118,21 @@ COMPONENT_MAP = {
 }
 
 
+UNICODE_TABLE = str.maketrans({
+    "ω": "omega",
+    "σ": "sigma",
+    "ρ": "rho",
+    "ε": "epsilon",
+    "χ": "chi",
+    "ᵣ": "_r",
+    "₀": "_0",
+    "ₑ": "_e",
+})
+
+def safe_lower(text: str) -> str:
+    return text.lower() if text.isascii() else text.translate(UNICODE_TABLE).lower()
+
+
 mode_parts = [
     (re.compile(r"(?P<var>\w+)\s?''"), "{var}.imag"),
     (re.compile(r"(?P<var>\w+)\s?\""), "{var}.imag"),
@@ -110,10 +144,7 @@ mode_parts = [
 
 
 # fmt: on+-
-# SORTED_ALIASES = sorted(ALIASES.keys(), key=len, reverse=True)
 SORTED_ALIASES = sorted(COMPLEX_SYMBOL_MAP.keys(), key=len, reverse=True)
-# SORTED_COMPS = sorted(COMP_ALIASES.keys(), key=len, reverse=True) SYMBOL_MAP
-# sorted_mode_keys = sorted(self.mode_mapping.keys(), key=len, reverse=True)
 
 def parse_modes(text: str) -> str:
     # Parse modes
@@ -133,7 +164,5 @@ def parse_system_key(text: str) -> str:
     for key, repl in FUNC_MAP.items():
         text = text.replace(key, repl)
     text = text.replace(" ", "")
-    # text = re.sub(r"\s+", " ", text)  # Replace multiple spaces with a single space
-    # text = re.sub(r"\s*\(\s*", "(", text)  # Replace ' (' with '('
-    # text = re.sub(r"\s*\)\s*", ")", text)  # Replace ' )' with ')'
+
     return text.strip()

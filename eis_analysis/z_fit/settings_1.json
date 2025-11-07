@@ -1,5 +1,5 @@
 {
-    "model": "R0-p(R1,CPE1,R2-CPE2)",
+    "model": "R0-L0-p(R1,C1)",
     "load_dir": {
         "__path__": "D:\\Online\\ASU Dropbox\\Jacob Clenney\\Work Docs\\Data\\Analysis\\IS\\EVA\\Fit_Results\\2025"
     },
@@ -71,18 +71,18 @@
         }
     },
     "plot_var": {
-        "ny_x": "Z'/max(|Z|)",
-        "ny_y": "-Z''/max(|Z|)",
+        "ny_x": "Z'",
+        "ny_y": "-Z''",
         "bd_x": "Frequency",
-        "bd_y1": "\u03b5\u1d63'",
-        "bd_y2": "M''"
+        "bd_y1": "M\u03b8",
+        "bd_y2": "e_r\u03b8"
     },
     "is_log": {
         "ny_x": false,
         "ny_y": false,
         "bd_x": true,
         "bd_y1": false,
-        "bd_y2": true
+        "bd_y2": false
     },
     "var_units": {
         "f": "Hz",
@@ -125,7 +125,7 @@
             "window padding": 0.2,
             "outlier percent": 2.5,
             "inversion threshold": 0.95,
-            "plot1 as nyquist": true,
+            "plot1 as nyquist": false,
             "Data options": {
                 "s": 30,
                 "alpha": 1,
@@ -157,8 +157,8 @@
         "simulation": {
             "sim_param_freq": true,
             "interp": true,
-            "freq_start": -3.5,
-            "freq_stop": 6.5,
+            "freq_start": -4,
+            "freq_stop": 7,
             "freq_num": 221,
             "area": 25,
             "thickness": 0.04,

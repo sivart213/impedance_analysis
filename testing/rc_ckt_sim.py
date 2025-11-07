@@ -96,14 +96,18 @@ class RCCircuit:
         r_vals = np.random.uniform(*self.bounds)
         return [(1 - mult) * v + mult * rv for v, rv in zip(self._true_values, r_vals)]
 
-    def get_noisy_z(self, noise=0.0) -> np.ndarray:
+    def get_noisy_z(self, noise=0.0, arr=None) -> np.ndarray:
         """Generate noisy impedance data based on current true values and frequency."""
         self._noise = abs(noise) or self._noise
-        Z = self.Z
-        np.random.seed(0)
-        noise_real = np.random.normal(0, self._noise * abs(Z), size=Z.real.shape)
-        noise_imag = np.random.normal(0, self._noise * abs(Z), size=Z.imag.shape)
-        return Z + noise_real + 1j * noise_imag
+        Z = self.Z if not isinstance(arr, np.ndarray) else arr
+        rng = np.random.default_rng(seed=0)
+
+        scale_r = self._noise * np.maximum(np.abs(Z.real), 1e-12)
+        scale_i = self._noise * np.maximum(np.abs(Z.imag), 1e-12)
+
+        Z_noise = rng.normal(0, scale_r, size=Z.shape) + 1j * rng.normal(0, scale_i, size=Z.shape)
+
+        return Z + Z_noise
 
     @property
     def model(self):
