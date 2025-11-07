@@ -6,6 +6,7 @@ Created on Wed Apr 11 17:05:01 2018.
 
 General function file
 """
+from __future__ import annotations
 
 import re
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast, overload
@@ -29,7 +30,6 @@ try:
     from ..utils.decorators import handle_dicts, handle_subdicts
 except ImportError:
     from eis_analysis.utils.decorators import handle_dicts, handle_subdicts
-
 
 IsFalse: TypeAlias = Literal[False]
 IsTrue: TypeAlias = Literal[True]
@@ -1323,5 +1323,8 @@ def impedance_concat(raw_data: dict) -> pd.DataFrame:
     except KeyError:
         return comb
 
+
+if __name__ == "__main__":
+    pass
 
 # ARCHIVE

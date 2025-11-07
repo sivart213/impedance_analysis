@@ -1,5 +1,7 @@
 # Suggested placement: in your test_complex_data.py or similar test file
 
+import itertools
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -9,19 +11,35 @@ from testing.rc_ckt_sim import RCCircuit
 from eis_analysis.z_system.system import ComplexSystem
 from eis_analysis.z_system.convert import convert
 from eis_analysis.z_system.complexer import Complexer
+from eis_analysis.z_system.definitions import COMP_ALIAS_SETS
+
+# ---- Constants for parametrization ----
+FORMS = [
+    "impedance",
+    "admittance",
+    "modulus",
+    "capacitance",
+    "resistivity",
+    "conductivity",
+    "permittivity",
+    "relative_permittivity",
+    "relative_permittivity_corrected",
+    "susceptibility",
+]
+
+INPUT_VARIANTS = ["complexer", "ndarray", "ndarray_inverted"]
+
+# build param list: (alias, base)
+params = []
+for base, aliases in COMP_ALIAS_SETS.items():
+    params.append((base.title(), base))
+    for alias in aliases:
+        params.append((alias, base))
+        if alias.isascii():
+            params.append((alias.title(), base))
 
 
-def test_valid_forms_aliasing(dummy_transforms):
-    """
-    Clarifying comment: tests that all aliases for smoothed_form are registered and work.
-    """
-    arr = np.arange(5)
-    for alias in ["S", "ƒₛₘ", "sm", "smooth", "smoothed"]:
-        result = getattr(dummy_transforms, dummy_transforms._valid_forms[alias])(arr)
-        check_result_type_and_print(result, np.ndarray, f"alias {alias} for smoothed_form")
-        assert np.allclose(result, arr, atol=1e-1)
-
-
+# ---- Fixtures ----
 @pytest.fixture
 def rc_data():
     """Fixture providing frequency and impedance data from RCCircuit for ComplexSystem tests."""
@@ -48,23 +66,10 @@ def rc_system():
     return ComplexSystem(data=ckt.Z_noisy, frequency=ckt.freq, area=25, thickness=500e-4)
 
 
+# ---- Tests ----
 @pytest.mark.parametrize(
     "property_name, description",
-    [
-        # Clarifying comment: tests each main ComplexSystem property that returns a Complexer
-        ("impedance", "impedance property returns correct Complexer"),
-        ("admittance", "admittance property returns correct Complexer"),
-        ("capacitance", "capacitance property returns correct Complexer"),
-        ("modulus", "modulus property returns correct Complexer"),
-        ("permittivity", "permittivity property returns correct Complexer"),
-        ("relative_permittivity", "relative_permittivity property returns correct Complexer"),
-        (
-            "relative_permittivity_corrected",
-            "relative_permittivity_corrected property returns correct Complexer",
-        ),
-        ("conductivity", "conductivity property returns correct Complexer"),
-        ("resistivity", "resistivity property returns correct Complexer"),
-    ],
+    [(f, "> returns correct Complexer") for f in FORMS],
 )
 def test_complex_system_main_properties(rc_data, property_name, description):
     """
@@ -82,34 +87,21 @@ def test_complex_system_main_properties(rc_data, property_name, description):
     assert result.array.shape == rc_data["impedance"].shape
 
 
-def test_complex_system_aliases(rc_data):
+@pytest.mark.parametrize("alias,base", params)
+def test_complex_system_aliases(rc_data, alias, base):
     """
-    Clarifying comment: tests that aliases in ComplexSystem map to correct properties.
+    Tests that aliases in ComplexSystem map to correct properties.
     """
     cs = ComplexSystem(data=rc_data["impedance"], frequency=rc_data["frequency"])
-    # Test a few representative aliases
 
-    # Helper to get the underlying array for comparison
-    def get_array(val):
-        return val.array
+    # resolve via alias
+    val_alias = cs.get_complexer(alias)
+    # resolve via canonical property
+    val_base = getattr(cs, base)
 
-    # Clarifying comments before each assert
-    # tests that alias 'z' returns a Complexer and matches impedance property
-    assert np.all(get_array(cs["z"]) == get_array(cs.impedance))
-    # tests that alias 'y' returns a Complexer and matches admittance property
-    assert np.all(get_array(cs["y"]) == get_array(cs.admittance))
-    # tests that alias 'c' returns a Complexer and matches capacitance property
-    assert np.all(get_array(cs["c"]) == get_array(cs.capacitance))
-    # tests that alias 'm' returns a Complexer and matches modulus property
-    assert np.all(get_array(cs["m"]) == get_array(cs.modulus))
-    # tests that alias 'e' returns a Complexer and matches permittivity property
-    assert np.all(get_array(cs["e"]) == get_array(cs.permittivity))
-    # tests that alias 'e_r' returns a Complexer and matches relative_permittivity property
-    assert np.all(get_array(cs["e_r"]) == get_array(cs.relative_permittivity))
-    # tests that alias 'sigma' returns a Complexer and matches conductivity property
-    assert np.all(get_array(cs["sigma"]) == get_array(cs.conductivity))
-    # tests that alias 'rho' returns a Complexer and matches resistivity property
-    assert np.all(get_array(cs["rho"]) == get_array(cs.resistivity))
+    np.testing.assert_array_equal(
+        val_alias.array, val_base.array, err_msg=f"Alias '{alias}' did not match base '{base}'"
+    )
 
 
 def test_complex_system_get_df(rc_data):
@@ -128,53 +120,33 @@ def test_complex_system_get_df(rc_data):
     assert "thickness" in result.attrs
 
 
-@pytest.mark.parametrize(
-    "from_form",
-    [
-        "impedance",
-        "admittance",
-        "modulus",
-        "capacitance",
-        "resistivity",
-        "conductivity",
-        "permittivity",
-        "relative_permittivity",
-        "relative_permittivity_corrected",
-        "susceptibility",
-    ],
-)
-def test_convert_all_forms(rc_system, from_form):
-    """
-    Test convert function for all supported forms.
-    Clarifying comment: Each form is converted back to impedance and compared to the trusted source.
-    """
-    data = rc_system.get_complexer(from_form)
+@pytest.mark.parametrize("from_form,input_variant", itertools.product(FORMS, INPUT_VARIANTS))
+def test_convert_all_forms(rc_system, from_form, input_variant):
     kwargs = {}
-    # Clarifying comment: pass correct phys_const for special forms
     if from_form == "relative_permittivity_corrected":
         kwargs["phys_const"] = rc_system.val_towards_zero(rc_system.conductivity.real)
     elif from_form == "susceptibility":
         kwargs["phys_const"] = rc_system.val_towards_infinity(rc_system.relative_permittivity.real)
-    # Use convert to get impedance
-    result = convert(data, from_form=from_form, to_form="impedance", system=rc_system, **kwargs)
-    np.testing.assert_allclose(
-        result.array,
-        rc_system.impedance.array,
-        rtol=1e-6,
-        atol=1e-8,
-        err_msg=f"Conversion from {from_form} to impedance failed when passing Complexer",
-    )
 
-    # Also test with .array input
-    result = convert(
-        data.array, from_form=from_form, to_form="impedance", system=rc_system, **kwargs
-    )
+    # get raw Complexer
+    data = rc_system.get_complexer(from_form, raw=True)
+
+    # choose input variant
+    if input_variant == "complexer":
+        inp = data
+    elif input_variant == "ndarray_inverted":
+        arr = data.array
+        inp = arr.real - 1j * arr.imag
+    else:
+        inp = data.array
+
+    result = convert(inp, from_form=from_form, to_form="impedance", system=rc_system, **kwargs)
     np.testing.assert_allclose(
         result.array,
         rc_system.impedance.array,
         rtol=1e-6,
         atol=1e-8,
-        err_msg=f"Conversion from {from_form} to impedance failed when passing ndarray",
+        err_msg=f"Conversion from {from_form} to impedance failed for {input_variant}",
     )
 
 
@@ -286,30 +258,6 @@ def test_complex_system_update_and_ordering(simple_data):
     # assert len(cs.impedance.array) == len(z_data)
 
 
-# def test_complex_system_update_and_ordering(simple_data):
-#     """
-#     Clarifying comment: tests update method and frequency/data ordering logic.
-#     """
-#     cs = ComplexSystem(data=simple_data["impedance"], frequency=simple_data["frequency"])
-#     # Reverse frequency and update
-#     freq_rev = simple_data["frequency"][::-1]
-#     z_rev = simple_data["impedance"][::-1]
-#     cs.update(data=z_rev, frequency=freq_rev)
-#     # Clarifying comment: when both data and frequency are provided, order is preserved
-#     assert np.all(cs.frequency == freq_rev)
-#     assert np.all(cs.impedance.array == z_rev)
-
-#     # Clarifying comment: when only frequency is updated, order is enforced
-#     cs2 = ComplexSystem(data=simple_data["impedance"], frequency=simple_data["frequency"])
-#     # cs2.update(frequency=freq_rev)
-#     # Frequency should now be sorted ascending
-#     assert np.all(np.diff(cs2.frequency) > 0)
-#     # Impedance should be reordered to match sorted frequency
-#     # sorted_indices = np.argsort(freq_rev)
-#     # assert np.all(cs2.impedance.array == simple_data["impedance"][sorted_indices])
-#     assert np.all(cs.impedance.array == z_rev)
-
-
 @pytest.mark.parametrize(
     "key, expected, description",
     [
@@ -339,3 +287,93 @@ def test_complex_system_repr(rc_data):
     result = repr(cs)
     check_result_type_and_print(result, str, "repr returns string")
     assert result.startswith("ComplexSystem(")
+
+
+# @pytest.mark.parametrize(
+#     "from_form",
+#     [
+#         "impedance",
+#         "admittance",
+#         "modulus",
+#         "capacitance",
+#         "resistivity",
+#         "conductivity",
+#         "permittivity",
+#         "relative_permittivity",
+#         "relative_permittivity_corrected",
+#         "susceptibility",
+#     ],
+# )
+# def test_convert_all_forms(rc_system, from_form):
+#     """
+#     Test convert function for all supported forms.
+#     Clarifying comment: Each form is converted back to impedance and compared to the trusted source.
+#     """
+#     data = rc_system.get_complexer(from_form, raw=True)
+#     kwargs = {}
+#     # Clarifying comment: pass correct phys_const for special forms
+#     if from_form == "relative_permittivity_corrected":
+#         kwargs["phys_const"] = rc_system.val_towards_zero(rc_system.conductivity.real)
+#     elif from_form == "susceptibility":
+#         kwargs["phys_const"] = rc_system.val_towards_infinity(rc_system.relative_permittivity.real)
+
+#     # Use convert to get impedance
+#     result = convert(data, from_form=from_form, to_form="impedance", system=rc_system, **kwargs)
+#     np.testing.assert_allclose(
+#         result.array,
+#         rc_system.impedance.array,
+#         rtol=1e-6,
+#         atol=1e-8,
+#         err_msg=f"Conversion from {from_form} to impedance failed when passing Complexer",
+#     )
+
+#     # Also test with .array input
+#     arr = data.array
+#     result = convert(arr, from_form=from_form, to_form="impedance", system=rc_system, **kwargs)
+#     np.testing.assert_allclose(
+#         result.array,
+#         rc_system.impedance.array,
+#         rtol=1e-6,
+#         atol=1e-8,
+#         err_msg=f"Conversion from {from_form} to impedance failed when passing ndarray",
+#     )
+#     # if from_form != "impedance":
+#     # Also test with inverted imaginary part
+#     result = convert(
+#         arr.real - 1j * arr.imag,
+#         from_form=from_form,
+#         to_form="impedance",
+#         system=rc_system,
+#         **kwargs,
+#     )
+#     np.testing.assert_allclose(
+#         result.array,
+#         rc_system.impedance.array,
+#         rtol=1e-6,
+#         atol=1e-8,
+#         err_msg=f"Conversion from {from_form} to impedance failed when passing ndarray w/ inverted imag part",
+#     )
+
+
+# def test_complex_system_update_and_ordering(simple_data):
+#     """
+#     Clarifying comment: tests update method and frequency/data ordering logic.
+#     """
+#     cs = ComplexSystem(data=simple_data["impedance"], frequency=simple_data["frequency"])
+#     # Reverse frequency and update
+#     freq_rev = simple_data["frequency"][::-1]
+#     z_rev = simple_data["impedance"][::-1]
+#     cs.update(data=z_rev, frequency=freq_rev)
+#     # Clarifying comment: when both data and frequency are provided, order is preserved
+#     assert np.all(cs.frequency == freq_rev)
+#     assert np.all(cs.impedance.array == z_rev)
+
+#     # Clarifying comment: when only frequency is updated, order is enforced
+#     cs2 = ComplexSystem(data=simple_data["impedance"], frequency=simple_data["frequency"])
+#     # cs2.update(frequency=freq_rev)
+#     # Frequency should now be sorted ascending
+#     assert np.all(np.diff(cs2.frequency) > 0)
+#     # Impedance should be reordered to match sorted frequency
+#     # sorted_indices = np.argsort(freq_rev)
+#     # assert np.all(cs2.impedance.array == simple_data["impedance"][sorted_indices])
+#     assert np.all(cs.impedance.array == z_rev)

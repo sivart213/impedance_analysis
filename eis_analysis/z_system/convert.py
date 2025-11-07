@@ -14,11 +14,15 @@ from numpy.typing import ArrayLike
 
 try:
     from .complexer import Complexer
-    from .definitions import COMP_ALIASES
+    from .definitions import COMP_ALIASES, BASE_COMPLEX_FORMS, CENTER_PHASE_FORMS
     from ..data_treatment.value_ops import convert_val
 except ImportError:
     from eis_analysis.z_system.complexer import Complexer
-    from eis_analysis.z_system.definitions import COMP_ALIASES
+    from eis_analysis.z_system.definitions import (
+        COMP_ALIASES,
+        BASE_COMPLEX_FORMS,
+        CENTER_PHASE_FORMS,
+    )
     from eis_analysis.data_treatment.value_ops import convert_val
 
 
@@ -67,6 +71,30 @@ class UnitFloat:
         if val is not None and val:
             setattr(instance, self.private_name, float(val))
             # instance.__dict__[self.private_name] = float(val)
+
+
+def np_ffill(array: np.ndarray, mask: np.ndarray | None = None) -> np.ndarray:
+    """
+    Fill invalid (NaN) values in a numpy array with the nearest valid value.
+
+    Parameters
+    ----------
+    array : np.ndarray
+        Input array possibly containing invalid (NaN) values.
+    mask : np.ndarray
+        Boolean mask where True indicates positions of invalid values.
+
+    Returns
+    -------
+    np.ndarray
+        Array with invalid values replaced.
+    """
+    if mask is None:
+        mask = np.isnan(array)
+    valid = ~mask
+    array[mask] = np.maximum.accumulate(np.where(valid, array, -np.inf))[mask]
+    array[: np.argmax(valid)] = array[valid][0]
+    return array
 
 
 class ZDataOps:
@@ -186,7 +214,14 @@ class ZDataOps:
     def relative_permittivity_corrected(self) -> Complexer:
         """Calculate the corrected relative complex permittivity. (e-je) generic discription."""
         arr = 1 / (self._mu * self.complexer_obj.array)
-        return Complexer._from_valid(arr.real + (arr.imag + self.dc_conductivity) * 1j, sign=-1)
+        imag = arr.imag + self.dc_conductivity
+        np_ffill(imag, imag > 0.0)
+        # idx, mask = np.arange(imag.size), imag > 0.0
+        # imag[mask] = np.interp(idx[mask], idx[~mask], imag[~mask])
+        return Complexer._from_valid(arr.real + 1j * imag, sign=-1)
+        # arr = arr.real + 1j * (arr.imag + self.dc_conductivity)
+        # return Complexer._from_valid(arr.real + 1j * np.minimum(arr.imag, 0.0), sign=-1)
+        # return Complexer._from_valid(np.abs(arr) * np.exp(1j * np.clip(np.angle(arr), -np.pi, 0)), sign=-1)
         # return Complexer._from_valid(arr.real - arr.imag - self.dc_conductivity * 1j, sign=-1)
         # return Complexer._from_valid(self.e_r.real - (self.e_r.imag + self.dc_conductivity) * 1j, sign=-1)
 
@@ -205,7 +240,14 @@ class ZDataOps:
         """Calculate complex susceptibility. (rho - jrho) generic discription."""
         # arr = 1 / self.M - self.val_towards_infinity(self.relative_permittivity.real)
         arr = 1 / (self._mu * self.complexer_obj.array)
-        return Complexer._from_valid(arr - self.val_towards_infinity(arr.real), sign=-1)
+        real = arr.real - self.val_towards_infinity(arr.real)
+        np_ffill(real, real < 0.0)
+        # idx, mask = np.arange(real.size), real < 0.0
+        # real[mask] = np.interp(idx[mask], idx[~mask], real[~mask])
+        return Complexer._from_valid(real + 1j * arr.imag, sign=-1)
+        # arr = arr - self.val_towards_infinity(arr.real)
+        # return Complexer._from_valid(np.maximum(arr.real, 0.0) + 1j * arr.imag, sign=-1)
+        # return Complexer._from_valid(np.abs(arr) * np.exp(1j * np.clip(np.angle(arr), -np.pi, 0)), sign=-1)
 
     @property
     def dc_conductivity(self) -> np.ndarray:
@@ -273,7 +315,25 @@ class ZDataOps:
                 return array[-1]
 
 
-class ImpedanceHelper(ZDataOps):
+class RawZDataOps(ZDataOps):
+    """
+    Mixin class overrides for `ZDataOps` (for operations on complex data) to ensure raw array calculations.
+    """
+
+    @property
+    def relative_permittivity_corrected(self) -> Complexer:
+        """Calculate the corrected relative complex permittivity. (e-je) generic discription."""
+        arr = 1 / (self._mu * self.complexer_obj.array)
+        return Complexer._from_valid(arr.real + 1j * (arr.imag + self.dc_conductivity), sign=-1)
+
+    @property
+    def susceptibility(self) -> Complexer:
+        """Calculate complex susceptibility. (rho - jrho) generic discription."""
+        arr = 1 / (self._mu * self.complexer_obj.array)
+        return Complexer._from_valid(arr - self.val_towards_infinity(arr.real), sign=-1)
+
+
+class ImpedanceHelper(RawZDataOps):
 
     def __init__(
         self,
@@ -312,10 +372,6 @@ class ImpedanceHelper(ZDataOps):
             * Area: parsed from data > `area` kwarg > default (1.0).
         """
         self._set_data()
-        self.base_forms = set(
-            "impedance, admittance, modulus, capacitance, resistivity, conductivity, permittivity, "
-            "relative_permittivity, relative_permittivity_corrected, susceptibility".split(", ")
-        )
         self.area = area if area != 1.0 else getattr(data, "area", 1.0)
         self.thickness = thickness if thickness != 1.0 else getattr(data, "thickness", 1.0)
         freq = getattr(data, "frequency", frequency) if frequency is None else frequency
@@ -323,18 +379,29 @@ class ImpedanceHelper(ZDataOps):
 
     def __getitem__(self, name) -> Complexer:
         """Allow slicing and indexing."""
-        if name in self.base_forms:
+        if name in BASE_COMPLEX_FORMS:
             return getattr(self, name)
         else:
             raise TypeError("Index must be a valid property name")
 
     def valid_phase(self) -> bool:
         """Check if the data has a valid phase (between -90 and 90 degrees)."""
-        for name in self.base_forms:
-            data = getattr(self, name)
-            if np.any((abs(data.phase) > 91)):
+        for name in BASE_COMPLEX_FORMS:
+            data = getattr(self, name).phase
+            if np.ptp(data) > 180 or (name in CENTER_PHASE_FORMS and np.any(np.abs(data) > 100)):
                 return False
         return True
+
+    def invalid_phases(self) -> dict:
+        """Check if the data has a valid phase (between -90 and 90 degrees)."""
+        invalid = {}
+        for name in BASE_COMPLEX_FORMS:
+            data = getattr(self, name).phase
+            if np.ptp(data) > 180:
+                invalid[name] = f"range of {np.ptp(data)}"
+            elif name in CENTER_PHASE_FORMS and np.any(np.abs(data) > 100):
+                invalid[name] = f"mean violation of {data[np.abs(data) > 100].mean()}"
+        return invalid
 
     def clone(self, data: ArrayLike | object | Self, **kwargs) -> Self:
         """
@@ -435,6 +502,11 @@ def convert(
         system = ImpedanceHelper(
             data, kwargs.get("frequency", system.frequency), system.thickness, system.area
         )
+    elif isinstance(system, object):
+        kwargs.setdefault("frequency", getattr(system, "frequency", None))
+        kwargs.setdefault("thickness", getattr(system, "thickness", 1.0))
+        kwargs.setdefault("area", getattr(system, "area", 1.0))
+        system = ImpedanceHelper(data, **kwargs)
     else:
         system = ImpedanceHelper(data, **kwargs)
 
@@ -445,24 +517,26 @@ def convert(
         form = COMP_ALIASES.get(str(from_form).lower(), "impedance")
         target = COMP_ALIASES.get(str(to_form).lower(), "impedance")
 
-    if form == target:
+    if form == target and system.valid_phase():
         return system.complexer_obj
 
     # --- Primary conversion (local variable, not committed yet) ---
-    initial_ = system.array
-    system.complexer_obj = _convert_once(system, form, phys_const=phys_const)
+    data = system.array
+    if form != "impedance":
+        system.complexer_obj = _convert_once(system, form, phys_const=phys_const)
 
     # --- Verification step ---
     if not system.valid_phase():
-        # Retry once with inverted imaginary part
-        system = system.clone(initial_.real - 1j * initial_.imag)
-        system.complexer_obj = _convert_once(system, form, phys_const=phys_const)
-        if not system.valid_phase():
+        # Retry once with inverted imaginary part (corrects missing sign conventions)
+        clone = system.clone(data.real - 1j * data.imag)
+        clone.complexer_obj = _convert_once(clone, form, phys_const=phys_const)
+        if not clone.valid_phase():
             message = f"Conversion check failed when converting from '{form}'. "
             if strict:
                 raise ValueError(message)
             else:
                 warnings.warn(message, RuntimeWarning, stacklevel=2)
+        system = clone
 
     if target == "impedance":
         return system.impedance

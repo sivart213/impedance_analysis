@@ -12,7 +12,6 @@ General function file
 # cSpell:includeRegExp /(["]{3}|[']{3})[^\1]*?\1/g
 # only comments and block strings will be checked for spelling.
 import re
-import sys
 import warnings
 from pathlib import Path
 from datetime import datetime
@@ -37,32 +36,40 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
-    QApplication,
     QInputDialog,
 )
 from IPython.core.getipython import get_ipython
 from matplotlib.backends.backend_qt import NavigationToolbar2QT
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 
-from .options import DictWindow, JsonDictWindow
-from .pin_widget import DataTreeWindow
-from ..string_ops import ContainerEvaluator
-from .gui_helpers import tools
-from .gui_windows import (
+from eis_analysis.__main__ import main
+from eis_analysis.string_ops import ContainerEvaluator
+from eis_analysis.z_fit.options import DictWindow, JsonDictWindow
+from eis_analysis.data_treatment import Statistics
+from eis_analysis.widgets.ipython import MainConsole
+from eis_analysis.z_fit.pin_widget import DataTreeWindow
+from eis_analysis.widgets.data_view import DataViewer
+from eis_analysis.z_fit.gui_helpers import tools
+from eis_analysis.z_fit.gui_windows import (
     MultiEntryWindow,
     DataHandlerWidgets,
 )
-from .gui_workers import (
+from eis_analysis.z_fit.gui_workers import (
     FittingWorker,
     LoadDataWorker,
     WorkerFunctions,
     SaveFiguresWorker,
     SaveResultsWorker,
 )
-from .data_handlers import DataGenerator
-from .model_widgets import ModelLineEdit
-from ..data_treatment import Statistics
-from .pkg_vault_funcs import (
+from eis_analysis.utils.plot_factory import StylizedPlot
+from eis_analysis.z_fit.data_handlers import DataGenerator
+from eis_analysis.z_fit.model_widgets import ModelLineEdit
+from eis_analysis.impedance_supplement import (
+    ImpedanceFunc,
+    parse_parameters,
+    extract_ckt_elements,
+)
+from eis_analysis.z_fit.pkg_vault_funcs import (
     GraphGUIError,
     logger,
     set_style,
@@ -71,26 +78,18 @@ from .pkg_vault_funcs import (
     graceful_error_handler,
     construct_error_message,
 )
-from ..widgets.ipython import MainConsole
-from .parameter_widgets import MultiEntryManager, ParameterStatPanel
-from ..widgets.data_view import DataViewer
-from ..utils.plot_factory import StylizedPlot
-from .plot_control_widgets import PlotControlPanel
-from ..impedance_supplement import (
-    ImpedanceFunc,
-    parse_parameters,
-    extract_ckt_elements,
-)
-from ..widgets.widget_helpers import create_separator
-from ..widgets.generic_widgets import (
+from eis_analysis.widgets.widget_helpers import create_separator
+from eis_analysis.widgets.generic_widgets import (
     FormDialog,
     AlignComboBox,
     SetIncLineEdit,
     CollapsibleSection,
     tLabel,
 )
-from ..z_system.impedance_band import ImpedanceConfidence
-from ..widgets.settings_handlers import SettingsManager, manage_settings_files
+from eis_analysis.z_fit.parameter_widgets import MultiEntryManager, ParameterStatPanel
+from eis_analysis.z_system.impedance_band import ImpedanceConfidence
+from eis_analysis.widgets.settings_handlers import SettingsManager, manage_settings_files
+from eis_analysis.z_fit.plot_control_widgets import PlotControlPanel
 
 warnings.showwarning = log_warning
 
@@ -2598,43 +2597,63 @@ class GraphGUI(QMainWindow, WorkerFunctions):
             # QMessageBox.critical(self, "Error", f"Error in fit wrap-up: {exc}.")
 
 
+# def main():
+#     """
+#     Entry point for the eis_analysis package.
+#     Handles environment setup, GUI selection, and event loop start.
+#     """
+#     app, debug, runner = init_qt_app()
+#     if "--terminal" in sys.argv and not debug:
+#         subprocess.run(["python", __file__])
+#     else:
+#         window = GraphGUI(debug=debug)
+#         window.show()
+
+#         # Defer to the environment-appropriate runner
+#         runner(app)
+
+
 if __name__ == "__main__":
-    shell = get_ipython()
-    in_spyder = shell is not None and "SPYDER" in shell.__class__.__name__.upper()
-    is_debug = hasattr(sys, "gettrace") and sys.gettrace() is not None
-    if is_debug:
-        # print("Running in debug mode.")
-        if shell is not None:
-            shell.run_line_magic("matplotlib", "inline")
-            # shell.run_line_magic("gui", "qt")
-        app = QApplication(sys.argv)
-        window = GraphGUI(debug=is_debug)
-        window.show()
-        sys.exit(app.exec_())
-    elif in_spyder:
-        # print("Running in Spyder.")
-        shell.run_line_magic("matplotlib", "inline")  # type: ignore
-        app = QApplication(sys.argv)
-        window = GraphGUI(debug=is_debug)
-        window.show()
-        try:
-            from IPython.lib.guisupport import start_event_loop_qt4, is_event_loop_running_qt4
 
-            if not is_event_loop_running_qt4():
-                shell.run_line_magic("gui", "qt")  # type: ignore
-            start_event_loop_qt4(app)
-        except ImportError:
-            app.exec_()
-        # sys.exit(app.exec_())
+    main(GraphGUI)
 
-    elif "--terminal" in sys.argv:
-        # print("Running in terminal mode.")
-        import subprocess
+# if __name__ == "__main__":
+#     shell = get_ipython()
+#     in_spyder = shell is not None and "SPYDER" in shell.__class__.__name__.upper()
+#     is_debug = hasattr(sys, "gettrace") and sys.gettrace() is not None
+#     if is_debug:
+#         # print("Running in debug mode.")
+#         if shell is not None:
+#             shell.run_line_magic("matplotlib", "inline")
+#             # shell.run_line_magic("gui", "qt")
+#         app = QApplication(sys.argv)
+#         window = GraphGUI(debug=is_debug)
+#         window.show()
+#         sys.exit(app.exec_())
+#     elif in_spyder:
+#         # print("Running in Spyder.")
+#         shell.run_line_magic("matplotlib", "inline")  # type: ignore
+#         app = QApplication(sys.argv)
+#         window = GraphGUI(debug=is_debug)
+#         window.show()
+#         try:
+#             from IPython.lib.guisupport import start_event_loop_qt4, is_event_loop_running_qt4
 
-        subprocess.run(["python", __file__])
-    else:
-        # print("Running in normal mode.")
-        app = QApplication(sys.argv)
-        window = GraphGUI()
-        window.show()
-        sys.exit(app.exec_())
+#             if not is_event_loop_running_qt4():
+#                 shell.run_line_magic("gui", "qt")  # type: ignore
+#             start_event_loop_qt4(app)
+#         except ImportError:
+#             app.exec_()
+#         # sys.exit(app.exec_())
+
+#     elif "--terminal" in sys.argv:
+#         # print("Running in terminal mode.")
+#         import subprocess
+
+#         subprocess.run(["python", __file__])
+#     else:
+#         # print("Running in normal mode.")
+#         app = QApplication(sys.argv)
+#         window = GraphGUI()
+#         window.show()
+#         sys.exit(app.exec_())

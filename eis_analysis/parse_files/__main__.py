@@ -7,54 +7,57 @@ Created on Wed Apr 11 17:05:01 2018.
 General function file
 """
 import json
-import sys
-from datetime import datetime
 from pathlib import Path
+from datetime import datetime
 
 # from collections import namedtuple, defaultdict
 import pandas as pd
-from PyQt5.QtCore import QEvent, Qt
+from PyQt5.QtCore import Qt, QEvent
 from PyQt5.QtWidgets import (
-    QAbstractItemView,
-    QApplication,
+    QFrame,
+    QLabel,
+    QDialog,
+    QWidget,
     QCheckBox,
     QComboBox,
-    QDialog,
-    QDialogButtonBox,
+    QLineEdit,
+    QTabWidget,
     QFileDialog,
     QFormLayout,
-    QFrame,
     # QListWidget,
     QGridLayout,
     QHBoxLayout,
-    QInputDialog,
-    QLabel,
-    QLineEdit,
     QMainWindow,
     QMessageBox,
     QPushButton,
-    QTableWidgetItem,
-    QTabWidget,
     QVBoxLayout,
-    QWidget,
+    QInputDialog,
+    QDialogButtonBox,
+    QTableWidgetItem,
+    QAbstractItemView,
 )
 
-from ..dict_ops import separate_dict  # , flatten_dict
-from ..equipment.mfia_ops import (
+from eis_analysis.__main__ import main
+from eis_analysis.dict_ops import separate_dict  # , flatten_dict
+from eis_analysis.string_ops import re_not
+from eis_analysis.system_utilities import find_files  # , load_file, load_hdf, save
+from eis_analysis.equipment.mfia_ops import (
     parse_mfia_files,
 )
-from ..string_ops import re_not
-from ..system_utilities import find_files  # , load_file, load_hdf, save
-from ..system_utilities.special_io import parse_file_info
-from .gui_plots import PopupGraph
-from .gui_widgets import (
-    ColumnListWidget,
+from eis_analysis.parse_files.gui_plots import PopupGraph
+from eis_analysis.parse_files.gui_widgets import (
     DataTreeWidget,
-    DraggableTableWidget,
-    ListWidgetWithMenu,
+    ColumnListWidget,
     RadioButtonDialog,
+    ListWidgetWithMenu,
+    DraggableTableWidget,
 )
-from .gui_workers import LoadDatasetsWorker, SaveDatasetsWorker, WorkerFunctions
+from eis_analysis.parse_files.gui_workers import (
+    WorkerFunctions,
+    LoadDatasetsWorker,
+    SaveDatasetsWorker,
+)
+from eis_analysis.system_utilities.special_io import parse_file_info
 
 # Define the named tuple for dataset entries
 
@@ -1182,11 +1185,16 @@ class MFIAFileConverter(QMainWindow, WorkerFunctions):
                 pass
 
 
+# def main(debug=False):
+#     app = QApplication(sys.argv)
+#     main_window = MFIAFileConverter(debug=debug)
+#     main_window.show()
+#     sys.exit(app.exec_())
+
+
 if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    main_window = MFIAFileConverter()
-    main_window.show()
-    sys.exit(app.exec_())
+
+    main(MFIAFileConverter)
 
     # def __init__(self, **kwargs):
     #     super().__init__()

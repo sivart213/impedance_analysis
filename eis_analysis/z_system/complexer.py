@@ -54,7 +54,7 @@ def _unique_peak(arr: np.ndarray, val: float | None = None) -> int | None:
 
 
 def resolve_rect(
-    data, avail, col1=None, col2=None, scores=None, eval_polar=True, sign=1, **_
+    data, avail, col1=None, col2=None, scores=None, eval_polar=True, sign=1, in_order=False, **_
 ) -> NDArray[np.complex128] | None:
     """Try to resolve rectangular (real/imag) representation."""
     sign = int(np.sign(sign)) if sign != 0 else 1
@@ -79,21 +79,38 @@ def resolve_rect(
             i = _unique_peak(scores[IMAG])
             p = _unique_peak(scores[PHASE])
             if i is not None:
-                r = _unique_peak(scores[REAL] * (idx_rng != i) + 0.01 * (np.abs(idx_rng - i) == 1))
-            if p is not None:
-                m = _unique_peak(scores[MAG] * (idx_rng != p) + 0.01 * (np.abs(idx_rng - p) == 1))
+                # Takes real score, excludes i, adds small bias to neighbors, boosts prior index if in_order
+                r_scores = scores[REAL] * (idx_rng != i) + 0.01 * (np.abs(idx_rng - i) == 1)
+                r = _unique_peak(r_scores + 0.99 * (idx_rng == i - 1) if in_order else r_scores)
+            if eval_polar and p is not None:
+                # Takes mag score, excludes p, adds small bias to neighbors, boosts prior index if in_order
+                m_scores = scores[MAG] * (idx_rng != p) + 0.01 * (np.abs(idx_rng - p) == 1)
+                m = _unique_peak(m_scores + 0.99 * (idx_rng == p - 1) if in_order else m_scores)
 
-            if not eval_polar or p is None or m is None:
+            if p is None or m is None:
                 if i is None or r is None:
                     return data[:, idx_rng[avail][0]] + 1j * sign * data[:, idx_rng[avail][1]]
+                if in_order and r > i:
+                    return data[:, i] + 1j * sign * data[:, r]
                 return data[:, r] + 1j * sign * data[:, i]
 
+            # Compare rectangular vs polar likelihood
             if i is not None and r is not None:
-                if scores[MAG][m] * scores[PHASE][p] <= scores[REAL][r] * scores[IMAG][i]:
+                rect_score = scores[REAL][r] * scores[IMAG][i]
+                polar_score = scores[MAG][m] * scores[PHASE][p]
+                if in_order:
+                    if r > i:
+                        rect_score *= 0.5
+                        r, i = i, r
+                    if m > p:
+                        polar_score *= 0.5
+                        p, m = m, p
+                if polar_score <= rect_score:
                     return data[:, r] + 1j * sign * data[:, i]
+            # Polar only
             if abs(data[:, p]).max() > np.pi / 2:
-                return data[:, m] * np.exp(1j * np.deg2rad(data[:, p]))
-            return data[:, m] * np.exp(1j * data[:, p])
+                return data[:, m] * np.exp(1j * sign * np.deg2rad(data[:, p]))
+            return data[:, m] * np.exp(1j * sign * data[:, p])
     return None
 
 
@@ -101,11 +118,28 @@ def parse_z_array(
     value: Any,
     eval_polar: bool = True,
     sign: int = 1,
+    strict: bool = True,
 ) -> tuple[NDArray[np.complexfloating], NDArray[np.floating] | None]:
     """
-    Normalize input into (data, freq).
-    - data: always complex dtype
-    - freq: frequency array if detected, else None
+    Normalize input into (data, freq) if possible where data is a 1d complex array and
+    freq is optional 1d real array (or None).
+
+    Parameters
+    ----------
+    value : Any
+        Input array-like data.
+    eval_polar : bool
+        Whether to consider polar representations (magnitude/phase).
+    sign : int
+        Sign convention for imaginary components.
+    strict : bool
+        Whether to strictly enforce common characteristics (see notes).
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray | None]
+        Parsed complex data array and optional frequency array.
+
     """
     # Normalize value to np.array with shape (n, k), n>=k
     arr0 = np.squeeze(np.array(value))
@@ -129,6 +163,7 @@ def parse_z_array(
     freq = real = imag = comp_arr = None
     sign = int(np.sign(sign)) if sign != 0 else 1
     avail = np.ones(arr0.shape[1], dtype=bool)
+
     # --- Eval of columns with true imaginary components ---
     if (imask := (np.imag(arr0) != 0).any(axis=0)).any():
         imag, avail[imask] = np.imag(arr0[:, imask][:, 0]), False
@@ -153,48 +188,71 @@ def parse_z_array(
 
     # fixed trait order: 0=freq, 1=real, 2=mag, 3=imag, 4=phase
     scores = np.zeros((5, arr.shape[1]))
+    nulls = np.ones((5, arr.shape[1]))
 
     # 1) Positivity fraction for all
-    is_pos_sum = (arr > 0).sum(axis=0) / arr.shape[0]
-    scores[:3] += is_pos_sum  # freq, real, mag
-    scores[3:] += 1.0 - is_pos_sum  # imag, phase
+    non_neg_frac = (arr >= 0).sum(axis=0) / arr.shape[0]
+    scores[:3] += non_neg_frac  # freq, real, mag
+    nulls[0, non_neg_frac < 1.0] = 0
+    nulls[2, non_neg_frac < 1.0] = 0
+
+    if np.all(non_neg_frac <= 0.20) or sign < 0:  # all (mostly) positive -> Y or M (or perm)
+        scores[3:] += non_neg_frac  # imag, phase
+        order = True
+    else:
+        scores[3:] += 1.0 - non_neg_frac  # imag, phase
+        order = False
 
     # 2) Monotonicity fraction for freq/real/mag
     mono_frac = np.abs(np.diff(np.argsort(arr, 0), axis=0).sum(0)) / (arr.shape[0] - 1)
     scores[:3] += mono_frac  # freq, real, mag
 
+    with np.errstate(divide="ignore", invalid="ignore"):
+        log_arr = np.log10(abs(arr), where=(arr != 0))
+
     # 3) Range case for phase/imag
     if imag is None:
-        range_max = np.max(np.abs(arr), axis=0)
-        scores[3, range_max > 90] += 1.0  # 3=imag
-        scores[3, range_max > 360] += 1.0  # 3=imag
-        scores[4, range_max <= 90] += 1.0  # 4=phase (0 < range_max) & ()
-        scores[4, range_max <= np.pi / 2] += 1.0  # 4=phase (0 < range_max) & ()
+        nulls[4, (np.max(np.abs(arr), axis=0) > 180) | (np.ptp(arr, axis=0) > 180)] = 0
 
+        a_min = np.min(arr, axis=0)
+        min_d = np.maximum(a_min, -180)
+        min_r = np.maximum(a_min, -np.pi)
+
+        scores[3] += (np.abs(arr) > 180).sum(axis=0) / arr.shape[0]  # 3=imag
+        scores[3] += (np.abs(log_arr) > np.log10(180)).sum(axis=0) / arr.shape[0]  # 3=imag
+        scores[4] += ((arr >= min_d) & (arr <= min_d + 180)).mean(axis=0)
+        scores[4] += ((arr >= min_r) & (arr <= min_r + np.pi)).mean(axis=0)
+
+    # Early exit if there are no extra columns
     if avail.sum() <= need:
-        comp_arr = resolve_rect(arr, avail, real, imag, scores * avail, eval_polar, sign)
+        m_scores = scores * nulls * avail if strict else scores * avail
+        comp_arr = resolve_rect(arr, avail, real, imag, m_scores, eval_polar, sign, order)
         if comp_arr is not None:
-            return comp_arr, freq  # 9
-    else:  # 4) log spacing fraction
-        with np.errstate(divide="ignore", invalid="ignore"):
-            scores[0] += spacing_consistency(np.log10(abs(arr), where=(arr != 0)))
+            return comp_arr, freq
 
-        if (mask := scores[0] >= 3.0 - 1e-12).sum() == 1:  # 0=freq  # 2, 3, 4, 5, 6, 7, 11
-            freq, avail[mask] = np.real(arr[:, mask][:, 0]).astype(float), False
+    # 4) log spacing fraction
+    with np.errstate(divide="ignore", invalid="ignore"):
+        scores[0] += spacing_consistency(log_arr)
 
+    if (mask := scores[0] >= 3.0 - 1e-12).sum() == 1:
+        freq, avail[mask] = np.real(arr[:, mask][:, 0]).astype(float), False
+
+    # Make best guess at frequency column if still needed
     if freq is None and avail.sum() > need:
         f = np.argmax(scores[0] * avail)  # 0=freq
-        freq, avail[f] = np.real(arr[:, f]).astype(float), False  # 12
+        freq, avail[f] = np.real(arr[:, f]).astype(float), False
 
+    # 5) Sort remaining columns by value range with mag > real > imag > phase
     if avail.sum() > need:
-        col_ranges = np.abs(arr.sum(axis=0)) * avail  # 7, 11
+        col_ranges = np.abs(arr.sum(axis=0)) * avail
         col_order = np.argsort(-col_ranges)[:4]
         # trait order: 2=mag, 1=real, 3=imag, 4=phase
         scores[[2, 1, 3, 4][: len(col_order)], col_order] += 1.0
 
-    comp_arr = resolve_rect(arr, avail, real, imag, scores * avail, eval_polar, sign)
+    m_scores = scores * nulls * avail if strict else scores * avail
+    comp_arr = resolve_rect(arr, avail, real, imag, m_scores, eval_polar, sign, order)
     if comp_arr is not None:
-        return comp_arr, freq  # 2, 3, 4, 5, 6, 7, 11, 12
+        return comp_arr, freq
 
     data = arr[:, np.flatnonzero(avail)[0] if avail.any() else 0] + 1j * 0
     return data.astype(complex), freq
@@ -341,3 +399,23 @@ class Complexer:
         obj._array = np.asarray(arr, dtype=complex, copy=copy)
         obj._sign = sign
         return obj
+
+
+# ARCHIVE:
+# scores[4] += np.clip(1.0 - (a_ptp - 180) / 180, 0.0, 1.0)  # 4=phase
+# scores[4] += np.clip(1.0 - (a_ptp - np.pi) / np.pi, 0.0, 1.0)  # 4=phase
+
+# a_max = np.maximum(np.max(np.abs(arr), axis=0), 1e-12)
+# edge_frac = (2 * np.abs(np.abs(arr) / a_max - 0.5)).mean(axis=0)
+# lte_95 = (a_max <= 95).astype(float)
+# # 3=imag
+# scores[3] += (1 - lte_95 + (a_max > 370).astype(float)) * edge_frac
+# # 4=phase
+# scores[4] += (lte_95 + (a_max <= 19 * np.pi / 36).astype(float)) * edge_frac
+
+# nulls[4, a_max > 180] = 0
+
+# scores[3, a_max > 90] += 1.0  # 3=imag
+# scores[3, a_max > 360] += 1.0  # 3=imag
+# scores[4, a_max <= 90] += 1.0  # 4=phase (0 < rng_max) & ()
+# scores[4, a_max <= np.pi / 2] += 1.0  # 4=phase (0 < rng_max) & ()

@@ -22,6 +22,7 @@ try:
         MOD_GRPS,
         ARR_ALIASES,
         COMP_ALIASES,
+        OFFSET_FORMS,
         CONST_ALIASES,
         NEG_IMAG_FORMS,
     )
@@ -34,6 +35,7 @@ except ImportError:
         MOD_GRPS,
         ARR_ALIASES,
         COMP_ALIASES,
+        OFFSET_FORMS,
         CONST_ALIASES,
         NEG_IMAG_FORMS,
     )
@@ -173,9 +175,20 @@ def ensure_order(
     if primary_freq is None and not z_at_dc.expect_nothing:
         dc_idx = int(np.argmin(freq))  # DC = minimal frequency
         mag = Complexer(data).mag
-        target_idx = np.argmax(mag) if z_at_dc.expect_max else np.argmin(mag)
-        if abs(dc_idx - target_idx) > len(mag) * max(tolerance, 0.05):
+        tol = max(tolerance, 0.05)
+
+        idx = np.argmax(mag) if z_at_dc.expect_max else np.argmin(mag)
+
+        # relative difference checks (of value and index)
+        val_diff = abs(mag[dc_idx] - mag[idx]) / mag[idx] if mag[idx] else 0.0
+        idx_diff = abs(dc_idx - idx) / len(mag)
+
+        if val_diff > tol and idx_diff > tol:
             data = data[::-1]
+
+        # target_idx = np.argmax(mag) if z_at_dc.expect_max else np.argmin(mag)
+        # if abs(dc_idx - target_idx) > len(mag) * max(tolerance, 0.05):
+        #     data = data[::-1]
 
     return freq, data
 
@@ -218,22 +231,23 @@ class ZDataParser:
         thickness = attrs.pop("thickness", None)
         area = attrs.pop("area", None)
 
-        valid_keys = KeyMatcher(df, ["freq", "real", "imag", form]).result_dict
+        keys = ["freq", "real", "imag", f"{form}.real", f"{form}.imag", form]
+        cols = KeyMatcher(df, keys).result_dict
 
         freq = None
         data = None
 
         # order-dependent: 0=freq, 1=real, 2=imag
-        if "freq" in valid_keys:
-            freq = df[valid_keys["freq"]].to_numpy()
-            df = df.drop(columns=[valid_keys["freq"]])
+        if "freq" in cols:
+            freq = df[cols["freq"]].to_numpy()
+            df = df.drop(columns=[cols["freq"]])
 
-        if form in valid_keys and np.iscomplex(df[valid_keys[form]]).any():
-            data = df[valid_keys[form]].to_numpy()
-        elif "real" in valid_keys and "imag" in valid_keys:
-            data = (
-                df[valid_keys["real"]].to_numpy() + 1j * sign * df[valid_keys["imag"]].to_numpy()
-            )
+        if form in cols and np.iscomplex(df[cols[form]]).any():
+            data = df[cols[form]].to_numpy()
+        elif keys[1] in cols and keys[2] in cols:
+            data = df[cols[keys[1]]].to_numpy() + 1j * sign * df[cols[keys[2]]].to_numpy()
+        elif keys[3] in cols and keys[4] in cols:
+            data = df[cols[keys[3]]].to_numpy() + 1j * sign * df[cols[keys[4]]].to_numpy()
 
         # fallback if no usable data
         if data is None or freq is None:
@@ -253,11 +267,11 @@ class ZDataParser:
         """
         freq = None
         form = str(form).lower()
-        check_polar = any(s in form for s in ["polar", "phase", "mag"])
+        # check_polar = any(s in form for s in ["polar", "phase", "mag"])
         if arr.ndim <= 2:
             arr, freq = parse_z_array(
                 arr,
-                check_polar,
+                True,
                 -1 if COMP_ALIASES.get(form, "impedance") in NEG_IMAG_FORMS else 1,
             )
         return freq, arr, None, None, {}
@@ -712,7 +726,7 @@ class ComplexSystem(ZDataOps, ZDataParser, ItemTransforms[Complexer | np.ndarray
 
         raise TypeError(f"Form '{name}' is invalid and/or cannot be returned as a numpy array.")
 
-    def get_complexer(self, name: str, allow_default: bool = True) -> Complexer:
+    def get_complexer(self, name: str, allow_default: bool = True, raw: bool = False) -> Complexer:
         """
         Retrieve a Complexer object by name, using aliases if necessary.
 
@@ -720,6 +734,11 @@ class ComplexSystem(ZDataOps, ZDataParser, ItemTransforms[Complexer | np.ndarray
         ----------
         name : str
             The name or alias of the desired Complexer property (e.g., "impedance", "admittance").
+        allow_default : bool, optional
+            If True, fall back to impedance if the name is invalid.
+        raw : bool, optional
+            If True, bypass any "cleaned" properties (such as susceptibility) and convert directly
+            from impedance. Only applicable to forms in OFFSET_FORMS.
 
         Returns
         -------
@@ -728,19 +747,18 @@ class ComplexSystem(ZDataOps, ZDataParser, ItemTransforms[Complexer | np.ndarray
 
         Raises
         ------
-        AttributeError
-            If the specified name does not correspond to a valid Complexer property.
+        TypeError
+            If the resolved data cannot be returned as a Complexer.
         """
+        base = COMP_ALIASES.get(name.lower(), name)
 
-        # default = "impedance" if allow_default else None
-        # data = self[COMP_ALIASES.get(name.lower(), default)]
-        if name.lower() not in COMP_ALIASES:
+        if raw and base in OFFSET_FORMS:
+            data = convert(self.Z, from_form="impedance", to_form=base, system=self)
+        else:
             try:
-                data = self[name]
+                data = self[base]
             except (AttributeError, TypeError):
                 data = self.Z if allow_default else None
-        else:
-            data = self[COMP_ALIASES[name.lower()]]
 
         if isinstance(data, Complexer):
             return data
@@ -928,104 +946,129 @@ if __name__ == "__main__":
     import timeit  # noqa: F401
 
     from testing.rc_ckt_sim import RCCircuit  # noqa: F401
+    from eis_analysis.impedance_supplement.ops import get_impedance  # noqa: F401
 
     ckt = RCCircuit(true_values=[24, 1e9, 1e-11], noise=0.01)
-    Z = ckt.Z_noisy
-    rc_system = ComplexSystem(data=Z, frequency=ckt.freq, area=25, thickness=500e-4)
-    rel_perm = rc_system.get_array("relative_permittivity", as_complex=True)
-    freq = rc_system.frequency
-    ones = np.ones_like(freq, dtype=complex)
+    rc_system = ComplexSystem(data=ckt.Z_noisy, frequency=ckt.freq, area=25, thickness=500e-4)
 
-    # Case 1: Update with raw array, explicit area/thickness
-    # cs1 = ComplexSystem(data=ones, frequency=freq, area=1.0, thickness=1.0)
-    # cs1.update(
-    #     rc_system.e_r.array,
-    #     form="relative_permittivity",
-    #     area=rc_system.area,
-    #     thickness=rc_system.thickness,
-    # )
-    # print("Case 1: raw array, explicit area/thickness")
-    # # np.testing.assert_allclose(cs1.impedance.array, rc_system.array, rtol=1e-6, atol=1e-8)
+    from_form = "relative_permittivity_corrected"
+    data = rc_system.get_complexer(from_form, raw=True)
 
-    # # Case 2: Update with Complexer, explicit area/thickness
-    # cs2 = ComplexSystem(data=ones, frequency=freq, area=1.0, thickness=1.0)
-    # cs2.update(
-    #     rc_system.e_r,
-    #     form="relative_permittivity",
-    #     area=rc_system.area,
-    #     thickness=rc_system.thickness,
-    # )
-    # print("Case 2: Complexer, explicit area/thickness")
-    # # np.testing.assert_allclose(cs2.impedance.array, rc_system.array, rtol=1e-6, atol=1e-8)
+    kwargs = {}
+    if from_form == "relative_permittivity_corrected":
+        kwargs["phys_const"] = rc_system.val_towards_zero(rc_system.conductivity.real)
+    elif from_form == "susceptibility":
+        kwargs["phys_const"] = rc_system.val_towards_infinity(rc_system.relative_permittivity.real)
+    arr = data.array
+    result = convert(
+        arr.real - 1j * arr.imag,
+        from_form=from_form,
+        to_form="impedance",
+        system=rc_system,
+        **kwargs,
+    )
 
-    # Case 3: Update with another ComplexSystem (should use its area/thickness)
-    cs3 = ComplexSystem(data=ones, frequency=freq, area=1.0, thickness=1.0)
-    rel_df = rc_system.get_df("relative_permittivity", f_of_point=11)
-    cs3.update(rel_df, form="relative_permittivity", area=1.5, thickness=1.5)
-    print("Case 3: DataFrame, area/thickness from data")
-    # np.testing.assert_allclose(cs3.array, rc_system.array, rtol=1e-6, atol=1e-8)
+    # ckt = RCCircuit(freq=(-4, 7, 200), true_values=[24, 1e9, 1e-11], noise=0.01)
+    # # Z = ckt.Z_noisy
+    # Z = get_impedance(ckt.freq, 24, 1e-3, 1e9, 1e-11, model="R0-L0-p(R1,C1)")
+    # Z_n = ckt.get_noisy_z(arr=Z)
+    # rc_system_0 = ComplexSystem(data=Z, frequency=ckt.freq, area=25, thickness=500e-4)
+    # rc_system = ComplexSystem(data=Z_n, frequency=ckt.freq, area=25, thickness=500e-4)
 
-    cs4 = ComplexSystem(data=ones, frequency=freq, area=1.0, thickness=1.0)
-    rel_perm_system = ComplexSystem(rc_system.e_r.array, freq, rc_system.thickness, rc_system.area)
-    cs4.update(rel_perm_system, form="relative_permittivity", area=1.5, thickness=1.5)
-    print("Case 4: ComplexSystem, area/thickness from data")
+    # rel_perm = rc_system.get_array("relative_permittivity", as_complex=True)
+    # freq = rc_system.frequency
+    # ones = np.ones_like(freq, dtype=complex)
 
-    # Create a new system with different area/thickness
-    cs = ComplexSystem(data=np.ones_like(rel_perm), frequency=freq, area=1.0, thickness=1.0)
+    # # Case 1: Update with raw array, explicit area/thickness
+    # # cs1 = ComplexSystem(data=ones, frequency=freq, area=1.0, thickness=1.0)
+    # # cs1.update(
+    # #     rc_system.e_r.array,
+    # #     form="relative_permittivity",
+    # #     area=rc_system.area,
+    # #     thickness=rc_system.thickness,
+    # # )
+    # # print("Case 1: raw array, explicit area/thickness")
+    # # # np.testing.assert_allclose(cs1.impedance.array, rc_system.array, rtol=1e-6, atol=1e-8)
 
-    # Update with relative_permittivity data and explicit area/thickness
-    cs.update(rel_perm, form="relative_permittivity", area=0.5, thickness=0.5)
+    # # # Case 2: Update with Complexer, explicit area/thickness
+    # # cs2 = ComplexSystem(data=ones, frequency=freq, area=1.0, thickness=1.0)
+    # # cs2.update(
+    # #     rc_system.e_r,
+    # #     form="relative_permittivity",
+    # #     area=rc_system.area,
+    # #     thickness=rc_system.thickness,
+    # # )
+    # # print("Case 2: Complexer, explicit area/thickness")
+    # # # np.testing.assert_allclose(cs2.impedance.array, rc_system.array, rtol=1e-6, atol=1e-8)
 
-    simple = np.array([[1, 2], [3, -4], [-1, 0.5]])
-    s_complexer = Complexer(simple)
+    # # Case 3: Update with another ComplexSystem (should use its area/thickness)
+    # cs3 = ComplexSystem(data=ones, frequency=freq, area=1.0, thickness=1.0)
+    # rel_df = rc_system.get_df("relative_permittivity", cartesian=False, f_of_point=11)
+    # cs3.update(rel_df.to_numpy(), form="relative_permittivity", area=1.5, thickness=1.5)
+    # print("Case 3: DataFrame, area/thickness from data")
+    # # np.testing.assert_allclose(cs3.array, rc_system.array, rtol=1e-6, atol=1e-8)
 
-    # # fmt: off
-    # df = pd.DataFrame()
-    # df["freq"] = ckt.freq
-    # df["Z"] = Z
-    # df["Z.real"] = Z.real
-    # df["Z.imag"] = Z.imag
-    # df["1j*Z.imag"] = 1j * Z.imag
-    # df["Z.mag"] = np.abs(Z)
-    # df["Z.phase"] = np.angle(Z, deg=True)
-    # df["Z.rad"] = np.angle(Z, deg=False)
-    # df["freq bad"] = ckt.freq
-    # df.loc[0, "freq bad"] = 1e-12
+    # cs4 = ComplexSystem(data=ones, frequency=freq, area=1.0, thickness=1.0)
+    # rel_perm_system = ComplexSystem(rc_system.e_r.array, freq, rc_system.thickness, rc_system.area)
+    # cs4.update(rel_perm_system, form="relative_permittivity", area=1.5, thickness=1.5)
+    # print("Case 4: ComplexSystem, area/thickness from data")
 
-    # test = ZDataParser._dissect_df(df)
+    # # Create a new system with different area/thickness
+    # cs = ComplexSystem(data=np.ones_like(rel_perm), frequency=freq, area=1.0, thickness=1.0)
 
-    # results = {}
-    # results["1) f & Z"] = df[["freq", "Z"]].to_numpy()
-    # results["2) f & Z rect"] = df[["freq", "Z.real", "Z.imag"]].to_numpy()
-    # results["3) f & Z pol deg"] = df[["freq", "Z.mag", "Z.phase"]].to_numpy()
-    # results["4) f & Z pol rad"] = df[["freq", "Z.mag", "Z.rad"]].to_numpy()
-    # results["5) f & Z j rect"] = df[["freq", "Z.real", "1j*Z.imag"]].to_numpy()
-    # results["6) f & Z j rect 2"] = df[["freq", "Z.real", "1j*Z.imag", "Z.imag",]].to_numpy()
-    # results["7) f & Z rect/pol"] = df[["freq", "Z.real", "Z.imag", "Z.mag", "Z.rad"]].to_numpy()
-    # results["8) Z"] = df[["Z"]].to_numpy()
-    # results["9) Z rect"] = df[["Z.real", "Z.imag"]].to_numpy()
-    # results["10) Z j rect"] = df[["Z.real", "1j*Z.imag"]].to_numpy()
-    # results["11) f b & Z"] = df[["freq bad", "Z", "Z.real", "freq"]].to_numpy()
-    # results["12) f b & Z rect"] = df[["freq bad", "Z.real", "Z.imag"]].to_numpy()
-    # # fmt: on
-    # for cond, data in results.items():
-    #     print("Condition:", cond)
-    #     # # define callables that close over `data`
-    #     # runs = 10000
-    #     # t1 = timeit.timeit(lambda: Complexer(ZDataParser._dissect_array(data)[1]), number=runs)
-    #     # print("Timeit r1:", t1 / runs * 1e6, "μs")  # , "s")
+    # # Update with relative_permittivity data and explicit area/thickness
+    # cs.update(rel_perm, form="relative_permittivity", area=0.5, thickness=0.5)
 
-    #     # t2 = timeit.timeit(lambda: ZDataParser.parse_z_array(data), number=runs)
-    #     # print("Timeit r2:", t2 / runs * 1e6, "μs")  # , "s")
+    # simple = np.array([[1, 2], [3, -4], [-1, 0.5]])
+    # s_complexer = Complexer(simple)
 
-    #     res = ZDataParser.parse_z_array(data)
+    # # # fmt: off
+    # # df = pd.DataFrame()
+    # # df["freq"] = ckt.freq
+    # # df["Z"] = Z
+    # # df["Z.real"] = Z.real
+    # # df["Z.imag"] = Z.imag
+    # # df["1j*Z.imag"] = 1j * Z.imag
+    # # df["Z.mag"] = np.abs(Z)
+    # # df["Z.phase"] = np.angle(Z, deg=True)
+    # # df["Z.rad"] = np.angle(Z, deg=False)
+    # # df["freq bad"] = ckt.freq
+    # # df.loc[0, "freq bad"] = 1e-12
 
-    #     if " f " in cond:
-    #         assert isinstance(res[1], np.ndarray)
-    #         assert np.allclose(res[1][1:], df["freq"][1:])
-    #     else:
-    #         assert res[1] is None
-    #     assert np.allclose(res[0], Z)  # , rtol=1e-1)
+    # # test = ZDataParser._dissect_df(df)
+
+    # # results = {}
+    # # results["1) f & Z"] = df[["freq", "Z"]].to_numpy()
+    # # results["2) f & Z rect"] = df[["freq", "Z.real", "Z.imag"]].to_numpy()
+    # # results["3) f & Z pol deg"] = df[["freq", "Z.mag", "Z.phase"]].to_numpy()
+    # # results["4) f & Z pol rad"] = df[["freq", "Z.mag", "Z.rad"]].to_numpy()
+    # # results["5) f & Z j rect"] = df[["freq", "Z.real", "1j*Z.imag"]].to_numpy()
+    # # results["6) f & Z j rect 2"] = df[["freq", "Z.real", "1j*Z.imag", "Z.imag",]].to_numpy()
+    # # results["7) f & Z rect/pol"] = df[["freq", "Z.real", "Z.imag", "Z.mag", "Z.rad"]].to_numpy()
+    # # results["8) Z"] = df[["Z"]].to_numpy()
+    # # results["9) Z rect"] = df[["Z.real", "Z.imag"]].to_numpy()
+    # # results["10) Z j rect"] = df[["Z.real", "1j*Z.imag"]].to_numpy()
+    # # results["11) f b & Z"] = df[["freq bad", "Z", "Z.real", "freq"]].to_numpy()
+    # # results["12) f b & Z rect"] = df[["freq bad", "Z.real", "Z.imag"]].to_numpy()
+    # # # fmt: on
+    # # for cond, data in results.items():
+    # #     print("Condition:", cond)
+    # #     # # define callables that close over `data`
+    # #     # runs = 10000
+    # #     # t1 = timeit.timeit(lambda: Complexer(ZDataParser._dissect_array(data)[1]), number=runs)
+    # #     # print("Timeit r1:", t1 / runs * 1e6, "μs")  # , "s")
+
+    # #     # t2 = timeit.timeit(lambda: ZDataParser.parse_z_array(data), number=runs)
+    # #     # print("Timeit r2:", t2 / runs * 1e6, "μs")  # , "s")
+
+    # #     res = ZDataParser.parse_z_array(data)
+
+    # #     if " f " in cond:
+    # #         assert isinstance(res[1], np.ndarray)
+    # #         assert np.allclose(res[1][1:], df["freq"][1:])
+    # #     else:
+    # #         assert res[1] is None
+    # #     assert np.allclose(res[0], Z)  # , rtol=1e-1)
 
 
 # def spacing_consistency_old(

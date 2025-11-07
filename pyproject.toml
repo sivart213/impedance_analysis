@@ -15,6 +15,11 @@ classifiers = [
 ]
 requires-python = "~=3.10"
 
+[project.scripts]
+eis-cli   = "eis_analysis.__main__:main"
+eis-zfit = "eis_analysis.z_fit.__main__:main"
+eis-parse = "eis_analysis.parse_files.__main__:main"
+
 [tool.setuptools.packages.find]
 where = ["eis_analysis"]
 

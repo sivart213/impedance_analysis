@@ -13,24 +13,14 @@ from collections import Counter, defaultdict
 import numpy as np
 import pandas as pd
 
-try:
-    from ..string_ops import safe_eval, find_common_str
-    from ..data_treatment import (
-        ensure_unique,
-        clean_key_list,
-        evaluate_1D_array,
-        evaluate_nD_array,
-    )
-    from .dict_manipulators import flatten_dict
-except ImportError:
-    from eis_analysis.string_ops import safe_eval, find_common_str
-    from eis_analysis.data_treatment import (
-        ensure_unique,
-        clean_key_list,
-        evaluate_1D_array,
-        evaluate_nD_array,
-    )
-    from eis_analysis.dict_ops.dict_manipulators import flatten_dict
+from eis_analysis.string_ops import safe_eval, find_common_str
+from eis_analysis.data_treatment import (
+    ensure_unique,
+    clean_key_list,
+    evaluate_1D_array,
+    evaluate_nD_array,
+)
+from eis_analysis.dict_ops.dict_manipulators import flatten_dict
 
 
 def rename_from_internal_df(arg: dict, level: int = 0, name: str = "name") -> dict:
