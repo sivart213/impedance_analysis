@@ -196,5 +196,5 @@ if __name__ == "__main__":
             serial_manager.write(b"some data")
             response = serial_manager.read(20)
             print(response)
-    except ValueError as e:
-        print(e)
+    except ValueError as exc:
+        print(exc)

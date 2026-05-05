@@ -17,9 +17,9 @@ class SThread(threading.Thread):
         try:
             if self._target:  # type: ignore
                 self._target(*self._args, **self._kwargs)  # type: ignore
-        except Exception as e:
-            print(f"Exception in thread {self.name}: {e}", file=sys.stderr)
-            raise e
+        except Exception as exc:
+            print(f"Exception in thread {self.name}: {exc}", file=sys.stderr)
+            raise exc
 
     # @property
     def thread_killed(self):

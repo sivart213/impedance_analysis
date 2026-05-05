@@ -8,10 +8,11 @@ General function file
 """
 import ast
 import operator
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, TypeVar, Protocol
 from collections.abc import Callable
 
 import numpy as np
+from numpy.typing import ArrayLike
 from scipy.signal import savgol_filter
 from scipy.interpolate import CubicSpline, PchipInterpolator
 
@@ -22,6 +23,11 @@ except ImportError:
 
 
 T = TypeVar("T")  # The return type of parse()
+
+
+class HasArray(Protocol):
+    @property
+    def array(self) -> Any: ...
 
 
 class BaseParser(Generic[T]):
@@ -100,7 +106,7 @@ class BaseParser(Generic[T]):
             cls._add_valid_forms(updating_dict, short_form_len)
 
     @classmethod
-    def _add_valid_forms(cls, forms_dict=None, short_form_len=3):
+    def _add_valid_forms(cls, forms_dict: dict | None = None, short_form_len: int = 3):
         """
         Add valid forms to the `_valid_forms` attribute.
 
@@ -154,7 +160,7 @@ class BaseParser(Generic[T]):
                     raise ValueError(f"Method name '{value}' cannot start with an underscore")
                 cls._valid_forms[key] = value
 
-    def __getitem__(self, index):
+    def __getitem__(self, index: str):
         """
         Allow slicing and indexing using the valid forms.
         """
@@ -190,7 +196,7 @@ class BaseParser(Generic[T]):
                 raise TypeError("ast_attr_types must be a tuple of types")
         self._ast_attr_types = tuple(value)
 
-    def _evaluate_ast(self, node, **kwargs) -> Any:
+    def _evaluate_ast(self, node: ast.AST, **kwargs: Any) -> Any:
         """
         Recursively evaluate an AST node.
 
@@ -283,7 +289,7 @@ class BaseParser(Generic[T]):
         else:
             raise ValueError(f"Unsupported operation: {ast.dump(node)}")
 
-    def _parse_and_transform(self, index) -> T:
+    def _parse_and_transform(self, index: str) -> T:
         """
         Parse the index and apply the corresponding transformations.
 
@@ -299,8 +305,8 @@ class BaseParser(Generic[T]):
         # Parse the index into an abstract syntax tree (AST)
         try:
             tree = ast.parse(index, mode="eval")
-        except SyntaxError as e:
-            raise ValueError(f"Invalid expression: {index}") from e
+        except SyntaxError as exc:
+            raise ValueError(f"Invalid expression: {index}") from exc
 
         # Evaluate the AST
         res = self._evaluate_ast(tree.body)
@@ -386,7 +392,7 @@ class ItemTransforms(BaseParser[T], Generic[T]):
                     base_dict.update(updating_dict)
                     break
 
-    def __init__(self, *_, default_x="", **__):
+    def __init__(self, *_, default_x: str | ArrayLike = "", **__):
         # _form_kwargs: dict = {}
         self._default_x: str = ""
         self._active_x: list | np.ndarray = []
@@ -407,7 +413,7 @@ class ItemTransforms(BaseParser[T], Generic[T]):
         return self._default_x
 
     @default_x.setter
-    def default_x(self, value) -> None:
+    def default_x(self, value: str) -> None:
         if isinstance(value, str):
             try:
                 test_arr = self[value]
@@ -430,14 +436,13 @@ class ItemTransforms(BaseParser[T], Generic[T]):
         return np.array([])
 
     @active_x.setter
-    def active_x(self, value) -> None:
-        if isinstance(value, str):
-            try:
-                value = self[value]
-            except Exception:
-                pass
-        if isinstance(value, (np.ndarray, list)):
-            self._active_x = value
+    def active_x(self, value: str | ArrayLike) -> None:
+        try:
+            val = self[value] if isinstance(value, str) else value
+        except Exception:
+            val = value
+        if isinstance(val, (np.ndarray, list)):
+            self._active_x = val
 
     @property
     def form_kwargs(self) -> dict:
@@ -447,14 +452,14 @@ class ItemTransforms(BaseParser[T], Generic[T]):
         return self._form_kwargs
 
     @form_kwargs.setter
-    def form_kwargs(self, value) -> None:
+    def form_kwargs(self, value: dict) -> None:
         """
         Setter for form_kwargs. Ensures only valid kwargs for all form functions are updated.
         """
         if not value:
             return
         if not isinstance(value, dict):
-            raise TypeError("savgol_kwargs must be a dictionary")
+            raise TypeError("form_kwargs must be a dictionary")
 
         for key, base_dict in self._form_kwargs.items():
             # if key in value:
@@ -478,18 +483,17 @@ class ItemTransforms(BaseParser[T], Generic[T]):
         return self._form_kwargs["savgol"]
 
     @savgol_kwargs.setter
-    def savgol_kwargs(self, value) -> None:
+    def savgol_kwargs(self, value: dict) -> None:
         """
         Setter for savgol_kwargs. Ensures only valid kwargs for savgol_filter are updated.
         """
         if not value:
             return
-        if isinstance(value, dict) and ("savgol" in value or "savgol_kwargs" in value):
-            value = value.get("savgol", value.get("savgol_kwargs"))
-        if not isinstance(value, dict):
+        try:
+            value = value.get("savgol", value.get("savgol_kwargs", value))
+            self._form_kwargs["savgol"].update(value)
+        except (AttributeError, TypeError):
             raise TypeError("savgol_kwargs must be a dictionary")
-
-        self._form_kwargs["savgol"].update(value)
 
     @property
     def interp_kwargs(self) -> dict:
@@ -499,20 +503,19 @@ class ItemTransforms(BaseParser[T], Generic[T]):
         return self._form_kwargs["interp"]
 
     @interp_kwargs.setter
-    def interp_kwargs(self, value) -> None:
+    def interp_kwargs(self, value: dict) -> None:
         """
         Setter for interp_kwargs. Ensures only valid kwargs for interp_kwargs are updated.
         """
         if not value:
             return
-        if isinstance(value, dict) and (
-            "interp" in value or "interpolate" in value or "interp_kwargs" in value
-        ):
-            value = value.get("interp", value.get("interpolate", value.get("interp_kwargs")))
-        if not isinstance(value, dict):
+        try:
+            value = value.get(
+                "interp", value.get("interpolate", value.get("interp_kwargs", value))
+            )
+            self._form_kwargs["interp"].update(value)
+        except (AttributeError, TypeError):
             raise TypeError("interp_kwargs must be a dictionary")
-
-        self._form_kwargs["interp"].update(value)
 
     @property
     def norm_kwargs(self) -> dict:
@@ -522,57 +525,63 @@ class ItemTransforms(BaseParser[T], Generic[T]):
         return self._form_kwargs["norm"]
 
     @norm_kwargs.setter
-    def norm_kwargs(self, value) -> None:
+    def norm_kwargs(self, value: dict) -> None:
         """
         Setter for norm_kwargs. Ensures only valid kwargs for norm_kwargs are updated.
         """
         if not value:
             return
-        if isinstance(value, dict) and (
-            "norm" in value or "normalize" in value or "norm_kwargs" in value
-        ):
-            value = value.get("norm", value.get("normalize", value.get("norm_kwargs")))
-
-        if not isinstance(value, dict):
+        try:
+            value = value.get("norm", value.get("normalize", value.get("norm_kwargs", value)))
+            self._form_kwargs["norm"].update(value)
+        except (AttributeError, TypeError):
             raise TypeError("norm_kwargs must be a dictionary")
 
-        self._form_kwargs["norm"].update(value)
-
-    def ln_form(self, value) -> np.ndarray:
+    def ln_form(self, value: HasArray | ArrayLike, base: float = 0.0) -> np.ndarray:
         """
         Perform the natural logarithm transformation on the input value.
         """
         array = self._ensure_array(value)
         if array.dtype.kind == "c":
-            return self._complex_array_eval(array, self.ln_form)
+            # return self._complex_array_eval(array, self.ln_form, base=base)
+            log_array = np.log(array)
+        else:
+            # Handle negative and zero values
+            log_array = np.zeros_like(array)  # Initialize with zeros for zero values
+            np.log(np.abs(array), out=log_array, where=array != 0)  # log on non-zero values
+            log_array[array < 0] *= -1  # Restore negative sign for negative values
 
-        # Handle negative and zero values
-        mask_negative = array < 0
-        array[mask_negative] *= -1
-        logged_array = np.zeros_like(array)  # Initialize with zeros for zero values
-        logged_array[array != 0] = np.log(array[array != 0])
-        logged_array[mask_negative] *= -1  # Restore negative sign for negative values
+        if base > 0 and round(base, 1) != 2.7:
+            return log_array / np.log(base)
+        return log_array
 
-        return logged_array
-
-    def log10_form(self, value) -> np.ndarray:
+    def log10_form(self, value: HasArray | ArrayLike) -> np.ndarray:
         """
         Perform the base-10 logarithm transformation on the input value.
         """
-        array = self._ensure_array(value)
-        if array.dtype.kind == "c":
-            return self._complex_array_eval(array, self.log10_form)
+        return self.ln_form(value, base=10)
 
-        # Handle negative and zero values
-        mask_negative = array < 0
-        array[mask_negative] *= -1
-        logged_array = np.zeros_like(array)  # Initialize with zeros for zero values
-        logged_array[array != 0] = np.log10(array[array != 0])
-        logged_array[mask_negative] *= -1  # Restore negative sign for negative values
+        # array = self._ensure_array(value)
+        # if array.dtype.kind == "c":
+        #     return self._complex_array_eval(array, self.log10_form)
 
-        return logged_array
+        # # Handle negative and zero values
+        # mask_negative = array < 0
+        # array[mask_negative] *= -1
+        # logged_array = np.zeros_like(array)  # Initialize with zeros for zero values
+        # logged_array[array != 0] = np.log10(array[array != 0])
+        # logged_array[mask_negative] *= -1  # Restore negative sign for negative values
 
-    def derivative_form(self, value, **kwargs) -> np.ndarray:
+        # return logged_array
+
+        # # Handle negative and zero values
+        # mask_negative = array < 0
+        # array[mask_negative] *= -1
+        # logged_array = np.zeros_like(array)  # Initialize with zeros for zero values
+        # logged_array[array != 0] = np.log(array[array != 0])
+        # logged_array[mask_negative] *= -1  # Restore negative sign for negative values
+
+    def derivative_form(self, value: HasArray | ArrayLike, **kwargs: Any) -> np.ndarray:
         """
         Perform the derivative transformation using Savitzky-Golay filter.
 
@@ -645,7 +654,7 @@ class ItemTransforms(BaseParser[T], Generic[T]):
             # Interpolate back to the original x values
             return self.interpolated_form(uniform_filtered, new_x=original_x, smooth_first=False)
 
-    def smoothed_form(self, value, **kwargs) -> np.ndarray:
+    def smoothed_form(self, value: HasArray | ArrayLike, **kwargs: Any) -> np.ndarray:
         """
         Perform the smoothing transformation using Savitzky-Golay filter.
 
@@ -658,7 +667,7 @@ class ItemTransforms(BaseParser[T], Generic[T]):
         """
         return self.derivative_form(value, **{**kwargs, "deriv": 0})
 
-    def interpolated_form(self, value, **kwargs) -> np.ndarray:
+    def interpolated_form(self, value: HasArray | ArrayLike, **kwargs: Any) -> np.ndarray:
         """
         Perform the interpolation transformation on the input value.
 
@@ -716,7 +725,7 @@ class ItemTransforms(BaseParser[T], Generic[T]):
         self.active_x = new_x
         return interpolator(new_x)
 
-    def _ensure_array(self, value) -> np.ndarray:
+    def _ensure_array(self, value: HasArray | ArrayLike) -> np.ndarray:
         """
         Helper function to ensure the input is converted to a numpy array.
 
@@ -726,9 +735,7 @@ class ItemTransforms(BaseParser[T], Generic[T]):
         Returns:
         np.ndarray: The converted numpy array.
         """
-        if hasattr(value, "array"):
-            value = value.array
-        return np.array(value)
+        return np.array(getattr(value, "array", value))
 
     def _complex_array_eval(
         self, value: np.ndarray, func: Callable[..., np.ndarray], **kwargs
@@ -749,6 +756,21 @@ class ItemTransforms(BaseParser[T], Generic[T]):
             imag = func(value.imag, **kwargs.copy())
             return real + 1j * imag
         return func(value, **kwargs)
+
+
+if __name__ == "__main__":
+    from eis_analysis.z_system.complexer import Complexer
+
+    itrfm = ItemTransforms()
+
+    comp = Complexer([1, 2, 3])
+    itrfm._ensure_array(comp)
+
+    class Test:
+        array = np.array([1, 2, 3])
+
+    test = Test()
+    itrfm._ensure_array(test)
 
 
 # class BaseParser:
@@ -1000,8 +1022,8 @@ class ItemTransforms(BaseParser[T], Generic[T]):
 #         # Parse the index into an abstract syntax tree (AST)
 #         try:
 #             tree = ast.parse(index, mode="eval")
-#         except SyntaxError as e:
-#             raise ValueError(f"Invalid expression: {index}") from e
+#         except SyntaxError as exc:
+#             raise ValueError(f"Invalid expression: {index}") from exc
 
 #         # Evaluate the AST
 #         res = self._evaluate_ast(tree.body)

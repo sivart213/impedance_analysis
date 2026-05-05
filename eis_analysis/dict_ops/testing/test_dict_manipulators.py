@@ -7,7 +7,7 @@ from testing.generators import (
 
 from ..dict_manipulators import (
     nest_dict,
-    check_dict,
+    align_dict,
     filter_dict,
     update_dict,
     flatten_dict,
@@ -122,7 +122,7 @@ def test_filter_dict(base, filt, expected, description):
     ],
 )
 def test_check_dict(to_check, base, expected, description):
-    result = check_dict(to_check, base)
+    result = align_dict(to_check, base)
     check_result_type_and_print(result, dict, description)
     assert result == expected
 

@@ -15,12 +15,8 @@ import numpy as np
 import pandas as pd
 from numpy.typing import ArrayLike
 
-try:
-    from .value_ops import convert_val
-    from ..string_ops import eng_not
-except ImportError:
-    from eis_analysis.string_ops import eng_not
-    from eis_analysis.data_treatment.value_ops import convert_val
+from eis_analysis.string_ops.string_mod import eng_not
+from eis_analysis.data_treatment.value_ops import convert_val
 
 IsFalse: TypeAlias = Literal[False]
 IsTrue: TypeAlias = Literal[True]
@@ -840,6 +836,33 @@ class PD_Ops:
         if not isinstance(arr, (pd.Series, pd.DataFrame)):
             return pd.Series([arr])
         return arr
+
+
+def spacing_consistency(
+    arr: np.ndarray, axis: int = 0, eps: float = 1e-12, alpha: float = 0.95
+) -> np.ndarray:
+    """
+    Measure consistency of spacing along an axis.
+    Returns values in [0,1], where 1 = perfectly consistent.
+
+    Parameters
+    ----------
+    arr : ndarray
+        Input array (1D or 2D).
+    axis : int
+        Axis along which to compute differences.
+    eps : float
+        Small constant to avoid division by zero and rounding tolerance.
+    """
+    diffs = np.diff(arr, axis=axis)
+    # return np.mean(np.abs(diffs - np.median(diffs, axis=0)) <= eps, axis=0)
+    med = np.median(diffs, axis=0)
+    mad = np.median(np.abs(diffs - med), axis=0)
+    a_med = np.abs(med)
+
+    frac = 1 - np.clip(mad / np.maximum(a_med, eps), 0, 1)
+    frac_r = a_med / np.maximum(np.max(np.abs(diffs), axis=0), eps)
+    return frac * (alpha + (1 - alpha) * frac_r)
 
 
 # keys = [

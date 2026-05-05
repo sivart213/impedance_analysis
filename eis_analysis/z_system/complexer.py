@@ -11,306 +11,131 @@ from typing import Any, Self
 import numpy as np
 from numpy.typing import NDArray, ArrayLike
 
-
-def spacing_consistency(
-    arr: np.ndarray, axis: int = 0, eps: float = 1e-12, alpha=0.9
-) -> np.ndarray:
-    """
-    Measure consistency of spacing along an axis.
-    Returns values in [0,1], where 1 = perfectly consistent.
-
-    Parameters
-    ----------
-    arr : ndarray
-        Input array (1D or 2D).
-    axis : int
-        Axis along which to compute differences.
-    eps : float
-        Small constant to avoid division by zero and rounding tolerance.
-    """
-    diffs = np.diff(arr, axis=axis)
-
-    med = np.median(diffs, axis=0)
-    mad = np.median(np.abs(diffs - med), axis=0)
-    frac = 1 - np.clip(mad / np.maximum(np.abs(med), eps), 0, 1)
-
-    frac_r = np.abs(med) / np.maximum(np.max(np.abs(diffs), axis=0), eps)
-    return frac * (alpha + (1 - alpha) * frac_r)
+from eis_analysis.z_system.array_parsing import ArraySignature, parse_z_array
 
 
-def _unique_peak(arr: np.ndarray, val: float | None = None) -> int | None:
-    """
-    Return the index of a unique peak in a 1D array.
-    If `val` is supplied, return it directly. (mask := scores[0] >= 3.0 - 1e-12).sum() == 1
-    If the maximum is not unique, return None.
-    """
+class FreqArray:
+    """Array wrapper with frequency semantics."""
 
-    ref = arr.max() if val is None else val
-    peak_idxs = np.flatnonzero(arr == ref)
-
-    if len(peak_idxs) == 1:
-        return int(peak_idxs[0])
-    return None
-
-
-def resolve_rect(
-    data, avail, col1=None, col2=None, scores=None, eval_polar=True, sign=1, in_order=False, **_
-) -> NDArray[np.complex128] | None:
-    """Try to resolve rectangular (real/imag) representation."""
-    sign = int(np.sign(sign)) if sign != 0 else 1
-    if col1 is not None and col2 is not None:
-        return col1 + 1j * sign * col2
-
-    if avail.sum() == 1:  # Case: exactly one column left
-        if col1 is not None:
-            return col1 + 1j * sign * data[:, avail][:, 0]
-        if col2 is not None:
-            return data[:, avail][:, 0] + 1j * sign * col2
-
-    if scores is not None:  # Case: fill using scores (if provided)
-        if col1 is not None:
-            return col1 + 1j * sign * data[:, np.argmax(scores[3])]  # 3: imag
-        if col2 is not None:
-            return data[:, np.argmax(scores[1])] + 1j * sign * col2  # 1: real
-        if avail.sum() >= 2:
-            REAL, MAG, IMAG, PHASE = range(1, 5)
-            idx_rng = np.arange(data.shape[1])
-            i = r = p = m = None
-            i = _unique_peak(scores[IMAG])
-            p = _unique_peak(scores[PHASE])
-            if i is not None:
-                # Takes real score, excludes i, adds small bias to neighbors, boosts prior index if in_order
-                r_scores = scores[REAL] * (idx_rng != i) + 0.01 * (np.abs(idx_rng - i) == 1)
-                r = _unique_peak(r_scores + 0.99 * (idx_rng == i - 1) if in_order else r_scores)
-            if eval_polar and p is not None:
-                # Takes mag score, excludes p, adds small bias to neighbors, boosts prior index if in_order
-                m_scores = scores[MAG] * (idx_rng != p) + 0.01 * (np.abs(idx_rng - p) == 1)
-                m = _unique_peak(m_scores + 0.99 * (idx_rng == p - 1) if in_order else m_scores)
-
-            if p is None or m is None:
-                if i is None or r is None:
-                    return data[:, idx_rng[avail][0]] + 1j * sign * data[:, idx_rng[avail][1]]
-                if in_order and r > i:
-                    return data[:, i] + 1j * sign * data[:, r]
-                return data[:, r] + 1j * sign * data[:, i]
-
-            # Compare rectangular vs polar likelihood
-            if i is not None and r is not None:
-                rect_score = scores[REAL][r] * scores[IMAG][i]
-                polar_score = scores[MAG][m] * scores[PHASE][p]
-                if in_order:
-                    if r > i:
-                        rect_score *= 0.5
-                        r, i = i, r
-                    if m > p:
-                        polar_score *= 0.5
-                        p, m = m, p
-                if polar_score <= rect_score:
-                    return data[:, r] + 1j * sign * data[:, i]
-            # Polar only
-            if abs(data[:, p]).max() > np.pi / 2:
-                return data[:, m] * np.exp(1j * sign * np.deg2rad(data[:, p]))
-            return data[:, m] * np.exp(1j * sign * data[:, p])
-    return None
-
-
-def parse_z_array(
-    value: Any,
-    eval_polar: bool = True,
-    sign: int = 1,
-    strict: bool = True,
-) -> tuple[NDArray[np.complexfloating], NDArray[np.floating] | None]:
-    """
-    Normalize input into (data, freq) if possible where data is a 1d complex array and
-    freq is optional 1d real array (or None).
-
-    Parameters
-    ----------
-    value : Any
-        Input array-like data.
-    eval_polar : bool
-        Whether to consider polar representations (magnitude/phase).
-    sign : int
-        Sign convention for imaginary components.
-    strict : bool
-        Whether to strictly enforce common characteristics (see notes).
-
-    Returns
-    -------
-    tuple[np.ndarray, np.ndarray | None]
-        Parsed complex data array and optional frequency array.
-
-    """
-    # Normalize value to np.array with shape (n, k), n>=k
-    arr0 = np.squeeze(np.array(value))
-    if arr0.ndim == 0:
-        arr0 = arr0[None]
-    if arr0.ndim == 1:
-        if np.iscomplex(arr0).all():
-            return arr0, None  # 8
-        elif arr0.size == 1:
-            return arr0.astype(complex), None
-        arr0 = arr0[:, None]
-    elif arr0.ndim > 2:
-        raise ValueError("Expected <= 2D array-like input.")
-    if arr0.size == 0:
-        return np.array([], dtype=complex), None
-    if arr0.shape[0] < arr0.shape[1]:
-        arr0 = arr0.T
-
-    arr = np.real(arr0)
-    need = 2
-    freq = real = imag = comp_arr = None
-    sign = int(np.sign(sign)) if sign != 0 else 1
-    avail = np.ones(arr0.shape[1], dtype=bool)
-
-    # --- Eval of columns with true imaginary components ---
-    if (imask := (np.imag(arr0) != 0).any(axis=0)).any():
-        imag, avail[imask] = np.imag(arr0[:, imask][:, 0]), False
-
-        if (mask := (np.real(arr0) != 0).any(axis=0) & imask).any():
-            comp_arr = arr0[:, np.argmax(mask)]
-            if avail.sum() <= 1:
-                return comp_arr, (arr[:, avail][:, 0] if avail.sum() == 1 else freq)
-            real, imag = np.real(comp_arr), np.imag(comp_arr)
-        arr = arr.copy()
-        arr[:, imask] = np.imag(arr0[:, imask])
-        if real is not None:
-            avail &= ~np.isclose(arr, real[:, None]).all(axis=0)
-        avail &= ~np.isclose(arr, imag[:, None]).all(axis=0)
-        if avail.sum() <= 1:
-            if comp_arr is not None:  # 1
-                return comp_arr, (arr[:, avail][:, 0] if avail.sum() == 1 else freq)
-            comp_arr = resolve_rect(arr, avail, real, imag, None, eval_polar, sign)
-            return (0 + 1j * sign * imag if comp_arr is None else comp_arr), freq  # 10
-        comp_arr = None
-        need = 1 if real is None else 0
-
-    # fixed trait order: 0=freq, 1=real, 2=mag, 3=imag, 4=phase
-    scores = np.zeros((5, arr.shape[1]))
-    nulls = np.ones((5, arr.shape[1]))
-
-    # 1) Positivity fraction for all
-    non_neg_frac = (arr >= 0).sum(axis=0) / arr.shape[0]
-    scores[:3] += non_neg_frac  # freq, real, mag
-    nulls[0, non_neg_frac < 1.0] = 0
-    nulls[2, non_neg_frac < 1.0] = 0
-
-    if np.all(non_neg_frac <= 0.20) or sign < 0:  # all (mostly) positive -> Y or M (or perm)
-        scores[3:] += non_neg_frac  # imag, phase
-        order = True
-    else:
-        scores[3:] += 1.0 - non_neg_frac  # imag, phase
-        order = False
-
-    # 2) Monotonicity fraction for freq/real/mag
-    mono_frac = np.abs(np.diff(np.argsort(arr, 0), axis=0).sum(0)) / (arr.shape[0] - 1)
-    scores[:3] += mono_frac  # freq, real, mag
-
-    with np.errstate(divide="ignore", invalid="ignore"):
-        log_arr = np.log10(abs(arr), where=(arr != 0))
-
-    # 3) Range case for phase/imag
-    if imag is None:
-        nulls[4, (np.max(np.abs(arr), axis=0) > 180) | (np.ptp(arr, axis=0) > 180)] = 0
-
-        a_min = np.min(arr, axis=0)
-        min_d = np.maximum(a_min, -180)
-        min_r = np.maximum(a_min, -np.pi)
-
-        scores[3] += (np.abs(arr) > 180).sum(axis=0) / arr.shape[0]  # 3=imag
-        scores[3] += (np.abs(log_arr) > np.log10(180)).sum(axis=0) / arr.shape[0]  # 3=imag
-        scores[4] += ((arr >= min_d) & (arr <= min_d + 180)).mean(axis=0)
-        scores[4] += ((arr >= min_r) & (arr <= min_r + np.pi)).mean(axis=0)
-
-    # Early exit if there are no extra columns
-    if avail.sum() <= need:
-        m_scores = scores * nulls * avail if strict else scores * avail
-        comp_arr = resolve_rect(arr, avail, real, imag, m_scores, eval_polar, sign, order)
-        if comp_arr is not None:
-            return comp_arr, freq
-
-    # 4) log spacing fraction
-    with np.errstate(divide="ignore", invalid="ignore"):
-        scores[0] += spacing_consistency(log_arr)
-
-    if (mask := scores[0] >= 3.0 - 1e-12).sum() == 1:
-        freq, avail[mask] = np.real(arr[:, mask][:, 0]).astype(float), False
-
-    # Make best guess at frequency column if still needed
-    if freq is None and avail.sum() > need:
-        f = np.argmax(scores[0] * avail)  # 0=freq
-        freq, avail[f] = np.real(arr[:, f]).astype(float), False
-
-    # 5) Sort remaining columns by value range with mag > real > imag > phase
-    if avail.sum() > need:
-        col_ranges = np.abs(arr.sum(axis=0)) * avail
-        col_order = np.argsort(-col_ranges)[:4]
-        # trait order: 2=mag, 1=real, 3=imag, 4=phase
-        scores[[2, 1, 3, 4][: len(col_order)], col_order] += 1.0
-
-    m_scores = scores * nulls * avail if strict else scores * avail
-    comp_arr = resolve_rect(arr, avail, real, imag, m_scores, eval_polar, sign, order)
-    if comp_arr is not None:
-        return comp_arr, freq
-
-    data = arr[:, np.flatnonzero(avail)[0] if avail.any() else 0] + 1j * 0
-    return data.astype(complex), freq
-
-
-class Complexer:
-    """Array wrapper with impedance semantics."""
-
-    __slots__ = ("_array", "_sign")
+    __slots__ = ("_array", "_start", "_stop", "signatures")
     __array_priority__ = 1000
 
-    def __init__(self, data: ArrayLike | None = None, sign: int = 1, eval_polar: bool = False):
-        self._array: NDArray[np.complexfloating] = np.array([complex(1, 1)], dtype=complex)
-        self._sign = 1
-        self.sign = sign
-        if data is not None:
-            self._array = parse_z_array(data, eval_polar)[0]
+    def __init__(self, data: ArrayLike = tuple(), writeable=True):
+        # Default to empty array; user may populate via gen_array
+        self._array: NDArray[np.floating] = np.array([], dtype=float)
+        self._start: float = 1.0
+        self._stop: float = 1.0
 
-    def resolve(self, array: ArrayLike, update: bool = True) -> NDArray[np.complexfloating]:
-        """Re-parse the internal array or a new one."""
-        array = parse_z_array(array, True, self.sign)[0]
-        if update:
-            self._array = array
-        return array
+        data = np.array(data, dtype=float)
+        if data.size > 0:
+            self.gen_array(*data, update=True)
+
+        self.signatures = ArraySignature.from_array(self._array)
+
+        self.writeable = writeable
+
+    # ---------------- Constructors ----------------
+    @classmethod
+    def _from_valid(cls, arr, copy=None):
+        """Bypass __init__ for fastest construction."""
+        obj = cls.__new__(cls)
+        obj._array = np.asarray(arr, dtype=float, copy=copy)
+        obj.signatures = ArraySignature.from_array(obj._array)
+        return obj
+
+    def gen_array(
+        self,
+        *data,
+        update: bool = False,
+        logspace: bool = True,
+    ) -> NDArray[np.floating]:
+        """
+        Generate an array using linspace/logspace semantics.
+
+        Parameters
+        ----------
+        start : float
+            The starting value of the sequence.
+        stop : float
+            The end value of the sequence.
+        num : int, optional
+            Number of samples to generate. Default is 50.
+
+        update : bool
+            If True, replace internal array with the generated one.
+
+        logspace : bool
+            If True, use np.logspace; otherwise use np.linspace.
+
+        Returns
+        -------
+        np.ndarray
+            The generated frequency array.
+        """
+        start = np.log10(self.start) if logspace else self.start
+        stop = np.log10(self.stop) if logspace else self.stop
+        num = 50 if self.empty() else self._array.size
+        direct = False
+        if len(data) == 1:
+            if isinstance(data[0], int):
+                num = data[0]
+            else:
+                direct = True
+                data = data[0]
+        elif len(data) == 2:
+            start, stop = data
+        elif len(data) == 3 and isinstance(data[2], int):
+            start, stop, num = data
+        else:
+            direct = True
+
+        if direct:
+            arr = np.asarray(data, dtype=float)
+        elif logspace:
+            arr = np.logspace(start, stop, num, dtype=float)
+        else:
+            arr = np.linspace(start, stop, num, dtype=float)
+
+        if update and arr.size > 0:
+            self.array = arr
+            self.start = arr[0]
+            self.stop = arr[-1]
+
+        return arr
 
     # ---------------- Arithmetic ----------------
     def __add__(self, other):
-        return Complexer._from_valid(self._array + other, self._sign)
+        return self._from_valid(self._array + other)
 
     def __radd__(self, other):
-        return Complexer._from_valid(other + self._array, self._sign)
+        return self._from_valid(other + self._array)
 
     def __sub__(self, other):
-        return Complexer._from_valid(self._array - other, self._sign)
+        return self._from_valid(self._array - other)
 
     def __rsub__(self, other):
-        return Complexer._from_valid(other - self._array, self._sign)
+        return self._from_valid(other - self._array)
 
     def __mul__(self, other):
-        return Complexer._from_valid(self._array * other, self._sign)
+        return self._from_valid(self._array * other)
 
     def __rmul__(self, other):
-        return Complexer._from_valid(other * self._array, self._sign)
+        return self._from_valid(other * self._array)
 
     def __truediv__(self, other):
-        return Complexer._from_valid(self._array / other, self._sign)
+        return self._from_valid(self._array / other)
 
     def __rtruediv__(self, other):
-        return Complexer._from_valid(other / self._array, self._sign)
+        return self._from_valid(other / self._array)
 
     def __pow__(self, power, modulo=None):
-        return Complexer._from_valid(self._array**power, self._sign)
+        return self._from_valid(self._array**power)
 
     def __neg__(self):
-        return Complexer._from_valid(-self._array, self._sign)
+        return self._from_valid(-self._array)
 
     def __abs__(self):
-        return Complexer._from_valid(abs(self._array), self._sign)
+        return self._from_valid(abs(self._array))
 
     def __eq__(self, other):
         return bool(np.array_equal(self._array, np.asarray(other)))
@@ -325,12 +150,184 @@ class Complexer:
     def __iter__(self):
         return iter(self._array)
 
+    def __getitem__(self, index):
+        if not isinstance(index, str):
+            return self._array[index]
+        if hasattr(self, index):
+            return getattr(self, index)
+        raise KeyError(f"'{index}' is not a valid index or attribute.")
+
+    def __setattr__(self, name, value):
+        if name != "writeable" and not getattr(self, "writeable", True):
+            raise AttributeError(f"FreqArray is not writeable; cannot modify '{name}'")
+        object.__setattr__(self, name, value)
+
+    def __getattr__(self, name):
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return getattr(self._array, name)
+
+    # ---------------- NumPy interop ----------------
+    def __array__(self, dtype=None, copy=None):
+        if dtype is None and not copy:
+            return self._array
+        return np.array(self._array, dtype=dtype or float, copy=copy)
+
+    # ---------------- Properties ----------------
+    @property
+    def writeable(self) -> bool:
+        return self._array.flags.writeable
+
+    @writeable.setter
+    def writeable(self, value: bool):
+        self._array.flags.writeable = bool(value)
+
+    @property
+    def array(self) -> NDArray[np.floating]:
+        return self._array
+
+    @array.setter
+    def array(self, value: ArrayLike):
+        if isinstance(value, FreqArray):
+            value = value.array.copy()
+        else:
+            value = np.asarray(value, dtype=float)
+        if any(value < 0):
+            raise ValueError("Input values must be positive.")
+        self._array = value
+
+    @property
+    def start(self) -> float:
+        try:
+            return self._array[0]
+        except IndexError:
+            return self._start
+
+    @start.setter
+    def start(self, value: float):
+        if value < 0:
+            raise ValueError("Start value must be non-negative.")
+        self._start = float(value)
+
+    @property
+    def stop(self) -> float:
+        try:
+            return self._array[-1]
+        except IndexError:
+            return self._stop
+
+    @stop.setter
+    def stop(self, value: float):
+        if value < 0:
+            raise ValueError("Stop value must be non-negative.")
+        self._stop = float(value)
+
+    @property
+    def angular(self):
+        """ω = 2πf"""
+        return 2 * np.pi * self._array
+
+    def empty(self) -> bool:
+        """Check if the array is empty."""
+        return self._array.size == 0
+
+    # ---------------- Representation ----------------
+    def __repr__(self):
+        arr_str = np.array2string(self._array, threshold=6)
+        return f"{self.__class__.__name__}(array={arr_str})"
+
+
+class Complexer:
+    """Array wrapper with impedance semantics."""
+
+    __slots__ = ("_array", "_sign")
+    __array_priority__ = 1000
+
+    def __init__(
+        self,
+        data: ArrayLike | None = None,
+        sign: int = 1,
+        eval_polar: bool = False,
+        writeable: bool = True,
+    ):
+        # self._array: NDArray[np.complexfloating] = np.array([complex(1, 1)], dtype=complex)
+        self._array: NDArray[np.complexfloating] = np.array([], dtype=complex)
+        self._sign = 1
+        self.sign = sign
+        if data is not None:
+            self._array = parse_z_array(data, eval_polar)[0]
+
+        self.writeable = writeable
+
+    def resolve(self, array: ArrayLike, update: bool = True) -> NDArray[np.complexfloating]:
+        """Re-parse the internal array or a new one."""
+        array = parse_z_array(array, True, self.sign)[0]
+        if update:
+            self._array = array
+        return array
+
+    def empty(self) -> bool:
+        """Check if the array is empty."""
+        return self._array.size == 0
+
+    # ---------------- Arithmetic ----------------
+    def __add__(self, other) -> Self:
+        return self._from_valid(self._array + other, self._sign)
+
+    def __radd__(self, other) -> Self:
+        return self._from_valid(other + self._array, self._sign)
+
+    def __sub__(self, other) -> Self:
+        return self._from_valid(self._array - other, self._sign)
+
+    def __rsub__(self, other) -> Self:
+        return self._from_valid(other - self._array, self._sign)
+
+    def __mul__(self, other) -> Self:
+        return self._from_valid(self._array * other, self._sign)
+
+    def __rmul__(self, other) -> Self:
+        return self._from_valid(other * self._array, self._sign)
+
+    def __truediv__(self, other) -> Self:
+        return self._from_valid(self._array / other, self._sign)
+
+    def __rtruediv__(self, other) -> Self:
+        return self._from_valid(other / self._array, self._sign)
+
+    def __pow__(self, power, modulo=None) -> Self:
+        return self._from_valid(self._array**power, self._sign)
+
+    def __neg__(self) -> Self:
+        return self._from_valid(-self._array, self._sign)
+
+    def __abs__(self) -> Self:
+        return self._from_valid(abs(self._array), self._sign)
+
+    def __eq__(self, other) -> bool:
+        return bool(np.array_equal(self._array, np.asarray(other)))
+
+    def __ne__(self, other) -> bool:
+        return not self.__eq__(other)
+
+    # ---------------- Container protocol ----------------
+    def __len__(self) -> int:
+        return len(self._array)
+
+    def __iter__(self):
+        return iter(self._array)
+
     def __getitem__(self, index) -> np.ndarray | int | float | complex:
         if not isinstance(index, str):
             return self._array[index]
         if hasattr(self, index):
             return getattr(self, index)
         raise KeyError(f"'{index}' is not a valid index or attribute.")
+
+    def __setattr__(self, name, value):
+        if name != "writeable" and not getattr(self, "writeable", True):
+            raise AttributeError(f"Complexer is not writeable; cannot modify '{name}'")
+        object.__setattr__(self, name, value)
 
     def __getattr__(self, name):
         """
@@ -354,6 +351,14 @@ class Complexer:
 
     # ---------------- Properties ----------------
     @property
+    def writeable(self) -> bool:
+        return self._array.flags.writeable
+
+    @writeable.setter
+    def writeable(self, value: bool):
+        self._array.flags.writeable = bool(value)
+
+    @property
     def sign(self) -> int:
         return self._sign
 
@@ -374,23 +379,23 @@ class Complexer:
             self._array = parse_z_array(value, False, self.sign)[0]
 
     @property
-    def real(self):
+    def real(self) -> NDArray[np.floating]:
         return self._array.real
 
     @property
-    def imag(self):
+    def imag(self) -> NDArray[np.floating]:
         return self.sign * self._array.imag
 
     @property
-    def mag(self):
+    def mag(self) -> NDArray[np.floating]:
         return np.abs(self._array)
 
     @property
-    def phase(self):
+    def phase(self) -> NDArray[np.floating]:
         return self.sign * np.angle(self._array, deg=True)
 
     @property
-    def slope(self):
+    def slope(self) -> NDArray[np.floating]:
         return self.sign * np.tan(np.angle(self._array, deg=False))
 
     @classmethod
@@ -401,21 +406,56 @@ class Complexer:
         return obj
 
 
-# ARCHIVE:
-# scores[4] += np.clip(1.0 - (a_ptp - 180) / 180, 0.0, 1.0)  # 4=phase
-# scores[4] += np.clip(1.0 - (a_ptp - np.pi) / np.pi, 0.0, 1.0)  # 4=phase
+if __name__ == "__main__":
+    import pandas as pd
 
-# a_max = np.maximum(np.max(np.abs(arr), axis=0), 1e-12)
-# edge_frac = (2 * np.abs(np.abs(arr) / a_max - 0.5)).mean(axis=0)
-# lte_95 = (a_max <= 95).astype(float)
-# # 3=imag
-# scores[3] += (1 - lte_95 + (a_max > 370).astype(float)) * edge_frac
-# # 4=phase
-# scores[4] += (lte_95 + (a_max <= 19 * np.pi / 36).astype(float)) * edge_frac
+    from testing.rc_ckt_sim import RCCircuit
+    from eis_analysis.z_system.testing.helpers import (
+        get_data_df,
+        get_data_form,
+        baseline_parse_timings,  # noqa: F401
+    )
 
-# nulls[4, a_max > 180] = 0
+    # from eis_analysis.z_system.testing.test_complex_supports import (
+    #     run_single_case,
+    #     test_parse_z_array_all_variations,
+    # )
 
-# scores[3, a_max > 90] += 1.0  # 3=imag
-# scores[3, a_max > 360] += 1.0  # 3=imag
-# scores[4, a_max <= 90] += 1.0  # 4=phase (0 < rng_max) & ()
-# scores[4, a_max <= np.pi / 2] += 1.0  # 4=phase (0 < rng_max) & ()
+    time_res = baseline_parse_timings(100, False, 0)
+    time_res_ms = {k: np.median(v) * 1e3 for k, v in time_res.items()}
+
+    rc_data = RCCircuit(freq=(-4, 7, 100), true_values=[24, 1e9, 1e-11], noise=0.01)
+
+    comp = Complexer(rc_data.Z)
+
+    val = abs(comp)
+
+    data_form = "Y"
+    sign = 1
+    form = "polar"  # "complex", "1j*rect", "rect", "polar"
+    noise_opt = True
+    freq_opt = True
+    extra_opt = 1
+    etype = "a"
+
+    data = get_data_form(rc_data, noise_opt, data_form=data_form)
+    df = get_data_df(data, rc_data.freq, form, freq_opt, extra_opt, sign, etype)
+    # data_x = get_data_form(rc_data, noise_opt, data_form="e_r")
+    # df["x-real"] = data_x.real
+    # df["x-imag"] = data_x.imag
+    # df["x-mag"] = np.abs(data_x)
+    # df["x-phase"] = np.angle(data_x, True)
+
+    parsed, freq = parse_z_array(df.to_numpy(), eval_polar=True, sign=sign)
+
+    result = pd.DataFrame()
+    result["data.real"] = data.real
+    result["data.imag"] = data.imag
+    result["res.real"] = parsed.real
+    result["res.imag"] = parsed.imag
+    if freq is not None:
+        result["freq"] = freq
+
+    # run_single_case(rc_data, sign, form, noise_opt, freq_opt, extra_opt, etype, data_form, True)
+
+    # test_parse_z_array_all_variations()

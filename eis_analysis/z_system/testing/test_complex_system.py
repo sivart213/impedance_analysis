@@ -1,13 +1,12 @@
 # Suggested placement: in your test_complex_data.py or similar test file
 
-import itertools
 
 import numpy as np
 import pandas as pd
 import pytest
 
+from testing.helpers import buffered_print
 from testing.generators import check_result_type_and_print
-from testing.rc_ckt_sim import RCCircuit
 from eis_analysis.z_system.system import ComplexSystem
 from eis_analysis.z_system.convert import convert
 from eis_analysis.z_system.complexer import Complexer
@@ -30,48 +29,14 @@ FORMS = [
 INPUT_VARIANTS = ["complexer", "ndarray", "ndarray_inverted"]
 
 # build param list: (alias, base)
-params = []
-for base, aliases in COMP_ALIAS_SETS.items():
-    params.append((base.title(), base))
-    for alias in aliases:
-        params.append((alias, base))
-        if alias.isascii():
-            params.append((alias.title(), base))
-
-
-# ---- Fixtures ----
-@pytest.fixture
-def rc_data():
-    """Fixture providing frequency and impedance data from RCCircuit for ComplexSystem tests."""
-    rc = RCCircuit()
-    return {
-        "frequency": rc.freq,
-        "impedance": rc.Z,
-        "impedance_noisy": rc.Z_noisy,
-    }
-
-
-@pytest.fixture
-def simple_data():
-    """Fixture providing simple frequency and impedance arrays for edge case testing."""
-    freq = np.array([1e1, 1e2, 1e3, 1e4])
-    z = np.array([1 + 1j, 2 + 2j, 3 + 3j, 4 + 4j])
-    return {"frequency": freq, "impedance": z}
-
-
-@pytest.fixture
-def rc_system():
-    """Fixture providing a ComplexSystem with trusted impedance data."""
-    ckt = RCCircuit(true_values=[24, 1e9, 1e-11], noise=0.01)
-    return ComplexSystem(data=ckt.Z_noisy, frequency=ckt.freq, area=25, thickness=500e-4)
 
 
 # ---- Tests ----
-@pytest.mark.parametrize(
-    "property_name, description",
-    [(f, "> returns correct Complexer") for f in FORMS],
-)
-def test_complex_system_main_properties(rc_data, property_name, description):
+# @pytest.mark.parametrize(
+#     "property_name, description",
+#     [(f, "> returns correct Complexer") for f in FORMS],
+# )
+def test_complex_system_main_properties(rc_data, subtests):
     """
     Test ComplexSystem main properties for correct type and shape.
 
@@ -80,28 +45,37 @@ def test_complex_system_main_properties(rc_data, property_name, description):
     - Does not check numerical values, only interface and type.
     """
     cs = ComplexSystem(data=rc_data["impedance"], frequency=rc_data["frequency"])
-    result = getattr(cs, property_name)
-    check_result_type_and_print(result, Complexer, description)
-    # Clarifying comment: ensure result is Complexer and shape matches input
-    assert isinstance(result, Complexer)
-    assert result.array.shape == rc_data["impedance"].shape
+    for property_name in FORMS:
+        with subtests.test(f"Testing property '{property_name}'"):
+            result = getattr(cs, property_name)
+            check_result_type_and_print(result, Complexer, "> returns correct Complexer")
+            # Clarifying comment: ensure result is Complexer and shape matches input
+            assert isinstance(result, Complexer)
+            assert result.array.shape == rc_data["impedance"].shape
 
 
-@pytest.mark.parametrize("alias,base", params)
-def test_complex_system_aliases(rc_data, alias, base):
+def test_complex_system_aliases(rc_data, subtests):
     """
     Tests that aliases in ComplexSystem map to correct properties.
     """
     cs = ComplexSystem(data=rc_data["impedance"], frequency=rc_data["frequency"])
 
-    # resolve via alias
-    val_alias = cs.get_complexer(alias)
-    # resolve via canonical property
-    val_base = getattr(cs, base)
-
-    np.testing.assert_array_equal(
-        val_alias.array, val_base.array, err_msg=f"Alias '{alias}' did not match base '{base}'"
-    )
+    for base, aliases in COMP_ALIAS_SETS.items():
+        all_aliases = sorted(
+            [base.title()]
+            + list(aliases)
+            + [alias.title() for alias in aliases if alias.isascii()],
+            key=len,
+        )
+        val_base = getattr(cs, base)  # resolve via canonical property
+        with subtests.test(f"Testing base '{base}'", aliases=all_aliases):
+            for alias in all_aliases:
+                val_alias = cs.get_complexer(alias)  # resolve via alias
+                np.testing.assert_array_equal(
+                    val_alias.array,
+                    val_base.array,
+                    err_msg=f"Alias '{alias}' did not match base '{base}'",
+                )
 
 
 def test_complex_system_get_df(rc_data):
@@ -120,37 +94,48 @@ def test_complex_system_get_df(rc_data):
     assert "thickness" in result.attrs
 
 
-@pytest.mark.parametrize("from_form,input_variant", itertools.product(FORMS, INPUT_VARIANTS))
-def test_convert_all_forms(rc_system, from_form, input_variant):
-    kwargs = {}
-    if from_form == "relative_permittivity_corrected":
-        kwargs["phys_const"] = rc_system.val_towards_zero(rc_system.conductivity.real)
-    elif from_form == "susceptibility":
-        kwargs["phys_const"] = rc_system.val_towards_infinity(rc_system.relative_permittivity.real)
+# @pytest.mark.parametrize("from_form, input_variant", itertools.product(FORMS, INPUT_VARIANTS))
+def test_convert_all_forms(rc_system, subtests):
+    for from_form in FORMS:
+        kwargs = {}
+        if from_form == "relative_permittivity_corrected":
+            kwargs["phys_const"] = rc_system.val_towards_zero(rc_system.conductivity.real)
+        elif from_form == "susceptibility":
+            kwargs["phys_const"] = rc_system.val_towards_infinity(
+                rc_system.relative_permittivity.real
+            )
 
-    # get raw Complexer
-    data = rc_system.get_complexer(from_form, raw=True)
+        # if kwargs:
+        #     buffered_print(kwargs)
 
-    # choose input variant
-    if input_variant == "complexer":
-        inp = data
-    elif input_variant == "ndarray_inverted":
-        arr = data.array
-        inp = arr.real - 1j * arr.imag
-    else:
-        inp = data.array
+        # get raw Complexer data for the form being tested
+        data = rc_system.get_complexer(from_form, raw=True)
+        for input_variant in INPUT_VARIANTS:
+            with subtests.test(
+                f"Testing conversion from {from_form}", input_variant=input_variant
+            ):
+                # choose input variant
+                if input_variant == "complexer":
+                    inp = data
+                elif input_variant == "ndarray_inverted":
+                    arr = data.array
+                    inp = arr.real - 1j * arr.imag
+                else:
+                    inp = data.array
 
-    result = convert(inp, from_form=from_form, to_form="impedance", system=rc_system, **kwargs)
-    np.testing.assert_allclose(
-        result.array,
-        rc_system.impedance.array,
-        rtol=1e-6,
-        atol=1e-8,
-        err_msg=f"Conversion from {from_form} to impedance failed for {input_variant}",
-    )
+                result = convert(
+                    inp, from_form=from_form, to_form="impedance", system=rc_system, **kwargs
+                )
+                np.testing.assert_allclose(
+                    result.array,
+                    rc_system.impedance.array,
+                    rtol=1e-6,
+                    atol=1e-8,
+                    err_msg=f"Conversion from {from_form} to impedance failed for {input_variant}",
+                )
 
 
-def test_complex_system_update_precedence(rc_system):
+def test_complex_system_update_precedence(rc_system, subtests):
     """
     Clarifying comment: Tests precedence of area/thickness in update when data is passed as:
     - raw array (should use instance or explicit kwargs)
@@ -161,40 +146,46 @@ def test_complex_system_update_precedence(rc_system):
     ones = np.ones_like(freq, dtype=complex)
 
     # Case 1: Update with raw array, explicit area/thickness
-    cs1 = ComplexSystem(data=ones, frequency=freq, area=1.0, thickness=1.0)
-    cs1.update(
-        rc_system.e_r.array,
-        form="relative_permittivity",
-        area=rc_system.area,
-        thickness=rc_system.thickness,
-    )
-    print("Case 1: raw array, explicit area/thickness")
-    np.testing.assert_allclose(cs1.impedance.array, rc_system.array, rtol=1e-6, atol=1e-8)
+    with subtests.test("Case 1: raw array, explicit area/thickness"):
+        cs1 = ComplexSystem(data=ones, frequency=freq, area=1.0, thickness=1.0)
+        cs1.update(
+            rc_system.e_r.array,
+            form="relative_permittivity",
+            area=rc_system.area,
+            thickness=rc_system.thickness,
+        )
+        buffered_print("Case 1: raw array, explicit area/thickness")
+        np.testing.assert_allclose(cs1.impedance.array, rc_system.array, rtol=1e-6, atol=1e-8)
 
     # Case 2: Update with Complexer, explicit area/thickness
-    cs2 = ComplexSystem(data=ones, frequency=freq, area=1.0, thickness=1.0)
-    cs2.update(
-        rc_system.e_r,
-        form="relative_permittivity",
-        area=rc_system.area,
-        thickness=rc_system.thickness,
-    )
-    print("Case 2: Complexer, explicit area/thickness")
-    np.testing.assert_allclose(cs2.impedance.array, rc_system.array, rtol=1e-6, atol=1e-8)
+    with subtests.test("Case 2: Complexer, explicit area/thickness"):
+        cs2 = ComplexSystem(data=ones, frequency=freq, area=1.0, thickness=1.0)
+        cs2.update(
+            rc_system.e_r,
+            form="relative_permittivity",
+            area=rc_system.area,
+            thickness=rc_system.thickness,
+        )
+        buffered_print("Case 2: Complexer, explicit area/thickness")
+        np.testing.assert_allclose(cs2.impedance.array, rc_system.array, rtol=1e-6, atol=1e-8)
 
     # Case 3: Update with dataframe (should use rc_system area/thickness)
-    cs3 = ComplexSystem(data=ones, frequency=freq, area=1.0, thickness=1.0)
-    rel_df = rc_system.get_df("relative_permittivity")
-    cs3.update(rel_df, form="relative_permittivity", area=1.5, thickness=1.5)
-    print("Case 3: DataFrame, area/thickness from data")
-    np.testing.assert_allclose(cs3.array, rc_system.array, rtol=1e-6, atol=1e-8)
+    with subtests.test("Case 3: DataFrame, area/thickness from data"):
+        cs3 = ComplexSystem(data=ones, frequency=freq, area=1.0, thickness=1.0)
+        rel_df = rc_system.get_df("relative_permittivity")
+        cs3.update(rel_df, form="relative_permittivity", area=1.5, thickness=1.5)
+        buffered_print("Case 3: DataFrame, area/thickness from data")
+        np.testing.assert_allclose(cs3.array, rc_system.array, rtol=1e-6, atol=1e-8)
 
     # Case 4: Update with another ComplexSystem (should use its area/thickness)
-    cs4 = ComplexSystem(data=ones, frequency=freq, area=1.0, thickness=1.0)
-    rel_perm_system = ComplexSystem(rc_system.e_r.array, freq, rc_system.thickness, rc_system.area)
-    cs4.update(rel_perm_system, form="relative_permittivity", area=1.5, thickness=1.5)
-    print("Case 4: ComplexSystem, area/thickness from data")
-    np.testing.assert_allclose(cs4.impedance.array, rc_system.array, rtol=1e-6, atol=1e-8)
+    with subtests.test("Case 4: ComplexSystem, area/thickness from data"):
+        cs4 = ComplexSystem(data=ones, frequency=freq, area=1.0, thickness=1.0)
+        rel_perm_system = ComplexSystem(
+            rc_system.e_r.array, freq, rc_system.thickness, rc_system.area
+        )
+        cs4.update(rel_perm_system, form="relative_permittivity", area=1.5, thickness=1.5)
+        buffered_print("Case 4: ComplexSystem, area/thickness from data")
+        np.testing.assert_allclose(cs4.impedance.array, rc_system.array, rtol=1e-6, atol=1e-8)
 
 
 def test_complex_system_update_and_ordering(simple_data):
@@ -216,17 +207,16 @@ def test_complex_system_update_and_ordering(simple_data):
     cs.update(data=z_rev, frequency=freq_rev, expected_z_at_dc=True, form="impedance")
 
     # Frequency should be sorted ascending
-    assert np.all(np.diff(cs.frequency) > 0)
+    assert np.all(np.diff(cs.frequency) > 0), "Frequency should be sorted ascending"
     # Data should either remain reversed or be inverted depending on DC expectation
     assert np.allclose(cs.impedance.array, z_rev)
     cs.order = "desc"
-    assert np.all(np.diff(cs.frequency) < 0)
+    assert np.all(np.diff(cs.frequency) < 0), "Frequency should be sorted descending"
     assert np.allclose(cs.impedance.array, z)
 
-    # --- Case 3: Malformed frequency array (not monotonic enough) ---
+    # --- Case 2: Malformed frequency array (not monotonic enough) ---
     malformed_freq = freq.copy()
     malformed_freq[1] = 1  # Break strict monotonicity
-    # z_data = np.linspace(1, 5, len(malformed_freq))
     cs.order = "asc"
     cs.update(
         data=z_rev,
@@ -285,8 +275,15 @@ def test_complex_system_repr(rc_data):
     """
     cs = ComplexSystem(data=rc_data["impedance"], frequency=rc_data["frequency"])
     result = repr(cs)
-    check_result_type_and_print(result, str, "repr returns string")
+    arr_str = np.array2string(cs.complexer_obj.array)
+    freq_str = np.array2string(cs.frequency)
+
+    buffered_print("ComplexSystem repr:\n", result)
     assert result.startswith("ComplexSystem(")
+    assert "Z" in result
+    assert arr_str[:5] in result
+    assert "freq" in result
+    assert freq_str[:5] in result
 
 
 # @pytest.mark.parametrize(
@@ -377,3 +374,30 @@ def test_complex_system_repr(rc_data):
 #     # sorted_indices = np.argsort(freq_rev)
 #     # assert np.all(cs2.impedance.array == simple_data["impedance"][sorted_indices])
 #     assert np.all(cs.impedance.array == z_rev)
+
+
+# ---- Fixtures ----
+# @pytest.fixture
+# def rc_data():
+#     """Fixture providing frequency and impedance data from RCCircuit for ComplexSystem tests."""
+#     rc = RCCircuit()
+#     return {
+#         "frequency": rc.freq,
+#         "impedance": rc.Z,
+#         "impedance_noisy": rc.Z_noisy,
+#     }
+
+
+# @pytest.fixture
+# def simple_data():
+#     """Fixture providing simple frequency and impedance arrays for edge case testing."""
+#     freq = np.array([1e1, 1e2, 1e3, 1e4])
+#     z = np.array([1 + 1j, 2 + 2j, 3 + 3j, 4 + 4j])
+#     return {"frequency": freq, "impedance": z}
+
+
+# @pytest.fixture
+# def rc_system():
+#     """Fixture providing a ComplexSystem with trusted impedance data."""
+#     ckt = RCCircuit(true_values=[24, 1e9, 1e-11], noise=0.01)
+#     return ComplexSystem(data=ckt.Z_noisy, frequency=ckt.freq, area=25, thickness=500e-4)

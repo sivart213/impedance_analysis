@@ -189,37 +189,3 @@ def show_error_message(
             l_title.replace(".", ": ").title() + " Error",
             f"{error.__class__.__name__} in {l_title}{message}{identifier_str}:\n{str(error)}",
         )
-
-
-# # Set the global warning handler
-# warnings.showwarning = log_warning
-
-# np.seterr(all="raise")
-
-
-# def manage_settings_files(base_name="settings"):
-#     """Manage settings files for the application."""
-#     count = 0
-#     for proc in psutil.process_iter(["pid", "name", "cmdline"]):
-#         if "python" in proc.info["name"] and any("z_fit" in info for info in proc.info["cmdline"]):
-#             count += 1
-#         # return count
-#     if count == 0:
-#         count = 1
-#     # instance_count = count_instances()
-#     settings_file = Path(f"{base_name}_{count}.json")
-#     copy_from_file = Path(f"{base_name}_{count - 1}.json") if count > 1 else None
-
-#     # Initialize JSONSettings object
-#     json_settings = JSONSettings(settings_file, copy_from=copy_from_file)
-
-#     # Get the true path from JSONSettings
-#     settings_dir = json_settings.settings_path.parent
-
-#     # Remove any unwanted files
-#     for file in settings_dir.glob(f"{base_name}_*.json"):
-#         file_instance_number = int(file.stem.split("_")[-1])
-#         if file_instance_number > count:
-#             file.unlink()
-
-#     return json_settings

@@ -10,10 +10,7 @@ import itertools
 
 import numpy as np
 
-try:
-    from ..impedance_supplement import get_impedance
-except ImportError:
-    from eis_analysis.impedance_supplement import get_impedance
+from eis_analysis.impedance_supplement.ops import get_impedance
 
 
 def find_f_peak_idx(Z: np.ndarray) -> int:

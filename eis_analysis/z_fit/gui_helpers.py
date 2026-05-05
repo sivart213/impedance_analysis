@@ -6,7 +6,7 @@ import pandas as pd
 from scipy.signal import savgol_filter
 from scipy.interpolate import PchipInterpolator
 
-from eis_analysis.data_treatment import calculate_rc_freq
+from eis_analysis.data_treatment.data_analysis import calculate_rc_freq
 
 
 def get_param_df(*args, include_locks=True, include_bounds=True):
@@ -415,8 +415,8 @@ def quick_rc(self, df=None, result_type="dict"):
         try:
             res = calculate_rc_freq_sets(self, param_df, result_type)
             reslist.append(res)
-        except (IndexError, ValueError) as e:
-            print(f"Error processing {name}: {e}")
+        except (IndexError, ValueError) as exc:
+            print(f"Error processing {name}: {exc}")
             continue
 
     return reslist

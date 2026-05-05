@@ -13,12 +13,8 @@ from collections.abc import Callable
 
 import numpy as np
 
-try:
-    from ..string_ops import compile_search_patterns
-    from ..utils.decorators import handle_subdicts
-except ImportError:
-    from eis_analysis.string_ops import compile_search_patterns
-    from eis_analysis.utils.decorators import handle_subdicts
+from eis_analysis.utils.decorators import handle_subdicts
+from eis_analysis.string_ops.string_mod import compile_search_patterns
 
 T = TypeVar("T")
 
@@ -121,50 +117,112 @@ def flatten_dict(
     return dict(items)
 
 
-def update_dict(base_dict: dict, updater_dict: dict) -> None:
-    """Recursively update the base dictionary with values from the update dictionary."""
-    if not base_dict or not updater_dict:
-        return
+def update_dict(subject: dict, source: dict, copy: bool = False) -> dict:
+    """
+    Recursively merge two dictionaries.
 
-    for key, value in updater_dict.items():
-        if isinstance(value, dict) and key in base_dict:
-            update_dict(base_dict[key], value)
+    Uses the union of keys/structure from both `subject` and `source`,
+    with values taken from `source` where overlaps occur, and from
+    `subject` otherwise.
+
+    Parameters
+    ----------
+    subject : dict
+        The dictionary to be updated. Modified in place unless `copy` is True.
+    source : dict
+        The dictionary providing new or overriding values.
+    copy : bool, optional
+        If True, a shallow copy of `subject` is created before updating.
+        Default is False (modifies `subject` in place).
+
+    Returns
+    -------
+    dict
+        The updated subject dictionary.
+    """
+    if copy:
+        subject = subject.copy()
+
+    if not subject or not source:
+        return subject
+
+    for key, value in source.items():
+        if isinstance(subject.get(key), dict) and isinstance(value, dict):
+            # update_dict(subject[key], value, copy)
+            subject[key] = update_dict(subject[key], value, copy)
         else:
-            base_dict[key] = value
-        # return new_dict
+            subject[key] = value
+    return subject
 
 
-def filter_dict(base_dict: dict, filtering_dict: dict) -> dict:
-    """Recursively filter the base dictionary to keep only values present in the filter dictionary."""
-    if not filtering_dict:
-        return base_dict
+def filter_dict(target: dict, reference: dict) -> dict:
+    """
+    Recursively extract a subset of `target` defined by `reference`.
+
+    Uses the overlapping keys/structure of both dictionaries, with values
+    taken from `target`. Keys not present in both are omitted.
+
+    Parameters
+    ----------
+    target : dict
+        The source dictionary to filter.
+    reference : dict
+        A dictionary whose keys specify which entries to keep.
+
+    Returns
+    -------
+    dict
+        A new dictionary containing only the filtered keys and values.
+    """
+    if not reference:
+        return target
 
     new_dict = {}
-    for key, value in filtering_dict.items():
-        if key in base_dict:
-            if isinstance(value, dict) and isinstance(base_dict[key], dict):
-                new_dict[key] = filter_dict(base_dict[key], value)
+    for key, value in reference.items():
+        if key in target:
+            if isinstance(value, dict) and isinstance(target[key], dict):
+                new_dict[key] = filter_dict(target[key], value)
             else:
-                new_dict[key] = base_dict[key]
+                new_dict[key] = target[key]
 
     return new_dict
 
 
-def check_dict(to_check_dict: dict, base_dict: dict) -> dict:
-    """Recursively nest to_check_dict within base_dict if keys are not found at the top level."""
-    if not to_check_dict:
-        return to_check_dict
+def align_dict(target: dict, reference: dict) -> dict:
+    """
+    Recursively align the subset `target` with the structure of `reference`.
 
-    # Check if any keys of to_check_dict are in base_dict
-    keys_in_base = any(key in base_dict for key in to_check_dict)
+    Uses the keys/structure of `reference` to determine placement, with
+    values taken from `target`. If keys in `target` match
+    at the top level, it is returned directly; otherwise, it is nested
+    under the appropriate sub-dictionary as seen in `reference`.
+
+    Parameters
+    ----------
+    target : dict
+        The dictionary to align with `reference`.
+    reference : dict
+        The reference dictionary structure.
+
+    Returns
+    -------
+    dict
+        Either `target` (if keys match at the top level),
+        a nested version of it (if matched deeper), or `{}` if no alignment is found.
+    """
+    if not target:
+        return target
+
+    # Check if any keys of target are in reference
+    keys_in_base = any(key in reference for key in target)
 
     if keys_in_base:
-        return to_check_dict
+        return target
     else:
-        # If no keys of to_check_dict are in base_dict, recurse through values of base_dict that are dicts
-        for key, value in base_dict.items():
+        # If no keys of target are in reference, recurse through values of reference that are dicts
+        for key, value in reference.items():
             if isinstance(value, dict):
-                nested_dict = check_dict(to_check_dict, value)
+                nested_dict = align_dict(target, value)
                 if nested_dict:
                     return {key: nested_dict}
         return {}
@@ -416,3 +474,52 @@ def separate_dict(
 #             return {k: merge_single_key(v) for k, v in data.items()}
 #     else:
 #         return data
+
+
+# def update_dict(base_dict: dict, updater_dict: dict) -> None:
+#     """Recursively update the base dictionary with values from the update dictionary."""
+#     if not base_dict or not updater_dict:
+#         return
+
+#     for key, value in updater_dict.items():
+#         if isinstance(value, dict) and key in base_dict:
+#             update_dict(base_dict[key], value)
+#         else:
+#             base_dict[key] = value
+#         # return new_dict
+
+
+# def filter_dict(base_dict: dict, filtering_dict: dict) -> dict:
+#     """Recursively filter the base dictionary to keep only values present in the filter dictionary."""
+#     if not filtering_dict:
+#         return base_dict
+
+#     new_dict = {}
+#     for key, value in filtering_dict.items():
+#         if key in base_dict:
+#             if isinstance(value, dict) and isinstance(base_dict[key], dict):
+#                 new_dict[key] = filter_dict(base_dict[key], value)
+#             else:
+#                 new_dict[key] = base_dict[key]
+
+#     return new_dict
+
+
+# def align_dict(to_check_dict: dict, base_dict: dict) -> dict:
+#     """Recursively nest to_check_dict within base_dict if keys are not found at the top level."""
+#     if not to_check_dict:
+#         return to_check_dict
+
+#     # Check if any keys of to_check_dict are in base_dict
+#     keys_in_base = any(key in base_dict for key in to_check_dict)
+
+#     if keys_in_base:
+#         return to_check_dict
+#     else:
+#         # If no keys of to_check_dict are in base_dict, recurse through values of base_dict that are dicts
+#         for key, value in base_dict.items():
+#             if isinstance(value, dict):
+#                 nested_dict = align_dict(to_check_dict, value)
+#                 if nested_dict:
+#                     return {key: nested_dict}
+#         return {}

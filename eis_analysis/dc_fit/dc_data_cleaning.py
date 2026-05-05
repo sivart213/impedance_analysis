@@ -6,9 +6,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from eis_analysis.system_utilities import (
-    load_file,  # noqa: F401
-)
 from eis_analysis.dc_fit.extract_tools import (
     DEFAULT_DIR,
     save_results,  # noqa: F401
@@ -21,6 +18,9 @@ from eis_analysis.dc_fit.segment_cleaning import (
     smooth_segment,
     filter_datasets,
     clean_segment_data,
+)
+from eis_analysis.system_utilities.file_io import (
+    load_file,  # noqa: F401
 )
 from eis_analysis.dc_fit.periodicity_detection import (
     process_segments_mean,

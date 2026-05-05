@@ -14,12 +14,24 @@ from pathlib import Path
 import numpy as np
 import psutil
 
-from ..system_utilities.json_io import JSONSettings
+from ..system_utilities.json_io import DefaultJSONSettings
 from ..data_treatment.data_analysis import Statistics
 
 
-def manage_settings_files(base_name="settings", base_path: str | Path = __file__) -> JSONSettings:
-    """Manage settings files for the application."""
+def manage_z_fit_settings_files(
+    base_name="settings", base_path: str | Path = __file__
+) -> DefaultJSONSettings:
+    """
+    Manage settings files for the z_fit application.
+    Looks for active instances of the application and creates/loads settings files accordingly.
+
+    Parameters:
+    -----------
+    base_name : str, optional
+        Base name for the settings files. Default is "settings".
+    base_path : str or Path, optional
+        Base directory path for the settings files. Default is the directory of this file.
+    """
     count = 0
     for proc in psutil.process_iter(["pid", "name", "cmdline"]):
         if "python" in proc.info["name"] and any("z_fit" in info for info in proc.info["cmdline"]):
@@ -29,12 +41,14 @@ def manage_settings_files(base_name="settings", base_path: str | Path = __file__
         count = 1
     # instance_count = count_instances()
     settings_file = Path(f"{base_name}_{count}.json")
-    copy_from_file = Path(f"{base_name}_{count - 1}.json") if count > 1 else None
+    copy_from_file = Path(f"{base_name}_{count - 1}.json") if count > 1 else ""
 
-    # Initialize JSONSettings object
-    json_settings = JSONSettings(settings_file, copy_from=copy_from_file, root_dir=base_path)
+    # Initialize DefaultJSONSettings object
+    json_settings = DefaultJSONSettings(
+        settings_file, root_dir=base_path, copy_from=copy_from_file
+    )
 
-    # Get the true path from JSONSettings
+    # Get the true path from DefaultJSONSettings
     settings_dir = json_settings.settings_path.parent
     # print(settings_dir)
     # Remove any unwanted files
@@ -46,7 +60,7 @@ def manage_settings_files(base_name="settings", base_path: str | Path = __file__
     return json_settings
 
 
-class SettingsManager(JSONSettings):
+class SettingsManager(DefaultJSONSettings):
     """Class to store data for plotting graphs."""
 
     def __init__(self, **kwargs):
@@ -94,7 +108,7 @@ class SettingsManager(JSONSettings):
 
     def load_settings(self, **kwargs):
         """Load settings from JSON files and set attributes."""
-        settings = super().load_settings(**kwargs)  # Use JSONSettings method
+        settings = super().load_settings(**kwargs)  # Use DefaultJSONSettings method
 
         # Set attributes directly from the loaded settings
         for key, value in settings.items():
@@ -104,7 +118,7 @@ class SettingsManager(JSONSettings):
 
     def restore_defaults(self, **kwargs):
         """Restore the default settings."""
-        settings = super().restore_defaults(**kwargs)  # Use JSONSettings method
+        settings = super().restore_defaults(**kwargs)  # Use DefaultJSONSettings method
 
         # Set attributes directly from the restored settings
         for key, value in settings.items():
@@ -281,7 +295,7 @@ class SettingsManager(JSONSettings):
 #     return data
 
 
-# class JSONSettings:
+# class DefaultJSONSettings:
 #     """Class to store data for plotting graphs."""
 
 #     def __init__(self, settings_path=None, copy_from=None, root_dir: str | Path = __file__):
@@ -292,7 +306,7 @@ class SettingsManager(JSONSettings):
 #             raise NotADirectoryError(f"root_dir does not exist: {self.root_dir}")
 
 #         self._defaults_path = self.root_dir / "defaults.json"
-#         if isinstance(settings_path, JSONSettings):
+#         if isinstance(settings_path, DefaultJSONSettings):
 #             settings_path = settings_path.settings_path
 #         self.settings_path = self.get_path(settings_path, "settings.json")
 
@@ -353,7 +367,7 @@ class SettingsManager(JSONSettings):
 #         update_dict(settings, local_settings)
 
 #         if kwargs:
-#             kwargs = check_dict(kwargs, settings)
+#             kwargs = align_dict(kwargs, settings)
 #             settings = filter_dict(settings, kwargs)
 
 #         return settings
@@ -372,7 +386,7 @@ class SettingsManager(JSONSettings):
 #         settings = self.from_json(self.settings_path)
 
 #         # Update the local settings with the current settings
-#         kwargs = check_dict(kwargs, settings)
+#         kwargs = align_dict(kwargs, settings)
 #         update_dict(settings, kwargs)
 
 #         self.to_json(settings, self.settings_path)
@@ -392,7 +406,7 @@ class SettingsManager(JSONSettings):
 #         settings = self.from_json(source_path)
 
 #         if kwargs:
-#             kwargs = check_dict(kwargs, settings)
+#             kwargs = align_dict(kwargs, settings)
 #             kwargs = filter_dict(settings, kwargs)
 #             settings = self.from_json(self.settings_path)
 #             update_dict(settings, kwargs)

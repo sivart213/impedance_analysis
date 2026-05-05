@@ -625,13 +625,13 @@ class GraphBase:
             KeyError,
             ZeroDivisionError,
             OverflowError,
-        ) as e:
+        ) as exc:
             # self.show_error_message(f"An error occurred while updating: {str(e)}")
-            error_type = type(e).__name__
+            error_type = type(exc).__name__
             QMessageBox.critical(
                 self.central_widget,
                 "Error",
-                f"An error of type {error_type} occurred during {step} of plot {name}: {str(e)}",
+                f"An error of type {error_type} occurred during {step} of plot {name}: {str(exc)}",
             )
 
     # def show_error_message(self, message):

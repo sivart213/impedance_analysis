@@ -38,13 +38,11 @@ from PyQt5.QtWidgets import (
 )
 
 from eis_analysis.__main__ import main
-from eis_analysis.dict_ops import separate_dict  # , flatten_dict
-from eis_analysis.string_ops import re_not
-from eis_analysis.system_utilities import find_files  # , load_file, load_hdf, save
 from eis_analysis.equipment.mfia_ops import (
     parse_mfia_files,
 )
 from eis_analysis.parse_files.gui_plots import PopupGraph
+from eis_analysis.string_ops.string_mod import re_not
 from eis_analysis.parse_files.gui_widgets import (
     DataTreeWidget,
     ColumnListWidget,
@@ -57,7 +55,9 @@ from eis_analysis.parse_files.gui_workers import (
     LoadDatasetsWorker,
     SaveDatasetsWorker,
 )
+from eis_analysis.dict_ops.dict_manipulators import separate_dict  # , flatten_dict
 from eis_analysis.system_utilities.special_io import parse_file_info
+from eis_analysis.system_utilities.path_finders import find_files  # , load_file, load_hdf, save
 
 # Define the named tuple for dataset entries
 
@@ -546,8 +546,8 @@ class MFIAFileConverter(QMainWindow, WorkerFunctions):
 
             # Parse file information
             files = parse_file_info(files, parse_mfia_files, keywords, get_all=get_all)
-        except Exception as e:
-            QMessageBox.warning(self, "Error", f"Error: {e}")
+        except Exception as exc:
+            QMessageBox.warning(self, "Error", f"Error: {exc}")
             return
 
         self.files = files
@@ -1510,8 +1510,8 @@ if __name__ == "__main__":
     #         files = parse_file_info(
     #             files, parse_mfia_files, keywords, get_all=get_all
     #         )
-    #     except Exception as e:
-    #         QMessageBox.warning(self, "Error", f"Error: {e}")
+    #     except Exception as exc:
+    #         QMessageBox.warning(self, "Error", f"Error: {exc}")
     #         return
 
     #     self.files = files

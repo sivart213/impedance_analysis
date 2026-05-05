@@ -8,7 +8,6 @@ from PyQt5.QtWidgets import (
     QMenu,
     QAction,
     QDialog,
-    # QErrorMessage,
     QHeaderView,
     QListWidget,
     QMessageBox,
@@ -25,14 +24,12 @@ from PyQt5.QtWidgets import (
     QTreeWidgetItemIterator,
 )
 
-from ..dict_ops import flatten_dict
 from .gui_plots import PopupGraph
-from ..string_ops import sci_note, compile_search_patterns
-
-# from PyQt5.QtWidgets import QListWidget, QMenu, QInputDialog, QListWidgetItem
-# from PyQt5.QtCore import Qt
 from .gui_windows import DataViewer
-from ..data_treatment import find_nearest, impedance_concat
+from ..string_ops.string_mod import sci_note, compile_search_patterns
+from ..data_treatment.value_ops import find_nearest
+from ..data_treatment.dataset_ops import impedance_concat
+from ..dict_ops.dict_manipulators import flatten_dict
 
 DatasetEntry = namedtuple("DatasetEntry", ["df", "uid", "name", "cr_time", "row_0_hash"])
 # DatasetEntryIndex = {"df": 0, "uid": 1, "name": 2, "cr_time": 3}
@@ -1285,12 +1282,12 @@ class DataTreeWidget(QTreeWidget):
         if not use_groups:
             try:
                 regex = re.compile(regex_pattern)
-            except re.error as e:
+            except re.error as exc:
                 # Handle invalid regex
                 QInputDialog.getText(
                     self,
                     "Invalid Regex",
-                    f"Error in regex pattern: {e}. Please try again.",
+                    f"Error in regex pattern: {exc}. Please try again.",
                 )
                 return []
 

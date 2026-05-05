@@ -21,10 +21,6 @@ from collections.abc import Callable, Sequence
 
 import numpy as np
 
-# # Load the JSON file with coefficients
-# json_path = os.path.join(os.path.dirname(__file__), "its90nist_allcoeff.json")
-# with open(json_path, "r", encoding="utf-8") as f:
-#     COEFFICIENTS = json.load(f, parse_float=np.float64)["coefficients"]
 json_path = importlib.resources.files("eis_analysis.equipment.temperature_devices").joinpath(
     "its90nist_allcoeff.json"
 )

@@ -13,9 +13,10 @@ import pandas as pd
 from PyQt5.QtWidgets import QMessageBox
 
 from ..z_system.system import ComplexSystem
-from ..impedance_supplement import get_impedance, parse_parameters
+from ..impedance_supplement.ops import get_impedance
 from ..impedance_supplement.linkk import linKK
 from ..impedance_supplement.model_ops import parse_model_groups, get_valid_sub_model
+from ..impedance_supplement.model_eval import parse_parameters
 
 
 class DataGenerator:
@@ -302,11 +303,11 @@ class DataManager:
         return
 
 
-# class DataHandler(JSONSettings):
+# class DataHandler(DefaultJSONSettings):
 #     """Class to store data for plotting graphs."""
 
 #     def __init__(self, **kwargs):
-#         # Initialize JSONSettings
+#         # Initialize DefaultJSONSettings
 #         super().__init__(**kwargs)
 #         self.model = "p(R1,C1)"
 #         self.load_dir = Path().home()
@@ -358,7 +359,7 @@ class DataManager:
 
 #     def load_settings(self, **kwargs):
 #         """Load settings from JSON files and set attributes."""
-#         settings = super().load_settings(**kwargs)  # Use JSONSettings method
+#         settings = super().load_settings(**kwargs)  # Use DefaultJSONSettings method
 
 #         # Set attributes directly from the loaded settings
 #         for key, value in settings.items():
@@ -368,7 +369,7 @@ class DataManager:
 
 #     def restore_defaults(self, **kwargs):
 #         """Restore the default settings."""
-#         settings = super().restore_defaults(**kwargs)  # Use JSONSettings method
+#         settings = super().restore_defaults(**kwargs)  # Use DefaultJSONSettings method
 
 #         # Set attributes directly from the restored settings
 #         for key, value in settings.items():

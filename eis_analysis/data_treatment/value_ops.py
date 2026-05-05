@@ -317,10 +317,10 @@ def get_unit_expr(value: ValueTypes, get_units: bool = False) -> sp.Expr:
         unit_expr = sp.parse_expr(
             units_str, local_dict={u: getattr(su, u) for u in dir(su) if not u.startswith("_")}
         )
-    except Exception as e:
+    except Exception as exc:
         raise ValueError(
             f"Error parsing units: {units_str}. Ensure units are valid sympy units."
-        ) from e
+        ) from exc
     if get_units:
         return unit_expr
     return numeric_value * unit_expr

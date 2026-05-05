@@ -176,8 +176,8 @@ class ImpedanceEntryWidget(QLineEdit):
                 if text:
                     self._parsed_text = parse_system_key(text)
                 super().setText(text)
-        except Exception as e:
-            QMessageBox.warning(self, "Invalid Input", str(e))
+        except Exception as exc:
+            QMessageBox.warning(self, "Invalid Input", str(exc))
 
     def text(self):
         """

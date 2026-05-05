@@ -43,9 +43,7 @@ from matplotlib.backends.backend_qt import NavigationToolbar2QT
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 
 from eis_analysis.__main__ import main
-from eis_analysis.string_ops import ContainerEvaluator
 from eis_analysis.z_fit.options import DictWindow, JsonDictWindow
-from eis_analysis.data_treatment import Statistics
 from eis_analysis.widgets.ipython import MainConsole
 from eis_analysis.z_fit.pin_widget import DataTreeWindow
 from eis_analysis.widgets.data_view import DataViewer
@@ -64,11 +62,6 @@ from eis_analysis.z_fit.gui_workers import (
 from eis_analysis.utils.plot_factory import StylizedPlot
 from eis_analysis.z_fit.data_handlers import DataGenerator
 from eis_analysis.z_fit.model_widgets import ModelLineEdit
-from eis_analysis.impedance_supplement import (
-    ImpedanceFunc,
-    parse_parameters,
-    extract_ckt_elements,
-)
 from eis_analysis.z_fit.pkg_vault_funcs import (
     GraphGUIError,
     logger,
@@ -78,6 +71,7 @@ from eis_analysis.z_fit.pkg_vault_funcs import (
     graceful_error_handler,
     construct_error_message,
 )
+from eis_analysis.string_ops.string_eval import ContainerEvaluator
 from eis_analysis.widgets.widget_helpers import create_separator
 from eis_analysis.widgets.generic_widgets import (
     FormDialog,
@@ -88,8 +82,14 @@ from eis_analysis.widgets.generic_widgets import (
 )
 from eis_analysis.z_fit.parameter_widgets import MultiEntryManager, ParameterStatPanel
 from eis_analysis.z_system.impedance_band import ImpedanceConfidence
-from eis_analysis.widgets.settings_handlers import SettingsManager, manage_settings_files
+from eis_analysis.impedance_supplement.ops import ImpedanceFunc
+from eis_analysis.widgets.settings_handlers import SettingsManager, manage_z_fit_settings_files
 from eis_analysis.z_fit.plot_control_widgets import PlotControlPanel
+from eis_analysis.data_treatment.data_analysis import Statistics
+from eis_analysis.impedance_supplement.model_eval import (
+    parse_parameters,
+    extract_ckt_elements,
+)
 
 warnings.showwarning = log_warning
 
@@ -112,7 +112,7 @@ class GraphGUI(QMainWindow, WorkerFunctions):
         central_widget = QWidget(self)
         self.setCentralWidget(central_widget)
 
-        settings_manager = manage_settings_files(base_path=__file__)
+        settings_manager = manage_z_fit_settings_files(base_path=__file__)
         # ---- Initialize parameters ----
         self._is_debugging = kwargs.get("debug", False)
         self.plotted_data = []

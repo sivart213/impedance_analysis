@@ -14,25 +14,30 @@ from collections.abc import Callable
 
 import pandas as pd
 
-from ..dict_ops import (
-    dict_level_ops,
-    flip_dict_levels,
+from ..utils.decorators import handle_dicts
+from ..dict_ops.dict_df_ops import (
     recursive_concat,
-    push_non_dict_items,
     parse_dict_of_datasets,
     rename_from_internal_df,
 )
-from ..string_ops import safe_eval, find_common_str
-from ..data_treatment import (
-    ensure_unique,
-    modify_sub_dfs,
+from ..string_ops.string_mod import safe_eval
+from ..string_ops.string_eval import find_common_str
+from ..data_treatment.data_ops import ensure_unique
+from ..data_treatment.value_ops import (
     sanitize_types,
-    drop_common_index_key,
     convert_unix_time_array,
     convert_unix_time_value,
 )
-from ..system_utilities import get_file_stats
-from ..utils.decorators import handle_dicts
+from ..system_utilities.file_io import get_file_stats
+from ..data_treatment.dataset_ops import (
+    modify_sub_dfs,
+    drop_common_index_key,
+)
+from ..dict_ops.dict_manipulators import (
+    dict_level_ops,
+    flip_dict_levels,
+    push_non_dict_items,
+)
 
 
 def parse_mfia_files(pth):

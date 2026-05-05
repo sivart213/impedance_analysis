@@ -1217,7 +1217,9 @@ def drop_common_index_key(
         # Case 3: If allow_merge is True and the level is numeric, merge it with the previous level
         elif allow_merge and level_vals.str.isnumeric().all():
             numeric_level = (
-                level_vals if numeric_level is None else numeric_level + "_" + level_vals
+                level_vals.astype(str)
+                if numeric_level is None
+                else numeric_level + "_" + level_vals.astype(str)
             )
             drop_levels.append(level)
 
@@ -1233,7 +1235,7 @@ def drop_common_index_key(
 
     # if numeric_level, merge with the first column:
     if numeric_level is not None:
-        columns_df.iloc[:, 0] = columns_df.iloc[:, 0] + "_" + numeric_level
+        columns_df.iloc[:, 0] = columns_df.iloc[:, 0].astype(str) + "_" + numeric_level
 
     # Convert back to MultiIndex or flat index
     if columns_df.shape[1] == 1:

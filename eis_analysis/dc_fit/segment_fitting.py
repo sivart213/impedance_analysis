@@ -10,7 +10,6 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import OptimizeWarning
 
-from eis_analysis.data_treatment import Statistics
 from eis_analysis.dc_fit.extract_tools import (
     create_std_df,
     trimmed_midpoint,
@@ -30,6 +29,7 @@ from eis_analysis.dc_fit.fit_functions import (
     initial_guess_poly_func,
     initial_guess_str_exp_func,
 )
+from eis_analysis.data_treatment.data_analysis import Statistics
 
 np.seterr(invalid="raise")
 

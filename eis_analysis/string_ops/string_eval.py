@@ -58,9 +58,9 @@ class ASTEvaluatorBase(Generic[T]):
             if method is None:
                 raise ValueError(f"Unsupported node type: {type(node).__name__}")
             return method(node)
-        except Exception as e:
+        except Exception as exc:
             if self.error_mode == "raise":
-                raise e
+                raise exc
             return self._get_source_segment(node)
 
     def parse(self, expr: Any) -> str | T:
@@ -70,9 +70,9 @@ class ASTEvaluatorBase(Generic[T]):
         try:
             tree = ast.parse(expr, mode="eval")
             return self.eval(tree.body)
-        except SyntaxError as e:
+        except SyntaxError as exc:
             if self.error_mode == "raise":
-                raise e
+                raise exc
             return expr
 
     def _get_source_segment(self, node: ast.AST) -> str:

@@ -18,7 +18,7 @@ except ImportError:
 
 import matplotlib.pyplot as plt
 
-from eis_analysis.system_utilities import save, load_file  # noqa: F401
+from eis_analysis.system_utilities.file_io import save, load_file  # noqa: F401
 
 np.seterr(invalid="raise")
 
@@ -34,7 +34,7 @@ warnings.filterwarnings("ignore", category=RankWarning)
 BASE_KEYS = ("sample_name", "condition", "temp", "sodium", "run")
 DEFAULT_KEYS = BASE_KEYS + ("segment",)
 DEFAULT_DTYPES = {
-    "sample_name": ["cln2", "100", "200", "300", "301"],
+    "sample_name": ["preau0", "cln0", "cln1", "cln2", "100", "200", "300", "301"],
     "condition": ["pre", "dh", "dry"],
     "temp": float,
     "sodium": int,
@@ -111,6 +111,8 @@ def form_std_df_index(
     for key, dtype in dtypes.items():
         if key in name_list:
             ind = name_list.index(key)
+            # if callable(dtype):
+            #     dtype = sorted(set(df_mi.levels[ind]), key=dtype)
             if isinstance(dtype, list):
                 df_mi = df_mi.set_levels(
                     df_mi.levels[ind].astype(pd.CategoricalDtype(dtype, ordered=True)),

@@ -229,7 +229,7 @@ def evaluate_multipliers(df: pd.DataFrame, strict: bool = True) -> None:
                     continue
             test_df = temps.copy()
             test_df.loc[t_idx] = abs(val * m)
-            vals = test_df.sort_index().values.astype(float)
+            vals = test_df.sort_index().to_numpy(copy=True).astype(float)
             log_vals = np.log10(np.clip(vals, 1e-20, None))
             log_deltas = np.diff(log_vals)
             score = np.std(log_deltas)

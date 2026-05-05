@@ -30,11 +30,12 @@ from .gui_helpers import (
     validate_vals_and_band,
 )
 from .data_handlers import DataGenerator
-from ..data_treatment import CachedColumnSelector
 from ..z_system.system import ComplexSystem
-from ..impedance_supplement import ImpedanceFunc, parse_parameters
+from ..impedance_supplement.ops import ImpedanceFunc
 from ..system_utilities.file_io import save, load_file
+from ..data_treatment.dataset_ops import CachedColumnSelector
 from ..data_treatment.data_analysis import Statistics, FittingMethods
+from ..impedance_supplement.model_eval import parse_parameters
 
 # from ..equipment.mfia_ops import convert_mfia_df_for_fit
 CommonExceptions = (
@@ -545,7 +546,7 @@ class DataContext:
         area: float,
         forms: list[str],
         data_filter: Callable,
-        weight_by_mode: str = "",
+        weight_by_mode: str | list[str] | tuple[str, ...] = "",
         rs_param: str = "",
     ):
         """
@@ -576,6 +577,15 @@ class DataContext:
         loss_func : callable, optional
             Loss function for optimization
         """
+        if isinstance(weight_by_mode, str) and "," in weight_by_mode:
+            weight_by_mode = re.split(r"\s*,\s*", weight_by_mode.strip())
+
+        if isinstance(weight_by_mode, (tuple, list)):
+            n = len(weight_by_mode)
+            weight_by_mode = [m if "." in m else f"impedance.{m}" for m in weight_by_mode]
+            weight_by_mode = " + ".join([f"{m}/max({m})" for m in weight_by_mode])
+            weight_by_mode = f"({weight_by_mode})/{n}"
+
         self.datasets = datasets
         self.thickness = thickness
         self.area = area
@@ -646,7 +656,7 @@ class DataContext:
 
         Parameters
         ----------
-        data : pd.DataFrame or ComplexSystem, optional
+        data : ComplexSystem
             Data to use instead of the cached dataset
         weights : np.ndarray, optional
             Weights to use for the fit
@@ -660,10 +670,10 @@ class DataContext:
         if self.weight_by_mode and weights is None:
             if "." in self.weight_by_mode:
                 w_list = [abs(data[self.weight_by_mode])] * len(self.forms)
-            else:
+            else:  # assume it's component of the form to use
                 w_list = [
-                    abs(data[col.split(".")[0]][self.weight_by_mode])  # type: ignore
-                    for col in self.forms
+                    abs(data[fm.split(".")[0]][self.weight_by_mode])  # type: ignore
+                    for fm in self.forms
                 ]
             weights = np.hstack([w / max(w) for w in w_list])  # type: ignore
 
@@ -1311,8 +1321,8 @@ class LoadDataWorker(QObject):
 
                 data_in, alt_sheets["attrs"] = load_file(self.file_path)
 
-            except CommonExceptions as e:
-                raise WorkerError("Error occurred while loading the file.") from e
+            except CommonExceptions as exc:
+                raise WorkerError("Error occurred while loading the file.") from exc
             cached_keys = CachedColumnSelector(["freq", "real", "imag"])
             if isinstance(data_in, dict):
 
@@ -1332,10 +1342,10 @@ class LoadDataWorker(QObject):
                                     area=self.options["simulation"]["area"],
                                 )
 
-                    except CommonExceptions as e:
+                    except CommonExceptions as exc:
                         raise WorkerError(
                             f"Error occurred while parsing the data for {sheet_name}"
-                        ) from e
+                        ) from exc
 
                 name_map = {}
                 if isinstance(alt_sheets["fit results"], pd.DataFrame):
@@ -1349,8 +1359,8 @@ class LoadDataWorker(QObject):
                         valid_sheets = {
                             name_map.get(k.lower(), k): v for k, v in valid_sheets.items()
                         }
-                    except CommonExceptions as e:
-                        raise WorkerError("Error occurred while translating the names.") from e
+                    except CommonExceptions as exc:
+                        raise WorkerError("Error occurred while translating the names.") from exc
                 if alt_sheets["attrs"] is not None:
                     try:
                         rev_name_map = {v: k for k, v in name_map.items()}
@@ -1364,8 +1374,8 @@ class LoadDataWorker(QObject):
                             elif rev_name_map.get(key.lower(), "") in valid_sheets:
                                 # If the dataset is in valid_sheets, update its attributes
                                 valid_sheets[rev_name_map[key.lower()]].attrs |= values.to_dict()
-                    except CommonExceptions as e:
-                        raise WorkerError("Error occurred while translating the names.") from e
+                    except CommonExceptions as exc:
+                        raise WorkerError("Error occurred while translating the names.") from exc
             elif isinstance(data_in, pd.DataFrame):
                 try:
                     df = cached_keys.get_valid_columns(data_in, ["imps"])
@@ -1376,8 +1386,8 @@ class LoadDataWorker(QObject):
                             area=self.options["simulation"]["area"],
                         )
 
-                except CommonExceptions as e:
-                    raise WorkerError("Error occurred while parsing the data.") from e
+                except CommonExceptions as exc:
+                    raise WorkerError("Error occurred while parsing the data.") from exc
 
             # all_attrs = {}
             for key in valid_sheets:
@@ -1387,8 +1397,8 @@ class LoadDataWorker(QObject):
                 valid_sheets[key].attrs |= self.parse_dataset_name(key)
 
             self.finished.emit(valid_sheets, alt_sheets["fit results"])
-        except WorkerError as e:
-            self.error.emit(str(e))
+        except WorkerError as exc:
+            self.error.emit(str(exc))
 
     @staticmethod
     def parse_dataset_name(dataset_name: str) -> dict:
@@ -1415,7 +1425,7 @@ class LoadDataWorker(QObject):
             (r"^(9100|406)", "prefix", lambda _: None),
             (r"([5-9][05])c", "temp", lambda x: int(x[:-1])),
             (r"_r\d+", "run", lambda _: None),
-            (r"([1-3]\d[01]|cln\d)", "sample_name", lambda x: x.lower()),
+            (r"([1-3]\d[01]|cln\d|preau\d)", "sample_name", lambda x: x.lower()),
             (r"[a-zA-Z]+", "condition", lambda x: x.lower()),
         ]
 
@@ -1446,7 +1456,8 @@ class LoadDataWorker(QObject):
                     break  # Start over with the updated text
 
         if "sample_name" in result:
-            if result["sample_name"].startswith("cln"):
+            # if result["sample_name"].startswith("cln"):
+            if result["sample_name"][0].isalpha():
                 result["sodium"] = 0.0
             else:
                 try:
@@ -1582,10 +1593,10 @@ class SaveResultsWorker(QObject):
                         # Add the dataset to res
                         res[dataset_name] = value.get_df(*self.save_forms)
 
-            except CommonExceptions as e:
+            except CommonExceptions as exc:
                 raise WorkerError(
-                    f"{e.__class__.__name__} occurred while parsing the raw data."
-                ) from e
+                    f"{exc.__class__.__name__} occurred while parsing the raw data."
+                ) from exc
             try:
                 save(
                     res,
@@ -1596,17 +1607,17 @@ class SaveResultsWorker(QObject):
                     attrs=True,
                 )
                 self.finished.emit()
-            except PermissionError as e:
+            except PermissionError as exc:
                 # breakpoint()
                 raise WorkerError(
-                    f"Permission error: {str(e)}. Please check the file is closed or not in use."
-                ) from e
-            except (TypeError, ValueError, IndexError, KeyError, AttributeError) as e:
+                    f"Permission error: {str(exc)}. Please check the file is closed or not in use."
+                ) from exc
+            except (TypeError, ValueError, IndexError, KeyError, AttributeError) as exc:
                 raise WorkerError(
-                    f"{e.__class__.__name__} occurred while saving the results."
-                ) from e
-        except WorkerError as e:
-            self.error.emit(str(e))
+                    f"{exc.__class__.__name__} occurred while saving the results."
+                ) from exc
+        except WorkerError as exc:
+            self.error.emit(str(exc))
 
     def _parse_pinned(self, res):
         """Parse the pinned DataFrame."""
@@ -1639,10 +1650,10 @@ class SaveResultsWorker(QObject):
                 for col in res_df.columns
             ]
             res["fit results"] = res_df
-        except KeyError as e:
+        except KeyError as exc:
             raise WorkerError(
                 "Error occurred while parsing the pinned data into a dataframe."
-            ) from e
+            ) from exc
 
         for _, row in res_df.iterrows():
             try:
@@ -1679,10 +1690,10 @@ class SaveResultsWorker(QObject):
                     local_data[f"pr_{col}"] = generated_data[col]
 
                 res[row["Name"]] = local_data
-            except CommonExceptions as e:
+            except CommonExceptions as exc:
                 raise WorkerError(
                     f"Error occurred while parsing the data for {row['Name']}"
-                ) from e
+                ) from exc
 
     def _parse_params(self, root):
         """Construct a DataFrame of the current parameters. Called from __init__ only."""
@@ -1698,8 +1709,10 @@ class SaveResultsWorker(QObject):
 
             self.params_df = pd.DataFrame([values], columns=names)
 
-        except CommonExceptions as e:
-            raise WorkerError("Error occurred while parsing the params (in _parse_params).") from e
+        except CommonExceptions as exc:
+            raise WorkerError(
+                "Error occurred while parsing the params (in _parse_params)."
+            ) from exc
 
     def _parse_simulated(self, res):
         """"""
@@ -1742,10 +1755,10 @@ class SaveResultsWorker(QObject):
             # res["fit results"] = pd.DataFrame(
             #     [params_values], columns=params_names
             # )
-        except CommonExceptions as e:
+        except CommonExceptions as exc:
             raise WorkerError(
                 "Error occurred while parsing the data (in _parse_simulated)."
-            ) from e
+            ) from exc
 
 
 class SaveFiguresWorker(QObject):
@@ -1777,8 +1790,15 @@ class SaveFiguresWorker(QObject):
             self.fig2.savefig(bode_file_path)
 
             self.finished.emit()
-        except (TypeError, ValueError, IndexError, KeyError, AttributeError, PermissionError) as e:
-            self.error.emit(str(e))
+        except (
+            TypeError,
+            ValueError,
+            IndexError,
+            KeyError,
+            AttributeError,
+            PermissionError,
+        ) as exc:
+            self.error.emit(str(exc))
 
     # def update_base_df(
     #     self,

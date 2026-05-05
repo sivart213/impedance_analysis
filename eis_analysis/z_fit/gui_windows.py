@@ -31,7 +31,6 @@ from PyQt5.QtWidgets import (
     QAbstractItemView,
 )
 
-from ..string_ops import safe_eval, find_common_str
 from .data_handlers import DataManager
 
 # from ..data_treatment.data_analysis import ComplexSystem
@@ -40,6 +39,8 @@ from ..z_system.system import ComplexSystem
 # from .gui_workers import DataHandler
 from .parameter_widgets import MultiEntryManager
 from ..widgets.data_view import DataViewer
+from ..string_ops.string_mod import safe_eval
+from ..string_ops.string_eval import find_common_str
 from ..widgets.generic_widgets import FormDialog
 
 IsFalse: TypeAlias = Literal[False]
@@ -1683,11 +1684,11 @@ class DataHandlerWidgets(DataManager):
 
             # Mark the table as changed
             self.raw_list.changed = True
-        except Exception as e:
+        except Exception as exc:
             QMessageBox.critical(
                 self.raw_list,
                 "Error",
-                f"An error occurred during interpolation:\n{str(e)}",
+                f"An error occurred during interpolation:\n{str(exc)}",
             )
 
     def smooth_item(self):
@@ -1742,11 +1743,11 @@ class DataHandlerWidgets(DataManager):
 
             # Mark the table as changed
             self.raw_list.changed = True
-        except Exception as e:
+        except Exception as exc:
             QMessageBox.critical(
                 self.raw_list,
                 "Error",
-                f"An error occurred during smoothing:\n{str(e)}",
+                f"An error occurred during smoothing:\n{str(exc)}",
             )
 
     def view_attrs(self):

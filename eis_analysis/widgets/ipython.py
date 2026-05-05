@@ -232,8 +232,8 @@ class Terminal(RichJupyterWidget):
                     NameError,
                     SyntaxError,
                     AttributeError,
-                ) as e:
-                    print(f"Failed to update {key}: {e}")
+                ) as exc:
+                    print(f"Failed to update {key}: {exc}")
 
     def _is_complete(self, source, interactive):
         """Check if the source code is complete and can be executed."""

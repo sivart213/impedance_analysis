@@ -59,8 +59,9 @@ max-line-length = 200
 
 [tool.pytest.ini_options]
 minversion = "6.0"
-addopts = "-ra"
+addopts = ["-ra", "--tb=short"]
 testpaths = [
     "tests",
     "eis_analysis"
 ]
+

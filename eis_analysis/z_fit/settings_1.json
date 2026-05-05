@@ -1,5 +1,5 @@
 {
-    "model": "R0-L0-p(R1,C1)",
+    "model": "p(R1,C1)-p(R2,C2)-p(R3,C3)",
     "load_dir": {
         "__path__": "D:\\Online\\ASU Dropbox\\Jacob Clenney\\Work Docs\\Data\\Analysis\\IS\\EVA\\Fit_Results\\2025"
     },
@@ -13,7 +13,7 @@
     "sel_error_var": "Z",
     "afit_inputs": {
         "Match String": {
-            "default": "fit2",
+            "default": "fit1",
             "tooltip": "A regex string to match datasets to fit."
         },
         "New Name Suffix": {
@@ -74,15 +74,15 @@
         "ny_x": "Z'",
         "ny_y": "-Z''",
         "bd_x": "Frequency",
-        "bd_y1": "M\u03b8",
-        "bd_y2": "e_r\u03b8"
+        "bd_y1": "\u03b5\u1d63'",
+        "bd_y2": "M''"
     },
     "is_log": {
         "ny_x": false,
         "ny_y": false,
         "bd_x": true,
         "bd_y1": false,
-        "bd_y2": false
+        "bd_y2": true
     },
     "var_units": {
         "f": "Hz",
@@ -125,7 +125,7 @@
             "window padding": 0.2,
             "outlier percent": 2.5,
             "inversion threshold": 0.95,
-            "plot1 as nyquist": false,
+            "plot1 as nyquist": true,
             "Data options": {
                 "s": 30,
                 "alpha": 1,
@@ -185,20 +185,23 @@
         },
         "fit": {
             "function": "diff_e",
-            "type": "e_r.real",
+            "type": [
+                "Z",
+                "e_r.real"
+            ],
             "modes": [
                 "real",
                 "imag"
             ],
-            "Rs": "R0",
+            "Rs": "R1",
             "f_max": 1000000,
             "f_min": 0.01,
             "scale": "lin",
-            "weight_by_mode": "M.imag",
+            "weight_by_mode": "M.real/max(M.real)+M.imag/max(M.imag)",
             "bootstrap_percent": 98,
             "prioritize_bounds": true,
             "rebound_before_fit": true,
-            "resort_by_RC": false,
+            "resort_by_RC": true,
             "sequential_fit": false,
             "sequential_fit_update": false
         },
@@ -236,7 +239,7 @@
         },
         "diff_evolution": {
             "strategy": "best1exp",
-            "maxiter": 5000,
+            "maxiter": 1000,
             "popsize": 25,
             "tol": 0.0001,
             "recombination": 0.6,

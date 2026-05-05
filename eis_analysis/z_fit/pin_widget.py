@@ -29,7 +29,7 @@ from PyQt5.QtWidgets import (
     QAbstractItemView,
 )
 
-from ..string_ops import safe_eval, format_number
+from ..string_ops.string_mod import safe_eval, format_number
 from ..widgets.generic_widgets import SimpleDialog
 
 

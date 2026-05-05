@@ -7,6 +7,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from testing.helpers import buffered_print
+
 
 # %% Helper functions
 def build_expected_dict(
@@ -193,7 +195,7 @@ def check_result_type_and_print(
     print_mode = print_mode.lower()
     # FLAT, REPETITIVE, PRINT-ASSERT-PRINT
     if expected_type is None:
-        print(f"\nTest {description}{kwargs_str}:\nResult is None")
+        buffered_print(f"\nTest {description}{kwargs_str}:\nResult is None")
         assert result is None, f"Expected None, got {type(result)}"
         return
 
@@ -202,95 +204,95 @@ def check_result_type_and_print(
 
     if "df" in print_mode and "dtype" in print_mode and expected_type is dict:
         # dict of DataFrames, requesting dtype info
-        print(f"\nTest {description}{kwargs_str}:")
+        buffered_print(f"\nTest {description}{kwargs_str}:")
         assert isinstance(result, dict), f"Expected {expected_type}, got {type(result)}"
         for key, value in result.items():
-            print(f"\n{key} dtypes:\n{value.dtypes}")
+            buffered_print(f"\n{key} dtypes:\n{value.dtypes}")
             assert isinstance(value, pd.DataFrame), f"Expected {expected_type}, got {type(value)}"
             if "attr" in print_mode:
-                print(f"\nAttrs dtypes: {dict_value_types(value.attrs)}")
+                buffered_print(f"\nAttrs dtypes: {dict_value_types(value.attrs)}")
 
     elif "df" in print_mode and expected_type is dict:
         # Indicates parent result is a dict of df and printing should be within a for loop
-        print(f"\nTest {description}{kwargs_str}:")
+        buffered_print(f"\nTest {description}{kwargs_str}:")
         assert isinstance(result, dict), f"Expected {expected_type}, got {type(result)}"
         for key, value in result.items():
-            print(f"\n{key}:\n{value}")
+            buffered_print(f"\n{key}:\n{value}")
             assert isinstance(value, pd.DataFrame), f"Expected {expected_type}, got {type(value)}"
             if "attr" in print_mode:
-                print(f"\nAttrs: {value.attrs}")
+                buffered_print(f"\nAttrs: {value.attrs}")
 
     elif ("only" in print_mode or "none" in print_mode) and expected_type is dict:
         # Indicates parent result is a dict of df and printing should be within a for loop
-        print(f"\nTest {description}{kwargs_str}:")
+        buffered_print(f"\nTest {description}{kwargs_str}:")
         assert isinstance(result, dict), f"Expected {expected_type}, got {type(result)}"
 
     elif "dict" in print_mode and "dtype" in print_mode and expected_type is pd.DataFrame:
         # Indicates parent result is a dict and print is within a for loop
-        print(f"\n`{description}`\n")
+        buffered_print(f"\n`{description}`\n")
         assert isinstance(
             result, pd.DataFrame
         ), f"Expected {expected_type.__name__}, got {type(result)}"
-        print(f"DataFrame dtypes:\n{result.dtypes}")
+        buffered_print(f"DataFrame dtypes:\n{result.dtypes}")
         if "attr" in print_mode:
-            print(f"\nAttrs dtypes: {dict_value_types(result.attrs)}")
+            buffered_print(f"\nAttrs dtypes: {dict_value_types(result.attrs)}")
 
     elif "dict" in print_mode and expected_type is pd.DataFrame:
         # Indicates parent result is a dict and print is within a for loop
-        print(f"\n`{description}`\nDataFrame\n{result}")
+        buffered_print(f"\n`{description}`\nDataFrame\n{result}")
         assert isinstance(
             result, pd.DataFrame
         ), f"Expected {expected_type.__name__}, got {type(result)}"
         if "attr" in print_mode:
-            print(f"\nAttrs: {result.attrs}")
+            buffered_print(f"\nAttrs: {result.attrs}")
 
     elif "dtype" in print_mode and expected_type is pd.DataFrame:
         # Basic request of dtypes for a DataFrame
-        print(f"\nTest {description}{kwargs_str}:\n")
+        buffered_print(f"\nTest {description}{kwargs_str}:\n")
         assert isinstance(
             result, pd.DataFrame
         ), f"Expected {expected_type.__name__}, got {type(result)}"
-        print(f"DataFrame dtypes:\n{result.dtypes}")
+        buffered_print(f"DataFrame dtypes:\n{result.dtypes}")
         if "attr" in print_mode:
-            print(f"\nAttrs dtypes: {dict_value_types(result.attrs)}")
+            buffered_print(f"\nAttrs dtypes: {dict_value_types(result.attrs)}")
 
     elif expected_type is pd.DataFrame:
         # Base case, print DataFrame and its attrs
-        print(f"\nTest {description}{kwargs_str}:\n")
+        buffered_print(f"\nTest {description}{kwargs_str}:\n")
         assert isinstance(
             result, pd.DataFrame
         ), f"Expected {expected_type.__name__}, got {type(result)}"
-        print(f"DataFrame:\n{result}")
+        buffered_print(f"DataFrame:\n{result}")
         if "attr" in print_mode:
-            print(f"\nAttrs: {result.attrs}")
+            buffered_print(f"\nAttrs: {result.attrs}")
 
     elif expected_type is dict:
         # Unkown dict print request
-        print(f"\nTest {description}{kwargs_str}:\n")
+        buffered_print(f"\nTest {description}{kwargs_str}:\n")
         assert isinstance(result, dict), f"Expected {expected_type.__name__}, got {type(result)}"
-        print(f"Dict:\n{result}")
+        buffered_print(f"Dict:\n{result}")
         if "attr" in print_mode:
-            print(f"\nAttrs: {result.get('attrs', {})}")
+            buffered_print(f"\nAttrs: {result.get('attrs', {})}")
 
     else:
-        print(f"\nTest {description}{kwargs_str}:\n")
+        buffered_print(f"\nTest {description}{kwargs_str}:\n")
         assert isinstance(
             result, expected_type
         ), f"Expected {expected_type.__name__}, got {type(result)}"
-        print(f"{expected_type.__name__}:\n{result}")
+        buffered_print(f"{expected_type.__name__}:\n{result}")
         if "attr" in print_mode:
             if hasattr(result, "attrs"):
-                print(f"\nAttrs: {result.attrs}")  # type: ignore[attr-defined]
+                buffered_print(f"\nAttrs: {result.attrs}")  # type: ignore[attr-defined]
             elif hasattr(result, "get"):
-                print(f"\nAttrs: {result.get('attrs', {})}")
+                buffered_print(f"\nAttrs: {result.get('attrs', {})}")
             else:
                 try:
                     if hasattr(result, "index") and "attrs" in result:
                         ind = result.index("attrs")  # type: ignore[attr-defined]
-                        print(f"\nAttrs: {result[ind]}")
+                        buffered_print(f"\nAttrs: {result[ind]}")
                 except (AttributeError, TypeError, IndexError):
-                    print("\nAttrs: {}")
-                    # print(f"\nAttrs: {result.attrs if hasattr(result, 'attrs') else {}}")
+                    buffered_print("\nAttrs: {}")
+                    # buffered_print(f"\nAttrs: {result.attrs if hasattr(result, 'attrs') else {}}")
 
 
 def dict_value_types(attr_dict: dict) -> dict:

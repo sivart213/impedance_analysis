@@ -20,13 +20,13 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
 )
 
-from ..string_ops import MathEvaluator
-from ..impedance_supplement import parse_parameters
+from ..string_ops.string_eval import MathEvaluator
 from ..widgets.widget_helpers import create_separator
 from ..data_treatment.data_ops import TypeList
 from ..widgets.generic_widgets import IncLineEdit, fLabel, tLabel
 from ..data_treatment.z_array_ops import find_peak_vals
 from ..impedance_supplement.model_ops import parse_model_groups
+from ..impedance_supplement.model_eval import parse_parameters
 
 
 class ParameterStatPanel(QWidget):

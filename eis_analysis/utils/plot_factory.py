@@ -43,8 +43,8 @@ def log_exceptions(func):
     def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
-        except (FloatingPointError, RuntimeWarning) as e:
-            logger.error("Error in %s: %s", func.__name__, e)
+        except (FloatingPointError, RuntimeWarning) as exc:
+            logger.error("Error in %s: %s", func.__name__, exc)
 
     return wrapper
 
@@ -982,150 +982,6 @@ class DegFocusedScaler(AbstractScaler):
         ticks(np.arange(lims[0] + base * (pad - 1), lims[1] + base * (1 - pad), base))
         lim(lims)
         return ax
-
-
-# class LogScaler(AbstractScaler):
-#     @log_exceptions
-#     def scale(self, ax, arr, **kwargs) -> Any:
-#         """Applies log scaling to the specified axis of the given Axes object."""
-#         pad = abs(kwargs.get("pad", 0.2))
-#         # digits = kwargs.get("digits", 2)
-#         allow_invert = kwargs.get("allow_invert", False)  # Option to invert data
-#         invert_threshold = kwargs.get("invert_threshold", 0.95)  # Threshold for inversion
-#         invert_threshold = invert_threshold if invert_threshold <= 1 else invert_threshold / 100
-
-#         scale, _, lim = self.get_scale_functions(ax, self.axis)
-
-#         if isinstance(arr, (tuple, list)):
-#             arr = np.asarray(arr)
-#         elif arr is None:
-#             arr = get_plot_data(ax, self.axis)
-
-#         if allow_invert:
-#             scale_str = "log"
-#             inv = 1
-#             # Check if more than the threshold proportion of values are negative
-#             if (arr < 0).mean() > invert_threshold:
-#                 inv = -1
-#                 scale_str = "symlog"
-#             arr = self.filter_outliers(inv * arr, kwargs.get("quantile", 5))
-
-#             scale(scale_str)
-#             lim(
-#                 [
-#                     inv * 10 ** np.floor(np.log10(arr[arr > 0].min()) - pad),
-#                     inv * 10 ** np.ceil(np.log10(arr[arr > 0].max()) + pad),
-#                 ]
-#             )
-#         else:
-#             if (arr < 0).mean() > invert_threshold:
-#                 # Bypass log scaling if all values are negative
-#                 return ax
-
-#             arr = self.filter_outliers(arr, kwargs.get("quantile", 5))
-
-#             scale("log")
-#             lim(
-#                 [
-#                     10 ** np.floor(np.log10(arr[arr > 0].min()) - pad),
-#                     10 ** np.ceil(np.log10(arr[arr > 0].max()) + pad),
-#                 ]
-#             )
-#         return ax
-
-
-# class LinFrom0Scaler(AbstractScaler):
-#     @log_exceptions
-#     def scale(self, ax, arr, **kwargs) -> Any:
-#         """Applies linear scaling to the specified axis of the given Axes object."""
-#         pad = kwargs.get("pad", 0.2)
-#         digits = kwargs.get("digits", 2)
-
-#         scale, _, lim = self.get_scale_functions(ax, self.axis)
-
-#         if isinstance(arr, (tuple, list)):
-#             arr = np.array(arr)
-#         elif arr is None:
-#             arr = get_plot_data(ax, self.axis)
-
-#         arr = self.filter_outliers(arr, kwargs.get("quantile", 5))
-
-#         inv = 1
-#         if (arr < 0).mean() > 0.5:
-#             inv = -1
-
-#         lims = [
-#             0,
-#             inv * sig_figs_ceil((inv * arr).max() * (1 + pad), digits),
-#         ]
-#         scale("linear")
-#         lim([min(lims), max(lims)])
-#         return ax
-
-
-# class LinScaler(AbstractScaler):
-#     @log_exceptions
-#     def scale(self, ax, arr, **kwargs) -> Any:
-#         """Applies linear scaling to the specified axis of the given Axes object."""
-#         pad = kwargs.get("pad", 0.2)
-#         digits = kwargs.get("digits", 2)
-
-#         scale, _, lim = self.get_scale_functions(ax, self.axis)
-
-#         if isinstance(arr, (tuple, list)):
-#             arr = np.array(arr)
-#         elif arr is None:
-#             arr = get_plot_data(ax, self.axis)
-
-#         arr = self.filter_outliers(arr, kwargs.get("quantile", 5))
-
-#         lims = [
-#             sig_figs_ceil((arr).max() * (1 + pad), digits),
-#             sig_figs_ceil((arr).max() * (1 - pad), digits),
-#             -1 * sig_figs_ceil((-1 * arr).max() * (1 + pad), digits),
-#             -1 * sig_figs_ceil((-1 * arr).max() * (1 - pad), digits),
-#         ]
-#         scale("linear")
-#         lim([min(lims), max(lims)])
-#         return ax
-
-
-# class DegScaler(AbstractScaler):
-#     @log_exceptions
-#     def scale(self, ax, arr, **kwargs) -> Any:
-#         """Applies linear scaling to the specified axis of the given Axes object."""
-#         pad = kwargs.get("pad", 0.2)
-#         base = kwargs.get("base", 30)
-
-#         _, ticks, lim = self.get_scale_functions(ax, self.axis)
-
-#         ticks(np.arange(-90 - base, 90 + base, base))
-#         lim(-100, 100)
-#         return ax
-
-
-# class DegFocusedScaler(AbstractScaler):
-#     @log_exceptions
-#     def scale(self, ax, arr, **kwargs) -> Any:
-#         """Applies linear scaling to the specified axis of the given Axes object."""
-#         pad = kwargs.get("pad", 0.2)
-#         base = kwargs.get("base", 30)
-
-#         _, ticks, lim = self.get_scale_functions(ax, self.axis)
-
-#         if isinstance(arr, (tuple, list)):
-#             arr = np.array(arr)
-#         elif arr is None:
-#             arr = get_plot_data(ax, self.axis)
-
-#         arr = self.filter_outliers(arr, kwargs.get("quantile", 5))
-
-#         tmin = -120 if arr is None else np.floor(arr.min() / base) * base
-#         tmax = 120 if arr is None else np.ceil(arr.max() / base) * base
-
-#         ticks(np.arange(tmin - base, tmax + base, base))
-#         lim(tmin - base * pad, tmax + base * pad)
-#         return ax
 
 
 class DecadeAnnotator(AbstractAnnotator):
@@ -2432,7 +2288,6 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
     from IPython import get_ipython  # type: ignore
 
-    # from eis_analysis.data_treatment import ComplexSystem, ImpedanceConfidence
     from testing.rc_ckt_sim import RCCircuit
     from eis_analysis.z_system.system import ComplexSystem
     from eis_analysis.z_system.impedance_band import ImpedanceConfidence
@@ -2501,3 +2356,147 @@ if __name__ == "__main__":
         **StylizedPlot.DecadeCmapNorm(system_data["freq"], "Spectral_r"),  # RdYlGn Spectral
         # cmap=plt.get_cmap('viridis', int(np.ceil(np.log10(data_df["freq"])).m ax() - np.floor(np.log10(data_df["freq"])).min()))
     )
+
+
+# class LogScaler(AbstractScaler):
+#     @log_exceptions
+#     def scale(self, ax, arr, **kwargs) -> Any:
+#         """Applies log scaling to the specified axis of the given Axes object."""
+#         pad = abs(kwargs.get("pad", 0.2))
+#         # digits = kwargs.get("digits", 2)
+#         allow_invert = kwargs.get("allow_invert", False)  # Option to invert data
+#         invert_threshold = kwargs.get("invert_threshold", 0.95)  # Threshold for inversion
+#         invert_threshold = invert_threshold if invert_threshold <= 1 else invert_threshold / 100
+
+#         scale, _, lim = self.get_scale_functions(ax, self.axis)
+
+#         if isinstance(arr, (tuple, list)):
+#             arr = np.asarray(arr)
+#         elif arr is None:
+#             arr = get_plot_data(ax, self.axis)
+
+#         if allow_invert:
+#             scale_str = "log"
+#             inv = 1
+#             # Check if more than the threshold proportion of values are negative
+#             if (arr < 0).mean() > invert_threshold:
+#                 inv = -1
+#                 scale_str = "symlog"
+#             arr = self.filter_outliers(inv * arr, kwargs.get("quantile", 5))
+
+#             scale(scale_str)
+#             lim(
+#                 [
+#                     inv * 10 ** np.floor(np.log10(arr[arr > 0].min()) - pad),
+#                     inv * 10 ** np.ceil(np.log10(arr[arr > 0].max()) + pad),
+#                 ]
+#             )
+#         else:
+#             if (arr < 0).mean() > invert_threshold:
+#                 # Bypass log scaling if all values are negative
+#                 return ax
+
+#             arr = self.filter_outliers(arr, kwargs.get("quantile", 5))
+
+#             scale("log")
+#             lim(
+#                 [
+#                     10 ** np.floor(np.log10(arr[arr > 0].min()) - pad),
+#                     10 ** np.ceil(np.log10(arr[arr > 0].max()) + pad),
+#                 ]
+#             )
+#         return ax
+
+
+# class LinFrom0Scaler(AbstractScaler):
+#     @log_exceptions
+#     def scale(self, ax, arr, **kwargs) -> Any:
+#         """Applies linear scaling to the specified axis of the given Axes object."""
+#         pad = kwargs.get("pad", 0.2)
+#         digits = kwargs.get("digits", 2)
+
+#         scale, _, lim = self.get_scale_functions(ax, self.axis)
+
+#         if isinstance(arr, (tuple, list)):
+#             arr = np.array(arr)
+#         elif arr is None:
+#             arr = get_plot_data(ax, self.axis)
+
+#         arr = self.filter_outliers(arr, kwargs.get("quantile", 5))
+
+#         inv = 1
+#         if (arr < 0).mean() > 0.5:
+#             inv = -1
+
+#         lims = [
+#             0,
+#             inv * sig_figs_ceil((inv * arr).max() * (1 + pad), digits),
+#         ]
+#         scale("linear")
+#         lim([min(lims), max(lims)])
+#         return ax
+
+
+# class LinScaler(AbstractScaler):
+#     @log_exceptions
+#     def scale(self, ax, arr, **kwargs) -> Any:
+#         """Applies linear scaling to the specified axis of the given Axes object."""
+#         pad = kwargs.get("pad", 0.2)
+#         digits = kwargs.get("digits", 2)
+
+#         scale, _, lim = self.get_scale_functions(ax, self.axis)
+
+#         if isinstance(arr, (tuple, list)):
+#             arr = np.array(arr)
+#         elif arr is None:
+#             arr = get_plot_data(ax, self.axis)
+
+#         arr = self.filter_outliers(arr, kwargs.get("quantile", 5))
+
+#         lims = [
+#             sig_figs_ceil((arr).max() * (1 + pad), digits),
+#             sig_figs_ceil((arr).max() * (1 - pad), digits),
+#             -1 * sig_figs_ceil((-1 * arr).max() * (1 + pad), digits),
+#             -1 * sig_figs_ceil((-1 * arr).max() * (1 - pad), digits),
+#         ]
+#         scale("linear")
+#         lim([min(lims), max(lims)])
+#         return ax
+
+
+# class DegScaler(AbstractScaler):
+#     @log_exceptions
+#     def scale(self, ax, arr, **kwargs) -> Any:
+#         """Applies linear scaling to the specified axis of the given Axes object."""
+#         pad = kwargs.get("pad", 0.2)
+#         base = kwargs.get("base", 30)
+
+#         _, ticks, lim = self.get_scale_functions(ax, self.axis)
+
+#         ticks(np.arange(-90 - base, 90 + base, base))
+#         lim(-100, 100)
+#         return ax
+
+
+# class DegFocusedScaler(AbstractScaler):
+#     @log_exceptions
+#     def scale(self, ax, arr, **kwargs) -> Any:
+#         """Applies linear scaling to the specified axis of the given Axes object."""
+#         pad = kwargs.get("pad", 0.2)
+#         base = kwargs.get("base", 30)
+
+#         _, ticks, lim = self.get_scale_functions(ax, self.axis)
+
+#         if isinstance(arr, (tuple, list)):
+#             arr = np.array(arr)
+#         elif arr is None:
+#             arr = get_plot_data(ax, self.axis)
+
+#         arr = self.filter_outliers(arr, kwargs.get("quantile", 5))
+
+#         tmin = -120 if arr is None else np.floor(arr.min() / base) * base
+#         tmax = 120 if arr is None else np.ceil(arr.max() / base) * base
+
+#         ticks(np.arange(tmin - base, tmax + base, base))
+#         lim(tmin - base * pad, tmax + base * pad)
+#         return ax

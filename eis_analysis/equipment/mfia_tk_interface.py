@@ -8,10 +8,7 @@ import numpy as np
 import pandas as pd
 from zhinst.toolkit import Session
 
-try:
-    from ..string_ops import safe_eval
-except ImportError:
-    from eis_analysis.string_ops.string_mod import safe_eval
+from eis_analysis.string_ops.string_mod import safe_eval
 
 # %% Functions
 # def plot_measured_data(sweep_data: dict, **kwargs):
@@ -229,11 +226,11 @@ class tkMFIA:
     #         try:
     #             if module[key].node_info.writable:
     #                 module[key](value)
-    #         except AttributeError as e:
-    #             print(f"AttributeError: {e}")
+    #         except AttributeError as exc:
+    #             print(f"AttributeError: {exc}")
     #             continue
-    #         except KeyError as e:
-    #             print(f"KeyError setting {key}: {e}")
+    #         except KeyError as exc:
+    #             print(f"KeyError setting {key}: {exc}")
     #             continue
 
     def gen_sweeper(self, sweeper: Any = None, configure=True, settings_file=None):

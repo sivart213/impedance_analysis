@@ -12,7 +12,9 @@ import os
 import re
 import sys
 import ctypes
+import importlib
 import itertools
+from typing import Any
 from pathlib import Path
 
 import numpy as np
@@ -21,6 +23,91 @@ import numpy as np
 
 # Configure logging
 # logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+
+def detect_backend():
+    """
+    Detect which GUI backend is available.
+    Returns a string identifier or None if none found.
+    """
+    backends = ["PyQt6", "PyQt5", "PySide6", "PySide2", "tkinter"]
+    for backend in backends:
+        try:
+            importlib.import_module(backend if backend == "tkinter" else backend + ".QtWidgets")
+            return backend
+        except ImportError:
+            continue
+    return ""
+
+
+tk: Any = None
+fDialog: Any = None
+INTERFACE_PKG = detect_backend()
+if INTERFACE_PKG == "tkinter":
+    import tkinter as tk
+    from tkinter import filedialog as fDialog
+elif INTERFACE_PKG == "PyQt5":
+    from PyQt5.QtWidgets import QFileDialog as fDialog  # type: ignore
+elif INTERFACE_PKG == "PyQt6":
+    from PyQt6.QtWidgets import QFileDialog as fDialog  # type: ignore
+elif INTERFACE_PKG == "PySide2":
+    from PySide2.QtWidgets import QFileDialog as fDialog  # type: ignore
+elif INTERFACE_PKG == "PySide6":
+    from PySide6.QtWidgets import QFileDialog as fDialog  # type: ignore
+
+# Shared dictionary of grouped file type filters
+FILTER_GROUPS = {
+    "text": ["*.txt", "*.md", "*.log", "*.csv"],
+    "documents": ["*.doc", "*.docx", "*.odt", "*.rtf", "*.pdf"],
+    "spreadsheets": ["*.xlsx", "*.xlsm", "*.xlsb", "*.xls", "*.ods", "*.csv"],
+    "hdf": ["*.hdf", "*.hdf5", "*.h5", "*.hdf4", "*.h4"],
+    "code": ["*.py", "*.c", "*.cpp", "*.h", "*.java", "*.js", "*.ts", "*.sh", "*.bat"],
+    "config": ["*.ini", "*.cfg", "*.conf", "*.json", "*.yaml", "*.yml", "*.toml"],
+    "images": ["*.png", "*.jpg", "*.jpeg", "*.bmp", "*.gif", "*.tiff", "*.svg"],
+    "audio": ["*.mp3", "*.wav", "*.flac", "*.aac", "*.ogg"],
+    "video": ["*.mp4", "*.avi", "*.mkv", "*.mov", "*.wmv"],
+    "archives": ["*.zip", "*.tar", "*.gz", "*.rar", "*.7z"],
+    "python": ["*.py", "*.pyw", "*.pyc"],
+    "matlab": ["*.mat"],
+    "all": ["*.*"] if INTERFACE_PKG == "tkinter" else ["*"],
+}
+FILTER_GROUPS["any"] = FILTER_GROUPS["all"]
+FILTER_GROUPS |= {k: FILTER_GROUPS["documents"] for k in {"doc", "docs", "document"}}
+FILTER_GROUPS |= {
+    k: FILTER_GROUPS["spreadsheets"] for k in {"xls", "xlsx", "sheet", "sheets", "excel"}
+}
+
+
+def format_filters(filters, style="qt"):
+    """
+    Format filters for the active backend.
+    - If INTERFACE_PKG == "tkinter": return list of (label, pattern) tuples
+    - Otherwise (Qt backends): return ';;'-separated string
+    filters: str or list of group names (e.g. "text" or ["text","code"])
+    """
+    # Normalize to list of group names
+    if isinstance(filters, str):
+        names = re.split(r";+" if ";" in filters else r",+", filters)
+    else:
+        names = filters
+
+    # Build filter entries (n.title(), " ".join(FILTER_GROUPS.get(n.lower(), [n]))) for n in names
+    entries = []
+    for name in names:
+        if name.lower() in FILTER_GROUPS:
+            entries.append((name.title(), " ".join(FILTER_GROUPS[name.lower()])))
+
+        elif isinstance(name, str):
+            parsed = re.match(r"^(.*)\s*\((.*)\)$", name)
+            if parsed:
+                entries.append((parsed.group(1).strip(), parsed.group(2).strip()))
+            else:
+                entries.append((name.title(), "*." + name.lstrip("*.")))
+
+    # Format based on backend
+    if "qt" in style.lower() or "pyside" in style.lower():
+        return ";;".join([f"{label} ({patterns})" for label, patterns in entries])
+    return entries
 
 
 def parse_path_str(arg: str | Path | list | np.ndarray | tuple) -> list:
@@ -267,29 +354,6 @@ def find_files(
         return [getattr(f.stat(), attr) for f in filesurvey]
     return filesurvey
 
-    # if patterns:
-    #     compiled_patterns = []
-    #     for pattern in patterns:
-    #         try:
-    #             compiled_patterns.append(re.compile(pattern))
-    #         except re.error:
-    #             continue
-    #     f_filter = lambda x: all(pattern.search(str(x)) for pattern in compiled_patterns)
-    # else:
-    #     f_filter = lambda x: True  # No-op lambda, always returns True
-    #     yield_first_match = False  # If no patterns, always return all matches
-
-    # if yield_first_match or callable(f_filter):
-    #     filesurvey = list(
-    #         my_filter(
-    #             f_filter,
-    #             my_walk(Path(path), res_type, recursive, ignore),
-    #             yield_first_match,
-    #         ),
-    #     )
-    # else:
-    #     filesurvey = list(my_walk(Path(path), res_type, recursive, ignore))
-
 
 # %% Path resolving functions
 def find_drives(exclude_nonlocal=True, exclude_hidden=True):
@@ -504,3 +568,336 @@ def my_filter(condition, gen, yield_first_match=False):
                     break
     except (StopIteration, AttributeError):
         return
+
+
+# %% Interactive path input functions
+def _parse_paths(raw_input: str, initial_dir: str) -> list[str]:
+    # Split on semicolons, strip whitespace
+    parts = [p.strip() for p in raw_input.split(";") if p.strip()]
+    cd = raw_input.lower().startswith("cd")
+    paths = []
+    for part in parts:
+        if part.lower().startswith("cd"):  # Absolute path override
+            path = Path(part[2:].strip())
+        elif cd and Path(part).is_absolute():  # Absolute path override
+            path = Path(part)
+        else:  # Relative to initial_dir
+            path = Path(initial_dir) / part.strip(r"\/") if initial_dir else Path(part)
+        if "*" in path.name or "?" in path.name:  # Handle wildcards
+            paths.extend([str(p) for p in path.parent.glob(path.name)])
+        else:
+            paths.append(str(path))
+    return paths
+
+
+def validate_path(
+    p: str | Path,
+    for_write: bool = False,  # "read" or "write"
+    is_file: bool = False,  # "file" or "dir"
+) -> bool:
+    """
+    Validate path for read/write operations.
+
+    - mode="read": path must exist and be accessible
+    - mode="write": path may not exist, but some parent must exist and be writable
+    - kind="file": check file semantics
+    - kind="dir": check directory semantics
+    """
+    p = Path(p)
+
+    if not for_write:  # check for read access
+        if is_file:
+            return p.is_file() and os.access(p, os.R_OK)
+        return p.is_dir() and os.access(p, os.X_OK)
+    else:
+        # If target exists, ensure it's writable
+        if p.exists() and os.access(p, os.W_OK):
+            return p.is_file() if is_file else p.is_dir()
+        if not is_file and p.suffix:  # if is dir but has file suffix, invalid
+            return False
+        # Otherwise, ensure some parent exists and is writable
+        for parent in p.parents:
+            if parent.exists() and os.access(parent, os.W_OK):
+                return True
+        return False
+
+
+def input_path(
+    title="Select a file",
+    initial_dir="",
+    is_file=False,
+    for_write=False,
+    multi=False,
+) -> list[str]:
+
+    initial_dir = initial_dir or str(Path.home())
+    title = title.replace("Select", "Input")
+
+    if not for_write and multi:
+        raw = input(
+            f'{title} path(s) (";" separated, prefix w/ "cd" for absolute):\n\t{initial_dir}> '
+        ).strip()
+    else:
+        raw = input(f'{title} path (prefix w/ "cd" for absolute):\n\t{initial_dir}> ').strip()
+
+    paths = _parse_paths(raw, initial_dir)
+
+    if is_file:
+        if any(not validate_path(pth, for_write, is_file) for pth in paths):
+            invalid = [pth for pth in paths if not validate_path(pth, for_write, is_file)]
+            raise FileNotFoundError("The following file paths are invalid:\n" + "\n".join(invalid))
+        return paths
+    else:
+        invalid = [not validate_path(pth, for_write, is_file) for pth in paths]
+        if any(invalid):
+            create_dir = (
+                input("One or more directories do not exist. Create them? (y/n): ").strip().lower()
+                == "y"
+            )
+            if not create_dir:
+                raise FileNotFoundError("One or more directory paths are invalid.")
+        valid_paths = []
+        for pth, check in zip(paths, invalid):
+            if check:
+                try:
+                    Path(pth).mkdir(parents=True, exist_ok=True)
+                    valid_paths.append(pth)
+                except Exception:
+                    raise IOError(f"Could not create directory: {pth}")
+            else:
+                valid_paths.append(pth)
+
+        return valid_paths
+
+
+def get_path_prompt(
+    mode="open",
+    initial_dir="",
+    filters: str | list | tuple = "All files (*)",
+    multi_select=False,
+):
+    """
+    Prompt user to select file(s) or directory via GUI dialog or console input.
+
+    Parameters:
+    -----------
+    - mode (str): Mode of operation. Options include:
+        - "open": Select file(s) for reading.
+        - "save": Select file for writing.
+        - "dir": Select directory.
+        - Combinations like "open dir", "save dir" are also valid.
+    - initial_dir (str): Initial directory to open in the dialog.
+    - filters (str or list or tuple): File type filters for file selection dialogs.
+    - multi_select (bool): If True, allows selection of multiple files.
+
+    Returns:
+    --------
+    - list[str]: List of selected file or directory path(s).
+
+    Notes:
+    ------
+    - If no GUI backend is available, falls back to console input.
+    - If no selection is made, returns a list with an empty string.
+    """
+    path: list[str] = []
+    mode = mode.lower()
+    title = ""
+    as_file = "dir" not in mode
+    for_write = "save" in mode or "write" in mode
+    if not as_file:
+        title = "Select directory"
+    elif for_write:
+        title = "Save as"
+    else:
+        title = "Select file(s)" if multi_select else "Select file"
+
+    if fDialog is None:
+        path = input_path(title, initial_dir, as_file, for_write, multi_select)
+    elif INTERFACE_PKG == "tkinter":
+        root = tk.Tk()
+        root.overrideredirect(True)
+        root.attributes("-alpha", 0)
+        if title == "Select directory":
+            path = [fDialog.askdirectory(title=title, initialdir=initial_dir)]
+        else:
+            filters = format_filters(filters, style="tkinter")
+            if title == "Save as":
+                func = fDialog.asksaveasfilename
+            elif multi_select:
+                func = fDialog.askopenfilenames
+            else:
+                func = fDialog.askopenfilename
+            res = func(title=title, initialdir=initial_dir, filetypes=filters)
+            path = [res] if isinstance(res, str) else list(res)
+
+        root.destroy()
+
+    elif (is_q5 := INTERFACE_PKG in ("PyQt5", "PySide2")) or INTERFACE_PKG in ("PyQt6", "PySide6"):
+        dlg = fDialog()
+        dlg.setDirectory(initial_dir)
+        dlg.setWindowTitle(title)
+        if title == "Select directory":
+            dlg.setFileMode(fDialog.Directory if is_q5 else fDialog.FileMode.Directory)
+        else:
+            dlg.setNameFilter(format_filters(filters, style="qt"))
+            if title == "Save as":
+                dlg.setAcceptMode(fDialog.AcceptSave if is_q5 else fDialog.AcceptMode.AcceptSave)
+            elif multi_select:
+                dlg.setFileMode(fDialog.ExistingFiles if is_q5 else fDialog.FileMode.ExistingFiles)
+            else:
+                dlg.setFileMode(fDialog.ExistingFile if is_q5 else fDialog.FileMode.ExistingFile)
+
+        if is_q5:
+            if dlg.exec_():  # note: exec_() in Qt5, exec() in Qt6
+                path = dlg.selectedFiles()
+        else:
+            if dlg.exec():
+                path = dlg.selectedFiles()
+
+    else:
+        path = input_path(title, initial_dir, as_file, for_write, multi_select)
+
+    return path or [""]
+
+
+# if title == "Select file(s)":
+#                 path = fDialog.askopenfilenames(
+#                     title=title, initialdir=initial_dir, filetypes=filters
+#                 )
+#             elif title == "Select file":
+#                 path = [
+#                     fDialog.askopenfilename(title=title, initialdir=initial_dir, filetypes=filters)
+#                 ]
+#             elif title == "Save as":
+#                 path = [
+#                     fDialog.asksaveasfilename(
+#                         title=title, initialdir=initial_dir, filetypes=filters
+#                     )
+#                 ]
+#             elif title == "Select directory":
+#                 path = [fDialog.askdirectory(title=title, initialdir=initial_dir)]
+# elif INTERFACE_PKG in ("PyQt5", "PySide2"):
+#     dlg = fDialog()
+#     dlg.setDirectory(initial_dir)
+#     dlg.setNameFilter(filters)
+
+#     if title == "Select file(s)":
+#         dlg.setWindowTitle(title)
+#         dlg.setFileMode(fDialog.ExistingFiles)
+#     elif title == "Select file":
+#         dlg.setWindowTitle(title)
+#         dlg.setFileMode(fDialog.ExistingFile)
+#     elif title == "Save as":
+#         dlg.setWindowTitle(title)
+#         dlg.setAcceptMode(fDialog.AcceptSave)
+#     elif title == "Select directory":
+#         dlg.setWindowTitle(title)
+#         dlg.setFileMode(fDialog.Directory)
+#     if dlg.exec_():  # note: exec_() in Qt5, exec() in Qt6
+#         files = dlg.selectedFiles()
+#         if files:
+#             return files if multi_select else files[0]
+
+# elif INTERFACE_PKG in ("PyQt6", "PySide6"):
+#     dlg = fDialog()
+#     dlg.setDirectory(initial_dir)
+#     dlg.setNameFilter(filters)
+#     if title == "Select file(s)":
+#         dlg.setWindowTitle(title)
+#         dlg.setFileMode(fDialog.FileMode.ExistingFiles)
+#     elif title == "Select file":
+#         dlg.setWindowTitle(title)
+#         dlg.setFileMode(fDialog.FileMode.ExistingFile)
+#     elif title == "Save as":
+#         dlg.setWindowTitle(title)
+#         dlg.setAcceptMode(fDialog.AcceptMode.AcceptSave)
+#     elif title == "Select directory":
+#         dlg.setWindowTitle(title)
+#         dlg.setFileMode(fDialog.FileMode.Directory)
+#     if dlg.exec():
+#         files = dlg.selectedFiles()
+#         if files:
+#             return files if multi_select else files[0]
+
+
+# elif INTERFACE_PKG in ("PyQt5", "PySide2"):
+
+#     if title == "Select file(s)":
+#         path, _ = fDialog.getOpenFileNames(
+#             None, title, initial_dir, filters, selected_filter
+#         )
+#     elif title == "Select file":
+#         path, _ = fDialog.getOpenFileName(
+#             None, title, initial_dir, filters, selected_filter
+#         )
+#     elif title == "Save as":
+#         path, _ = fDialog.getSaveFileName(
+#             None, title, initial_dir, filters, selected_filter
+#         )
+#     elif title == "Select directory":
+#         path = fDialog.getExistingDirectory(None, title, initial_dir)
+#     return path
+# if not initial_dir and Path(QFileDialog().directory().path()) == Path().cwd():
+#     initial_dir = str(Path().home())
+
+# if any(not validate_path(pth, for_write, is_file) for pth in paths):
+#     create_dir = False
+#     if not is_file:
+#         create_dir = input(
+#             "One or more directories do not exist. Create them? (y/n): "
+#         ).strip().lower() == "y"
+#     if create_dir:
+#         for pth in paths:
+#             if not validate_path(pth, for_write, is_file):
+#                 try:
+#                     Path(pth).mkdir(parents=True, exist_ok=True)
+#                 except Exception:
+#                     raise IOError(f"Could not create directory: {pth}")
+#     else:
+#         raise FileNotFoundError("One or more paths are invalid.")
+# valid_paths = []
+# for pth in paths:
+#     if validate_path(pth, for_write, is_file):
+#         valid_paths.append(pth)
+#     elif not is_file and create_dir:
+#         try:
+#             Path(pth).mkdir(parents=True, exist_ok=True)
+#             valid_paths.append(pth)
+#         except Exception:
+#             raise IOError(f"Could not create directory: {pth}")
+#     else:
+#         raise FileNotFoundError(f"Invalid path: {pth}")
+
+# return valid_paths
+
+
+# def validate_path(p: str | Path, mode: str = "drive") -> bool:
+#     """
+#     mode options:
+#       - "drive": ensure drive exists
+#       - "dir": ensure directory exists
+#       - "file": ensure file exists
+#     """
+#     p = Path(p)
+#     if mode.lower()[:3] == "dir":
+#         return p.is_dir()
+#     elif mode.lower()[:4] == "file":
+#         return p.is_file()
+#     else:
+#         if p.exists() and os.access(p, os.W_OK):
+#             return True
+#         for parent in p.parents:
+#             if parent.exists() and os.access(parent, os.W_OK):
+#                 return True
+#         return False
+
+
+# pth = input(
+#     f'{title} path (prefix w/ "cd" to ignore default path):\n\t{initial_dir}> '
+# ).strip()
+
+# if "cd" in pth.lower():
+#     pth = pth.replace("cd", "").strip()
+# else:
+#     pth = str(Path(initial_dir) / pth)
+# return pth

@@ -25,9 +25,9 @@ from PyQt5.QtWidgets import (
     QDesktopWidget,
 )
 
-from ..string_ops import safe_eval, format_number
+from ..string_ops.string_mod import safe_eval, format_number
 from ..widgets.generic_widgets import SimpleDialog
-from ..system_utilities.json_io import JSONSettings
+from ..system_utilities.json_io import DefaultJSONSettings
 
 
 class DictView:
@@ -443,11 +443,11 @@ class JsonDictWindow(DictWindow):
         options: dict,
         name: str = "window",
         title: str | None = None,
-        json_settings: JSONSettings | None = None,
+        json_settings: DefaultJSONSettings | None = None,
         **kwargs,
     ):
         super().__init__(parent, options, name, title, **kwargs)
-        self.json_settings = json_settings if json_settings else JSONSettings()
+        self.json_settings = json_settings if json_settings else DefaultJSONSettings()
 
     def add_tab_buttons(self, layout, index):
         """Add tab-specific buttons to the layout."""

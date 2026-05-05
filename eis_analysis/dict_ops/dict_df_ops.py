@@ -13,8 +13,9 @@ from collections import Counter, defaultdict
 import numpy as np
 import pandas as pd
 
-from eis_analysis.string_ops import safe_eval, find_common_str
-from eis_analysis.data_treatment import (
+from eis_analysis.string_ops.string_mod import safe_eval
+from eis_analysis.string_ops.string_eval import find_common_str
+from eis_analysis.data_treatment.data_ops import (
     ensure_unique,
     clean_key_list,
     evaluate_1D_array,
@@ -44,7 +45,8 @@ def rename_from_internal_df(arg: dict, level: int = 0, name: str = "name") -> di
         names = []
         if isinstance(arg_in, pd.DataFrame) and n_key in arg_in.attrs.keys():
             # names.append(slugify(arg_in.attrs[n_key], True, " ")) # Warning: untested change!!!
-            names.append(re.sub(r"[\s-]+", " ", re.sub(r"[^\w\s-]", "", n_key)).strip("-_"))
+            val = arg_in.attrs[n_key]
+            names.append(re.sub(r"[\s-]+", " ", re.sub(r"[^\w\s-]", "", val)).strip("-_"))
         elif isinstance(arg_in, dict):
             for val in arg_in.values():
                 names.extend(parse_names(val))
@@ -61,7 +63,7 @@ def rename_from_internal_df(arg: dict, level: int = 0, name: str = "name") -> di
             else:
                 name, resids = find_common_str(*possible_names, sep=" ")
                 name = name + " " + max(resids, key=len)
-            names.append(name)
+            names.append(str(name))
 
         names = ensure_unique(names, prefix=False)
         return {k: v for k, v in zip(names, arg.values())}
@@ -592,5 +594,27 @@ def cleanup_dict(
                 cleaned_dict[new_key] = res_dict
     return cleaned_dict
 
+
+if __name__ == "__main__":
+    from testing.generators import generate_diverse_dict
+    from eis_analysis.dict_ops.dict_manipulators import nest_dict
+
+    levels = 3
+    num_items = 6
+    level = 0
+    name = "name"
+
+    flat = generate_diverse_dict(levels=levels, num_items=num_items, with_dataframes=True)
+    # Add a unique name attribute to each DataFrame for testing
+    for k, v in flat.items():
+        if isinstance(v, pd.DataFrame):
+            v.attrs[name] = f"{k}_df"
+    data = nest_dict(flat)
+    # Run function
+    result = rename_from_internal_df(data, level=level, name=name)
+
+    # Check that at least one key was renamed to match the DataFrame attr
+    # Flatten if nested
+    flat_result = flatten_dict(result, sep=None)
 
 # ARCHIVE

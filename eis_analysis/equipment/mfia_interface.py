@@ -18,7 +18,7 @@ import zhinst.core
 import matplotlib.pyplot as plt
 from IPython.core.getipython import get_ipython
 
-from ..string_ops import safe_eval
+from ..string_ops.string_mod import safe_eval
 from ..system_utilities.special_io import get_config
 
 
@@ -577,15 +577,18 @@ class MFIA_Freq_Temp_Sweep(MFIA_Freq_Sweep):
 
 
 if __name__ == "__main__":
-    from ..system_utilities import find_path
+    from pathlib import Path
 
-    config_path = find_path("impedance_analysis", "eis_analysis", "device_control", base="cwd")
+    from ..system_utilities.path_finders import find_path
+
+    config_path = Path(__file__).parent / "config_mfia.ini"
+    # config_path = find_path("impedance_analysis", "eis_analysis", "device_control", base="cwd")
     save_path = find_path("impedance_analysis", "testing", "Data", "Raw", base="cwd")
 
     get_ipython().run_line_magic("matplotlib", "inline")  # type: ignore
 
     # sweep_obj = MFIA_Freq_Sweep(
-    #     "dev6037", config_path/"config_mfia.ini", sections=["base_sweep_settings", "fast_sweep"],
+    #     "dev6037", config_path, sections=["base_sweep_settings", "fast_sweep"],
     # )
 
     # single_sweep = sweep_obj.sweep(plot=plot_measured_data)
@@ -593,7 +596,7 @@ if __name__ == "__main__":
 
     # watlow_controller = Watlow(port="com4", full_output=False)
     # sweep_obj = MFIA_Freq_Temp_Sweep(
-    #     "dev6037", config_path/"config_mfia.ini", temp_controller=watlow_controller, sections=["base_sweep_settings", "fast_sweep"],
+    #     "dev6037", config_path, temp_controller=watlow_controller, sections=["base_sweep_settings", "fast_sweep"],
     # )
 
     # temperatures = [25, 50, 75]

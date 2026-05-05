@@ -63,47 +63,97 @@ def randles_gen(
 
 
 class RCCircuit:
-    """Class to create a test dataset for RC circuit fitting."""
+    """Class to create a test dataset for RC (Randles) circuit fitting."""
 
     def __init__(
         self,
         freq=(-3, 6, 100),
         true_values=(101.56e3, 10.210e4, 142.453e-7),
-        noise=0.01,
-        guess_range=0.9,
+        noise: float = 0.01,
+        initial_guess: tuple[float, ...] | list[float] = tuple(),
+        initial_guess_mult: float | tuple[float, ...] | list[float] = 0.9,
         bounds_range=2,
+        lock_instance=False,
     ):
+        object.__setattr__(self, "_lock_instance", False)
+
         self._freq = np.ones(1)
         self._Z = np.array([])
         self._Z_noisy = np.array([])
-        self._true_values = [0.0, 1.0, 0.1]
-        self._initial_guess = [0.0, 1.01, 0.09]
-        self._noise = np.clip(abs(noise) or 0.01, 0.0, 1.0)
+        self._true_values = (0.0, 1.0, 0.1)
+        self._initial_guess_mult = tuple()
+        self._initial_guess_tuple = tuple()
+        self._initial_guess = (0.0, 1.01, 0.09)
+
+        self._noise: float = np.clip(abs(noise) or 0.01, 0.0, 1.0)
         self._bnd_mult = abs(bounds_range) or 2.0
 
+        # self.bounds = bounds_range  # Default bounds multiplier
         self.freq = freq
         self.true_values = true_values
-        self.initial_guess = guess_range  # Default initial guess multiplier
-        self.bounds = bounds_range  # Default bounds multiplier
+
+        if initial_guess:
+            self.initial_guess = initial_guess  # Default initial guess multiplier
+        else:
+            self.set_unique_guess_mults(initial_guess_mult, update_guess=True)
+
         self.circuit_func = partial(randles_gen, as_stack=True)
 
-    def get_guess(self, mult: float) -> list[float]:
+        object.__setattr__(self, "_lock_instance", lock_instance)
+
+    def __setattr__(self, name, value):
+        if getattr(self, "_lock_instance", False):
+            raise AttributeError(f"RCCircuit instance is locked; cannot modify '{name}'")
+        object.__setattr__(self, name, value)
+
+    def _get_value_tuple(
+        self, mult: int | float | tuple[float, ...] | list[float], as_mult=True
+    ) -> tuple[float, float, float]:
+        """Return a tuple of three float values based on the input."""
+        if isinstance(mult, (int, float)):
+            mults = [float(np.clip(mult, 0.0, 1.0))] * 3 if as_mult else [float(mult)] * 3
+        else:
+            mults = []
+            for m in mult:
+                mults.append(float(np.clip(m, 0.0, 1.0) if as_mult else m))
+
+        if len(mults) != 3:
+            if len(mults) == 2:
+                return (0.0, mults[0], mults[1])
+            if len(mults) == 1:
+                return (mults[0], mults[0], mults[0])
+            if not mults:
+                raise ValueError("Modifier tuple cannot be empty.")
+        return (mults[0], mults[1], mults[2])
+
+    def set_unique_guess_mults(
+        self, mults: int | float | tuple[float, ...] | list[float], update_guess=True
+    ) -> None:
+        """Set unique initial guess multipliers for each parameter."""
+        self._initial_guess_mult = self._get_value_tuple(mults)
+        self._initial_guess_tuple = tuple()
+        if update_guess:
+            self._initial_guess = self.get_guess(self._initial_guess_mult)
+
+    def get_guess(self, mult: float | tuple[float, float, float]) -> tuple[float, float, float]:
         """Return randomized initial guess list using numpy."""
-        if not 0 <= mult <= 1:
-            print(f"Warning: modifier {mult} out of range, clamping to boundary [0, 1]")
-            mult = 0.0 if mult < 0 else 1.0
+        if not isinstance(mult, tuple) or len(mult) != 3:
+            mult = self._get_value_tuple(mult)
 
         r_vals = np.random.uniform(*self.bounds)
-        return [(1 - mult) * v + mult * rv for v, rv in zip(self._true_values, r_vals)]
+        return tuple((1 - m) * v + m * rv for v, rv, m in zip(self._true_values, r_vals, mult))
 
     def get_noisy_z(self, noise=0.0, arr=None) -> np.ndarray:
         """Generate noisy impedance data based on current true values and frequency."""
-        self._noise = abs(noise) or self._noise
+        noise = abs(noise) or self._noise
+        if not getattr(self, "_lock_instance", False):
+            self._noise = noise
+
         Z = self.Z if not isinstance(arr, np.ndarray) else arr
         rng = np.random.default_rng(seed=0)
 
-        scale_r = self._noise * np.maximum(np.abs(Z.real), 1e-12)
-        scale_i = self._noise * np.maximum(np.abs(Z.imag), 1e-12)
+        scale_r = noise * np.maximum(np.abs(Z.real), 1e-12)
+        scale_i = noise * np.maximum(np.abs(Z.imag), 1e-12)
 
         Z_noise = rng.normal(0, scale_r, size=Z.shape) + 1j * rng.normal(0, scale_i, size=Z.shape)
 
@@ -114,24 +164,41 @@ class RCCircuit:
         return "R1-p(R2,C2)"
 
     @property
-    def true_values(self):
+    def true_values(self) -> tuple[float, float, float]:
         return self._true_values
 
     @true_values.setter
-    def true_values(self, value):
-        value = tuple(value)
-        if len(value) == 2:
-            value = (0, value[0], value[1])
-        if len(value) != 3:
-            raise ValueError("true_values must be of length 3")
+    def true_values(self, value: tuple[float, ...] | list[float]):
+        if not 2 <= len(value) <= 3:
+            raise ValueError("true_values must be of length 2 or 3")
 
-        self._true_values = [float(v) for v in value]
-        self._initial_guess = self.get_guess(self._noise)
+        self._true_values = self._get_value_tuple(value, as_mult=False)
+
         self._Z = randles_gen(self._freq, *self._true_values)
         self._Z_noisy = self.get_noisy_z(self._noise)
+        if self._initial_guess_mult:
+            self._initial_guess = self.get_guess(self._initial_guess_mult)
 
     @property
-    def freq(self):
+    def initial_guess(self) -> tuple[float, float, float]:
+        """Return the initial guess values."""
+        return self._initial_guess
+
+    @initial_guess.setter
+    def initial_guess(self, value):
+        if isinstance(value, (int, float)):
+            self.set_unique_guess_mults(value, update_guess=True)
+        elif isinstance(value, (list, tuple)):
+            if not 2 <= len(value) <= 3:
+                raise ValueError("initial_guess must be of length 2 or 3")
+            self._initial_guess_tuple = self._get_value_tuple(value, as_mult=False)
+            self._initial_guess = self._initial_guess_tuple
+            self._initial_guess_mult = tuple()
+        else:
+            raise TypeError("initial_guess must be a list, tuple, int, or float")
+
+    @property
+    def freq(self) -> np.ndarray:
         return self._freq
 
     @freq.setter
@@ -179,24 +246,6 @@ class RCCircuit:
     @property
     def pair_bounds(self):
         return list(zip(*self.bounds))
-
-    @property
-    def initial_guess(self) -> list[float]:
-        """Return the initial guess values."""
-        return self._initial_guess
-
-    @initial_guess.setter
-    def initial_guess(self, value):
-        if isinstance(value, (int, float)):
-            self._initial_guess = self.get_guess(float(value))
-        elif isinstance(value, (list, tuple)):
-            if len(value) == 2:
-                value = (0, value[0], value[1])
-            if len(value) != 3:
-                raise ValueError("initial_guess must be of length 3")
-            self._initial_guess = [float(v) for v in value]
-        else:
-            raise TypeError("initial_guess must be a list, tuple, int, or float")
 
     @property
     def Z_hstack(self):

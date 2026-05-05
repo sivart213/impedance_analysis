@@ -16,10 +16,10 @@ from PyQt5.QtWidgets import (
     QProgressDialog,
 )
 
-from ..data_treatment import CachedColumnSelector, modify_sub_dfs, dataframe_manager
 from ..equipment.mfia_ops import convert_mfia_data
 from ..system_utilities.file_io import save, load_hdf, load_file
 from ..system_utilities.io_tools import nest_dict, flatten_dict
+from ..data_treatment.dataset_ops import CachedColumnSelector, modify_sub_dfs, dataframe_manager
 
 CommonExceptions = (
     TypeError,
@@ -234,16 +234,16 @@ class LoadDatasetsWorker(QObject):
                                 flatten=0,
                                 transpose_check=True,
                             )
-                except CommonExceptions as e:
+                except CommonExceptions as exc:
                     self.error.emit(
-                        f"{e.__class__.__name__} occurred while loading dataset {str(name)}: {str(e)}"
+                        f"{exc.__class__.__name__} occurred while loading dataset {str(name)}: {str(exc)}"
                     )
 
             loaded_data = flatten_dict(loaded_data)
 
             self.finished.emit(loaded_data)
-        except CommonExceptions as e:
-            self.error.emit(f"{e.__class__.__name__} occurred while loading: {str(e)}")
+        except CommonExceptions as exc:
+            self.error.emit(f"{exc.__class__.__name__} occurred while loading: {str(exc)}")
 
 
 class SaveDatasetsWorker(QObject):
@@ -284,17 +284,17 @@ class SaveDatasetsWorker(QObject):
                 else:
                     data = dataframe_manager(self.data, columns=self.columns, allow_merge=True)
 
-            except CommonExceptions as e:
-                raise WorkerError("Error occurred while converting the data.") from e
+            except CommonExceptions as exc:
+                raise WorkerError("Error occurred while converting the data.") from exc
 
             if self.path.suffix:
                 self.save_to_file(self.path, data)
             else:
                 self.save_to_dir(self.path, data)
             self.finished.emit()
-        except WorkerError as e:
+        except WorkerError as exc:
             # breakpoint()
-            self.error.emit(str(e))
+            self.error.emit(str(exc))
             self.finished.emit()
 
     def save_to_file(self, out_path, data):
@@ -309,14 +309,14 @@ class SaveDatasetsWorker(QObject):
                 mult_to_single=True,
                 attrs=True,
             )
-        except PermissionError as e:
+        except PermissionError as exc:
             # breakpoint()
             raise WorkerError(
-                f"Permission error: {str(e)}. Please check the file is closed or not in use."
-            ) from e
-        except CommonExceptions as e:
+                f"Permission error: {str(exc)}. Please check the file is closed or not in use."
+            ) from exc
+        except CommonExceptions as exc:
             # breakpoint()
-            raise WorkerError(f"Error occurred while processing {out_path.stem}") from e
+            raise WorkerError(f"Error occurred while processing {out_path.stem}") from exc
 
     def save_to_dir(self, out_path, data):
         """Saves the converted data."""
@@ -337,13 +337,13 @@ class SaveDatasetsWorker(QObject):
                 attrs=True,
                 file_modifier=suffix,
             )
-        except PermissionError as e:
+        except PermissionError as exc:
 
             raise WorkerError(
-                f"Permission error: {str(e)}. Please check the file is closed or not in use."
-            ) from e
-        except CommonExceptions as e:
-            raise WorkerError(f"Error occurred while saving data to {out_path.stem}") from e
+                f"Permission error: {str(exc)}. Please check the file is closed or not in use."
+            ) from exc
+        except CommonExceptions as exc:
+            raise WorkerError(f"Error occurred while saving data to {out_path.stem}") from exc
 
 
 # ARCHIVE

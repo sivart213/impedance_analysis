@@ -213,10 +213,10 @@ class UWTC:
                         raise ValueError("No response received from the device.")
                     self.previous_reply = output
                     return output
-            except (ValueError, PermissionError, FileNotFoundError, IOError) as e:
+            except (ValueError, PermissionError, FileNotFoundError, IOError) as exc:
                 attempt += 1
                 if attempt >= retries:
-                    output = UWTCOutput(error=str(e))
+                    output = UWTCOutput(error=str(exc))
                     self.previous_reply = output
                     return output
                 # time.sleep(self.timeout)

@@ -31,7 +31,8 @@ from PyQt5.QtWidgets import (
     QDialogButtonBox,
 )
 
-from ..string_ops import MathEvaluator, format_number
+from ..string_ops.string_mod import format_number
+from ..string_ops.string_eval import MathEvaluator
 
 T = TypeVar("T", bound=object, default=str)
 C = TypeVar("C", bound=object, default=str)

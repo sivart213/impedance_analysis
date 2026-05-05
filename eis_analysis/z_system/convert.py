@@ -13,20 +13,48 @@ import numpy as np
 from numpy.typing import ArrayLike
 
 try:
-    from .complexer import Complexer
+    from .complexer import Complexer, FreqArray
     from .definitions import COMP_ALIASES, BASE_COMPLEX_FORMS, CENTER_PHASE_FORMS
+    from .array_parsing import ArraySignature
     from ..data_treatment.value_ops import convert_val
 except ImportError:
-    from eis_analysis.z_system.complexer import Complexer
+    from eis_analysis.z_system.complexer import Complexer, FreqArray
     from eis_analysis.z_system.definitions import (
         COMP_ALIASES,
         BASE_COMPLEX_FORMS,
         CENTER_PHASE_FORMS,
     )
+    from eis_analysis.z_system.array_parsing import ArraySignature
     from eis_analysis.data_treatment.value_ops import convert_val
 
 
+def complex_shared_sign_mask(
+    array: np.ndarray,
+) -> np.ndarray:
+    """Check if the array's real and imaginary parts match the common signs."""
+    r_sign = np.sign(array.real)
+    i_sign = np.sign(array.imag)
+    return (r_sign == np.median(r_sign)) & (i_sign == np.median(i_sign))
+
+
+def separate_suspected_invalid(
+    array: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Separate the array into valid and invalid parts based on common sign convention."""
+    mask = complex_shared_sign_mask(array)
+    return array[mask], array[~mask]
+
+
 class UnitFloat:
+    """
+    Data descriptor for float values with unit conversion and validation.
+
+    Used primarily for thickness and area attributes in impedance calculations,
+    it accepts various input formats (raw numbers, strings with units, tuples/lists, dicts).
+    The set method uses `convert_val` to handle the conversion based on the specified
+    unit and exponent as needed.
+    """
+
     def __init__(
         self, unit: str = "cm", exponent: int = 1, default: float = 1.0, strict: bool = False
     ):
@@ -49,9 +77,8 @@ class UnitFloat:
 
     def __get__(self, instance: Any, owner: type) -> Any:
         if instance is None:
-            return self  # type: ignore
+            return self
         return getattr(instance, self.private_name, self.default)
-        # return instance.__dict__.get(self.private_name, self.default)
 
     def __set__(self, instance: Any, value: Any) -> None:
         val = None
@@ -75,13 +102,13 @@ class UnitFloat:
 
 def np_ffill(array: np.ndarray, mask: np.ndarray | None = None) -> np.ndarray:
     """
-    Fill invalid (NaN) values in a numpy array with the nearest valid value.
+    Forward-fill invalid (NaN) values in a numpy array with the nearest previous valid value.
 
     Parameters
     ----------
     array : np.ndarray
         Input array possibly containing invalid (NaN) values.
-    mask : np.ndarray
+    mask : np.ndarray, optional
         Boolean mask where True indicates positions of invalid values.
 
     Returns
@@ -91,9 +118,13 @@ def np_ffill(array: np.ndarray, mask: np.ndarray | None = None) -> np.ndarray:
     """
     if mask is None:
         mask = np.isnan(array)
+
     valid = ~mask
-    array[mask] = np.maximum.accumulate(np.where(valid, array, -np.inf))[mask]
-    array[: np.argmax(valid)] = array[valid][0]
+    idx = np.where(valid, np.arange(len(array)), -1)
+    np.maximum.accumulate(idx, out=idx)  # propagate last seen valid index forward
+
+    array[mask] = array[idx[mask]]  # fill invalid positions
+    array[: np.argmax(valid)] = array[valid][0]  # bfill initial invalids
     return array
 
 
@@ -103,7 +134,8 @@ class ZDataOps:
     """
 
     complexer_obj: Complexer
-    _frequency: np.ndarray
+    _frequency: FreqArray
+    # _frequency: np.ndarray
 
     thickness: UnitFloat = UnitFloat(unit="cm", exponent=1, default=1.0, strict=False)
     area: UnitFloat = UnitFloat(unit="cm", exponent=2, default=1.0, strict=False)
@@ -120,14 +152,18 @@ class ZDataOps:
 
         # Frequency: default or provided
         if not hasattr(self, "_frequency"):
-            self._frequency = np.array([1.0])
+            # self._frequency = np.array([1.0])
+            # self._frequency = np.array([])
+            self._frequency = FreqArray()
         if frequency is not None:
             frequency = np.asarray(frequency)
             if len(frequency) == len(self.complexer_obj.array):
-                self._frequency = frequency
+                self._frequency = FreqArray(frequency)
+                # self._frequency = frequency
 
         if len(self._frequency) != len(self.complexer_obj.array):
-            self._frequency = np.ones(len(self.complexer_obj.array))
+            # self._frequency = np.ones(len(self.complexer_obj.array))
+            self._frequency.gen_array(len(self.complexer_obj.array), update=True)
 
     @property
     def array(self) -> np.ndarray:
@@ -137,12 +173,14 @@ class ZDataOps:
     @property
     def frequency(self) -> np.ndarray:
         """Return the frequency array."""
-        return self._frequency
+        return self._frequency.array
+        # return self._frequency
 
     @property
     def angular_frequency(self) -> np.ndarray:
         """Calculate the angular frequency :math: \\omega = 2 * \\pi * f."""
-        return 2 * np.pi * self.frequency
+        return self._frequency.angular
+        # return 2 * np.pi * self.frequency
 
     @property
     def _mu(self) -> np.ndarray:
@@ -216,9 +254,9 @@ class ZDataOps:
         arr = 1 / (self._mu * self.complexer_obj.array)
         imag = arr.imag + self.dc_conductivity
         np_ffill(imag, imag > 0.0)
+        return Complexer._from_valid(arr.real + 1j * imag, sign=-1)
         # idx, mask = np.arange(imag.size), imag > 0.0
         # imag[mask] = np.interp(idx[mask], idx[~mask], imag[~mask])
-        return Complexer._from_valid(arr.real + 1j * imag, sign=-1)
         # arr = arr.real + 1j * (arr.imag + self.dc_conductivity)
         # return Complexer._from_valid(arr.real + 1j * np.minimum(arr.imag, 0.0), sign=-1)
         # return Complexer._from_valid(np.abs(arr) * np.exp(1j * np.clip(np.angle(arr), -np.pi, 0)), sign=-1)
@@ -238,13 +276,13 @@ class ZDataOps:
     @property
     def susceptibility(self) -> Complexer:
         """Calculate complex susceptibility. (rho - jrho) generic discription."""
-        # arr = 1 / self.M - self.val_towards_infinity(self.relative_permittivity.real)
         arr = 1 / (self._mu * self.complexer_obj.array)
         real = arr.real - self.val_towards_infinity(arr.real)
         np_ffill(real, real < 0.0)
+        return Complexer._from_valid(real + 1j * arr.imag, sign=-1)
+        # arr = 1 / self.M - self.val_towards_infinity(self.relative_permittivity.real)
         # idx, mask = np.arange(real.size), real < 0.0
         # real[mask] = np.interp(idx[mask], idx[~mask], real[~mask])
-        return Complexer._from_valid(real + 1j * arr.imag, sign=-1)
         # arr = arr - self.val_towards_infinity(arr.real)
         # return Complexer._from_valid(np.maximum(arr.real, 0.0) + 1j * arr.imag, sign=-1)
         # return Complexer._from_valid(np.abs(arr) * np.exp(1j * np.clip(np.angle(arr), -np.pi, 0)), sign=-1)
@@ -324,7 +362,8 @@ class RawZDataOps(ZDataOps):
     def relative_permittivity_corrected(self) -> Complexer:
         """Calculate the corrected relative complex permittivity. (e-je) generic discription."""
         arr = 1 / (self._mu * self.complexer_obj.array)
-        return Complexer._from_valid(arr.real + 1j * (arr.imag + self.dc_conductivity), sign=-1)
+        imag = arr.imag + self.dc_conductivity
+        return Complexer._from_valid(arr.real + 1j * imag, sign=-1)
 
     @property
     def susceptibility(self) -> Complexer:
@@ -384,10 +423,15 @@ class ImpedanceHelper(RawZDataOps):
         else:
             raise TypeError("Index must be a valid property name")
 
-    def valid_phase(self) -> bool:
+    def valid_phase(self, mask_invalid=False) -> bool:
         """Check if the data has a valid phase (between -90 and 90 degrees)."""
+        mask = (
+            complex_shared_sign_mask(self.complexer_obj.array)
+            if mask_invalid
+            else np.ones(self.complexer_obj.array.shape, dtype=bool)
+        )
         for name in BASE_COMPLEX_FORMS:
-            data = getattr(self, name).phase
+            data = getattr(self, name).phase[mask]
             if np.ptp(data) > 180 or (name in CENTER_PHASE_FORMS and np.any(np.abs(data) > 100)):
                 return False
         return True
@@ -502,7 +546,7 @@ def convert(
         system = ImpedanceHelper(
             data, kwargs.get("frequency", system.frequency), system.thickness, system.area
         )
-    elif isinstance(system, object):
+    elif system is not None and isinstance(system, object):
         kwargs.setdefault("frequency", getattr(system, "frequency", None))
         kwargs.setdefault("thickness", getattr(system, "thickness", 1.0))
         kwargs.setdefault("area", getattr(system, "area", 1.0))
@@ -530,14 +574,42 @@ def convert(
         # Retry once with inverted imaginary part (corrects missing sign conventions)
         clone = system.clone(data.real - 1j * data.imag)
         clone.complexer_obj = _convert_once(clone, form, phys_const=phys_const)
-        if not clone.valid_phase():
+        if clone.valid_phase():
+            system = clone
+        else:
             message = f"Conversion check failed when converting from '{form}'. "
             if strict:
                 raise ValueError(message)
             else:
                 warnings.warn(message, RuntimeWarning, stacklevel=2)
-        system = clone
+            system = system if system.valid_phase(True) else clone
 
     if target == "impedance":
         return system.impedance
     return system[target]
+
+
+if __name__ == "__main__":
+    a0 = np.logspace(-3, 7)
+
+    test_sig0 = ArraySignature.from_array(np.ones_like(a0) * 10)
+
+    print(test_sig0.is_("flat"))
+    # test_sig0.is_("a")
+
+    test_sig1 = ArraySignature.from_array(a0)
+
+    print(test_sig1.is_("flat"))
+
+    b0 = np.hstack([a0, a0[1:][::-1]])
+    test_sig2 = ArraySignature.from_array(b0)
+
+    ass = test_sig0.VECTOR
+
+    b1 = np.hstack([a0[1:], a0[::-1]])
+    test_sig3 = ArraySignature.from_array(b1)
+
+    # b0 = np.stack([a0, a0[1:][::-1]])
+
+    c = np.cos(np.linspace(0, 4 * np.pi, 100))
+    test_sig4 = ArraySignature.from_array(c[:-1])

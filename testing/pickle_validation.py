@@ -31,11 +31,11 @@ def check_picklability(obj, cloud=False, auto_print=False):
             data = cloudpickle.dumps(value) if cloud else pickle.dumps(value)
             cloudpickle.loads(data) if cloud else pickle.loads(data)
             results[name] = True
-        except Exception as e:
+        except Exception as exc:
             if hasattr(value, "__len__") and len(value) > 10:
-                results[name] = f"Unpicklable: {type(value).__name__} ({e})"
+                results[name] = f"Unpicklable: {type(value).__name__} ({exc})"
             else:
-                results[name] = f"Unpicklable: {type(value).__name__} w/ value: {value} ({e})"
+                results[name] = f"Unpicklable: {type(value).__name__} w/ value: {value} ({exc})"
     if auto_print:
         for name, result in results.items():
             if result is not True:
@@ -58,14 +58,14 @@ def check_attr_picklability(obj, cloud=False, auto_print=False):
             data = cloudpickle.dumps(value) if cloud else pickle.dumps(value)
             cloudpickle.loads(data) if cloud else pickle.loads(data)
             results[name] = True
-        except Exception as e:
+        except Exception as exc:
             if value == "<initialized state>":
-                results[name] = f"Failed to retrieve attr {name} ({e})"
+                results[name] = f"Failed to retrieve attr {name} ({exc})"
                 continue
             if hasattr(value, "__len__") and len(value) > 10:
-                results[name] = f"Unpicklable: {type(value).__name__} ({e})"
+                results[name] = f"Unpicklable: {type(value).__name__} ({exc})"
             else:
-                results[name] = f"Unpicklable: {type(value).__name__} w/ value: {value} ({e})"
+                results[name] = f"Unpicklable: {type(value).__name__} w/ value: {value} ({exc})"
     if auto_print:
         for name, result in results.items():
             if result is not True:
@@ -100,9 +100,9 @@ def check_deep_picklability(
         objects = {_path + f" ({type(obj).__name__})": restored}
         if len(_seen) > 1:
             return errors, objects
-    except Exception as e:
+    except Exception as exc:
         # errors[_path + f" ({type(obj).__name__})"] = str(e)
-        errors = objects = {_path + f" ({type(obj).__name__})": str(e)}
+        errors = objects = {_path + f" ({type(obj).__name__})": str(exc)}
 
     # If it's a container, dive deeper
     if isinstance(obj, dict):
@@ -126,8 +126,8 @@ def check_deep_picklability(
         for k in items:
             try:
                 val = getattr(obj, k)
-            except Exception as e:
-                errors[f"{_path}.{k}"] = f"Attribute access error: {e}"
+            except Exception as exc:
+                errors[f"{_path}.{k}"] = f"Attribute access error: {exc}"
                 continue
             e_res, o_res = check_deep_picklability(val, f"{_path}.{k}", _seen, cloud, eval_dir)
             errors |= e_res
@@ -157,8 +157,8 @@ def check_deep_picklability(
 #     try:
 #         cloudpickle.dumps(obj) if cloud else pickle.dumps(obj)
 #         return []
-#     except Exception as e:
-#         errors = [(f"{_path} ({type(obj).__name__})", str(e))]
+#     except Exception as exc:
+#         errors = [(f"{_path} ({type(obj).__name__})", str(exc))]
 
 #     # If it's a container, dive deeper
 #     if isinstance(obj, dict):

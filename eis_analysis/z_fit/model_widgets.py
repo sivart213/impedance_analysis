@@ -228,13 +228,13 @@ class ModelLineEdit(QLineEdit):
             else:
                 # Do not set invalid text programically; emit error or ignore
                 self.validityChanged.emit(False)
-        except Exception as e:
+        except Exception as exc:
             if self.receivers(self.onError):
-                self.onError.emit(e)
+                self.onError.emit(exc)
 
             elif not self.ignore_error:
                 # Re-raise the error if ignore_error is False and no onError function is connected
-                raise e
+                raise exc
 
     def contextMenuEvent(self, event):
         """
@@ -383,11 +383,11 @@ class ModelLineEdit(QLineEdit):
                     text, elements = clean_model_elements(s_model)
                     validate_model(text, raise_err=True)
 
-                except Exception as e:
+                except Exception as exc:
                     QMessageBox.warning(
                         self,
                         "Invalid Sub-model",
-                        f"Sub-model '{s_model.strip()}' is invalid: {str(e)}",
+                        f"Sub-model '{s_model.strip()}' is invalid: {str(exc)}",
                     )
                     return
                 for elem in elements:

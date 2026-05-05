@@ -5,7 +5,7 @@ from collections.abc import Callable
 import numpy as np
 import pandas as pd
 
-from eis_analysis.data_treatment import FittingMethods  # Add this import
+from eis_analysis.data_treatment.data_analysis import FittingMethods  # Add this import
 
 
 def linear_func(t: np.ndarray, a: float, b: float) -> np.ndarray:
@@ -480,9 +480,9 @@ def perform_arrhenius_fit(
         if "AICc" in exp_res:
             res["AICc"] = exp_res["AICc"]
 
-    except Exception as e:
-        print(f"Error in arrhenius fit: {e}")
-        # raise e
+    except Exception as exc:
+        print(f"Error in arrhenius fit: {exc}")
+        # raise exc
     return res
 
 
@@ -519,6 +519,7 @@ def perform_linear_fit(
     """
     x_in = np.asarray(x_vals, dtype=float)
     y_in = np.asarray(y_vals, dtype=float)
+    min_val = kwargs.get("min_val", 1e-32)
 
     res = {
         "m": np.nan,
@@ -541,8 +542,11 @@ def perform_linear_fit(
                 intercept = np.mean(y_arr - slope * x_arr)
             elif "intercept" in kwargs or "b" in kwargs:
                 intercept = kwargs.get("intercept", kwargs["b"])
-                slope = np.mean((y_arr - intercept) / x_arr)
+                slope = np.mean((y_arr - intercept) / np.where(x_arr, x_arr, min_val))
             else:
+                # if np.all(x_arr == 0):
+                #     x_arr[:] = min_val
+
                 weight = weights
                 if weight is not None:
                     weight = np.asarray(weights, dtype=float)[mask]
@@ -561,8 +565,8 @@ def perform_linear_fit(
             if kwargs.get("aicc", False):
                 res["AICc"] = calc_aicc(ss_residual, length, 2)  # 2 params: alpha, beta
 
-    except Exception as e:
-        print(f"Error in linear fit: {e}")
+    except Exception as exc:
+        print(f"Error in linear fit: {exc}")
         # raise e
     return res
 
@@ -599,6 +603,7 @@ def perform_exponential_fit(
     """
     x_in = np.asarray(x_vals, dtype=float)
     y_in = np.asarray(y_vals, dtype=float)
+    min_val = kwargs.get("min_val", 1e-32)
 
     res = {
         "alpha": np.nan,
@@ -615,7 +620,7 @@ def perform_exponential_fit(
             # Take log of y_vals for linear regression
             y_arr = y_in[mask]
             sign = int(np.median(np.sign(y_arr))) or int(kwargs.get("sign", 1))
-            y_arr[y_arr == 0] = kwargs.get("min_val", 1e-32) * sign  # Avoid log(0)
+            y_arr[y_arr == 0] = min_val * sign  # Avoid log(0)
 
             # Use predefined parameters if provided
             if "b" in kwargs or "beta" in kwargs:
@@ -623,8 +628,13 @@ def perform_exponential_fit(
                 intercept = np.mean(np.log(np.abs(y_arr)) - slope * x_arr)
             elif "a" in kwargs or "alpha" in kwargs:
                 intercept = np.log(abs(kwargs.get("a", kwargs["alpha"])))
-                slope = np.mean((np.log(np.abs(y_arr)) - intercept) / x_arr)
+                slope = np.mean(
+                    (np.log(np.abs(y_arr)) - intercept) / np.where(x_arr, x_arr, min_val)
+                )
             else:
+                # if np.all(x_arr == 0):
+                #     x_arr[:] = min_val
+
                 weight = weights
                 if weight is not None:
                     weight = np.asarray(weights, dtype=float)[mask]
@@ -645,9 +655,9 @@ def perform_exponential_fit(
             if kwargs.get("aicc", False):
                 res["AICc"] = calc_aicc(ss_residual, length, 2)  # 2 params: alpha, beta
 
-    except Exception as e:
-        print(f"Error in exponential fit: {e}")
-        # raise e
+    except Exception as exc:
+        print(f"Error in exponential fit: {exc}")
+        # raise exc
     return res
 
 
@@ -1083,8 +1093,8 @@ def nested_data_group_trend_eval(
 
 #             y_pred = np.exp(y_pred) * signs  # Convert back to original scale
 
-#     except Exception as e:
-#         print(f"Error in Arrhenius fit: {e}")
+#     except Exception as exc:
+#         print(f"Error in Arrhenius fit: {exc}")
 #     return {
 #         "Ea": activation_energy,
 #         "A_val": pre_exp_factor,

@@ -6,9 +6,6 @@ from itertools import combinations
 import numpy as np
 import pandas as pd
 
-from eis_analysis.string_ops import find_common_str
-from eis_analysis.data_treatment import range_maker
-from eis_analysis.system_utilities import save  # noqa: F401
 from eis_analysis.dc_fit.dc_data_post import fit_arrhenius_for_points  # noqa: F401
 from eis_analysis.dc_fit.extract_tools import (
     BASE_KEYS,
@@ -17,7 +14,10 @@ from eis_analysis.dc_fit.extract_tools import (
     partial_selection,
 )
 from eis_analysis.dc_fit.fit_functions import data_group_trend_eval
-from eis_analysis.impedance_supplement import get_impedance, parse_parameters
+from eis_analysis.string_ops.string_eval import find_common_str
+from eis_analysis.data_treatment.data_ops import range_maker
+from eis_analysis.impedance_supplement.ops import get_impedance
+from eis_analysis.system_utilities.file_io import save  # noqa: F401
 from eis_analysis.data_treatment.z_array_ops import (
     arc_quality,
     f_peak_stats,
@@ -26,6 +26,7 @@ from eis_analysis.data_treatment.z_array_ops import (
     f_r_c_conversion,
 )
 from eis_analysis.impedance_supplement.model_ops import parse_model_groups
+from eis_analysis.impedance_supplement.model_eval import parse_parameters
 
 DEFAULT_KEYS = BASE_KEYS + ("fit",)
 REVISED_COND = ["pre", "dh", "dry", "pre-dh", "dh-dry", "pre-dry"]
@@ -71,9 +72,9 @@ def load_fit_results(file_path: str | Path) -> tuple[pd.DataFrame, pd.DataFrame]
 
         return fit_results_df, attrs_df
 
-    except ValueError as e:
+    except ValueError as exc:
         # This will catch if the sheet names don't exist
-        raise ValueError(f"Required sheets not found in {file_path}: {e}")
+        raise ValueError(f"Required sheets not found in {file_path}: {exc}")
 
 
 def extract_run(full_name: str, *knowns: Any) -> int:
@@ -983,7 +984,15 @@ if __name__ == "__main__":
     base_path = Path(
         r"D:\Online\ASU Dropbox\Jacob Clenney\Work Docs\Data\Analysis\IS\EVA\Fit_Results\2025"
     )
-    f_bases = ["9100_cln2_fit", "9100_100_fit", "9100_200_fit", "9100_301_fit"]
+    f_bases = [
+        "9100_preau0_fit",
+        "9100_cln0_fit",
+        "9100_cln1_fit",
+        "9100_cln2_fit",
+        "9100_100_fit",
+        "9100_200_fit",
+        "9100_301_fit",
+    ]
     fits = ["r1", "r2", "r3", "r4"]
     area = 25.0  # cm^2
     thickness = 0.04  # cm (400 microns)
@@ -995,7 +1004,7 @@ if __name__ == "__main__":
         for base in f_bases:
             file = f"{base}_{fit}.xlsx"
             if not (base_path / file).exists():
-                print(f"File not found: {base_path / file}")
+                # print(f"File not found: {base_path / file}")
                 continue
             fit_df, attrs_df = load_fit_results(base_path / file)
 

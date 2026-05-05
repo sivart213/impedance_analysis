@@ -9,7 +9,7 @@ General function file
 import copy
 from enum import Enum
 from types import MappingProxyType
-from typing import Any, TypeVar
+from typing import Any, Self, TypeVar
 
 import numpy as np
 import pandas as pd
@@ -17,7 +17,7 @@ from numpy.typing import NDArray, ArrayLike
 
 try:
     from .convert import ZDataOps, convert
-    from .complexer import Complexer, parse_z_array
+    from .complexer import Complexer, FreqArray, parse_z_array
     from .definitions import (
         MOD_GRPS,
         ARR_ALIASES,
@@ -26,11 +26,11 @@ try:
         CONST_ALIASES,
         NEG_IMAG_FORMS,
     )
-    from .imped_parsing import ItemTransforms
+    from .imped_parsing import HasArray, ItemTransforms
     from ..data_treatment.dataset_ops import KeyMatcher
 except ImportError:
     from eis_analysis.z_system.convert import ZDataOps, convert
-    from eis_analysis.z_system.complexer import Complexer, parse_z_array
+    from eis_analysis.z_system.complexer import Complexer, FreqArray, parse_z_array
     from eis_analysis.z_system.definitions import (
         MOD_GRPS,
         ARR_ALIASES,
@@ -39,7 +39,7 @@ except ImportError:
         CONST_ALIASES,
         NEG_IMAG_FORMS,
     )
-    from eis_analysis.z_system.imped_parsing import ItemTransforms
+    from eis_analysis.z_system.imped_parsing import HasArray, ItemTransforms
     from eis_analysis.data_treatment.dataset_ops import KeyMatcher
 
 import warnings
@@ -144,16 +144,11 @@ def ensure_order(
     """
     # Resolve frequency source
     data = np.array(data)
-    if primary_freq is None:
-        if backup_freq is None:
+    freq = np.array([1]) if primary_freq is None else np.array(primary_freq)
+    if len(freq) != len(data) or np.all(freq == 1):
+        freq = np.array([1]) if backup_freq is None else np.array(backup_freq)
+        if len(freq) != len(data) or np.all(freq == 1):
             return None, data
-        freq = np.array(backup_freq)
-    else:
-        freq = np.array(primary_freq)
-
-    if all(freq == 1) or len(freq) != len(data):
-        # No frequency available: return dummy axis
-        return None, data
 
     order = SortOrder(order)
     z_at_dc = ArrayAt0(expected_z_at_dc)
@@ -292,6 +287,14 @@ class ZDataParser:
 
 
 class ComplexSystem(ZDataOps, ZDataParser, ItemTransforms[Complexer | np.ndarray | float | int]):
+    """
+    Class object representing a complex impedance system, with associated frequency, thickness,
+    area, and metadata attributes.
+
+    Primarily used to provide a single interface for parsing and converting various data formats
+    into a standardized form (impedance array with frequency axis), while also storing relevant
+    metadata (thickness, area, custom attributes).
+    """
 
     aliases = MappingProxyType(CONST_ALIASES | ARR_ALIASES | COMP_ALIASES)
     _order: SortOrder
@@ -299,12 +302,13 @@ class ComplexSystem(ZDataOps, ZDataParser, ItemTransforms[Complexer | np.ndarray
 
     def __init__(
         self,
-        data: ArrayLike | Complexer | "ComplexSystem" | None = None,
+        data: ArrayLike | Complexer | Self | None = None,
         frequency: ArrayLike | None = None,
         thickness: int | float | None = None,
         area: int | float | None = None,
         form: str = "impedance",
         order: str | bool | None | SortOrder = None,
+        writeable=True,
         **kwargs,
     ):
         """
@@ -335,6 +339,7 @@ class ComplexSystem(ZDataOps, ZDataParser, ItemTransforms[Complexer | np.ndarray
             * Thickness: parsed from data > `thickness` kwarg > default (1.0).
             * Area: parsed from data > `area` kwarg > default (1.0).
         """
+        self._writeable = True
         self._set_data()
         self._order = SortOrder.NONE
         self._attrs: dict[str, str | int | float | np.number | bool] = {}
@@ -372,21 +377,14 @@ class ComplexSystem(ZDataOps, ZDataParser, ItemTransforms[Complexer | np.ndarray
 
         freq, data, thick, ar, attrs = self.dissect_data(data, form)
 
-        # self._frequency, data = self.ensure_order(
-        #     data, freq, frequency, None if form != "impedance" else expected_z_at_dc, tolerance
-        # )
-
         self.attrs |= attrs
         self.thickness = thick if thick is not None else thickness
         self.area = ar if ar is not None else area
 
-        # self.complexer_obj = Complexer(data)
-        # self.complexer_obj = self.to_impedance(form)
         if form != "impedance":
             sort_kwargs["expected_z_at_dc"] = None
             freq, data = ensure_order(data, freq, frequency, self.order, **sort_kwargs)
-            # self._set_data(convert(data, form, frequency=freq, area=self.area, thickness=self.thickness), freq)
-            self._set_data(convert(data, form, system=self, frequency=freq), freq)
+            self._set_data(convert(data, form, system=self, frequency=freq, strict=False), freq)
             warnings.warn(
                 "Conversion inside __init__ is deprecated; please pass impedance data.",
                 FutureWarning,
@@ -396,78 +394,95 @@ class ComplexSystem(ZDataOps, ZDataParser, ItemTransforms[Complexer | np.ndarray
             freq, data = ensure_order(data, freq, frequency, self.order, **sort_kwargs)
             self._set_data(Complexer(data), freq)
 
-    def copy(self, deep=True) -> "ComplexSystem":
+        self.writeable = writeable
+
+    def __setattr__(self, name, value):
+        if name != "writeable" and not getattr(self, "writeable", True):
+            raise AttributeError(f"ComplexSystem is not writeable; cannot modify '{name}'")
+        name = self.aliases.get(str(name), str(name))
+        object.__setattr__(self, name, value)
+
+    def __getattr__(self, name) -> Complexer | np.ndarray | float | int:
+        if name == "aliases":
+            raise AttributeError
+        name = self.aliases.get(name.lower(), name)
+        return object.__getattribute__(self, str(name))
+
+    def __getitem__(self, index) -> Complexer | np.ndarray | float | int:
+        """Allow slicing and indexing."""
+        if isinstance(index, str):
+            if hasattr(self, index.lower()):
+                return getattr(self, index.lower())
+            elif hasattr(self.complexer_obj, index.lower()):
+                return getattr(self.complexer_obj, index.lower())
+            try:
+                return self._parse_and_transform(index)
+            except Exception as exc:
+                raise AttributeError(
+                    f"'{index}' is not a valid index for '{self.__class__.__name__}'\nError: {exc}"
+                ) from exc
+        else:
+            raise TypeError("Index must be a string")
+
+    def __repr__(self) -> str:
+        """Custom repr to include self.array."""
+        msg = f"{self.__class__.__name__}"
+        data = ""
+        if hasattr(self, "complexer_obj"):
+            arr_str = np.array2string(self.complexer_obj.array, threshold=6, precision=4)
+            data += f"Z = {arr_str}"
+        if hasattr(self, "frequency"):
+            freq_str = np.array2string(self.frequency, threshold=6, precision=4)
+            data += f", freq = {freq_str}"
+        if data:
+            msg += f"({data})"
+        return msg
+
+    def __len__(self) -> int:
+        return len(self.complexer_obj.array)
+
+    def __copy__(self) -> Self:
+        cls = type(self)  # self.__class__
+        result = cls.__new__(cls)
+        # result.__dict__.update(self.__dict__)
+        for key, val in self.__dict__.items():
+            if key == "_writeable":
+                continue
+            copied = copy.copy(val)
+            # Defensive unlock for child objects
+            if hasattr(copied, "writeable"):
+                try:
+                    copied.writeable = True
+                except Exception:
+                    pass
+            result.__dict__[key] = copied
+        return result
+
+    def __deepcopy__(self, memo) -> Self:
+        cls = type(self)
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for key, val in self.__dict__.items():
+            if key == "_writeable":
+                continue
+            copied = copy.deepcopy(val, memo)
+            # Defensive unlock for child objects
+            if hasattr(copied, "writeable"):
+                try:
+                    copied.writeable = True
+                except Exception:
+                    pass
+            result.__dict__[key] = copied
+            # setattr(result, key, copy.deepcopy(val, memo))
+        return result
+
+    def copy(self, deep: bool = True) -> Self:
         """Create a copy of the ComplexSystem."""
         if deep:
             return copy.deepcopy(self)
         return copy.copy(self)
 
-    def update(self, data: ArrayLike | Complexer | "ComplexSystem", form="impedance", **kwargs):
-        """
-        Update this ComplexSystem with new data or parameters.
-
-        Parameters
-        ----------
-        data : ArrayLike | Complexer | ComplexSystem
-            Input data or object to merge into this system.
-        form : str, default="impedance"
-            Data representation form. Conversion to impedance is performed if needed.
-        **kwargs : dict
-            Explicit overrides for metadata (e.g., thickness, area).
-
-        Notes
-        -----
-        - It is recommended that all data be provided in impedance form,
-        rather than relying on internal conversion.
-        - Precedence rules:
-            * Frequency: parsed from data > keep existing frequency > ignore kwargs.
-            * Thickness: parsed from data > keep existing value > final override from `thickness` kwarg.
-            * Area: parsed from data > keep existing value > final override from `area` kwarg.
-        - Kwargs are applied *after* conversions, ensuring that updates do not
-        interfere with internal reversion/normalization steps.
-        """
-
-        internal = {}
-        if isinstance(data, ComplexSystem):
-            internal = data.__dict__.copy()
-        freq, data, thick, ar, attrs = self.dissect_data(data, form)
-
-        # Precedence: parsed val > provided value > existing value
-        self.__dict__.update(internal)
-
-        thickness = kwargs.pop("thickness", None)
-        area = kwargs.pop("area", None)
-
-        self.thickness = thick if thick is not None else thickness
-        self.area = ar if ar is not None else area
-        self.attrs |= attrs
-
-        # self.complexer_obj = Complexer(data)
-        # self.complexer_obj = self.to_impedance(form)
-        sort_kwargs = {}
-        frequency = kwargs.pop("frequency", self.frequency)
-        sort_kwargs["expected_z_at_dc"] = kwargs.pop("expected_z_at_dc", True)
-        sort_kwargs["tolerance"] = kwargs.pop("tolerance", 0.1)
-
-        if form != "impedance":
-            sort_kwargs["expected_z_at_dc"] = None
-            freq, data = ensure_order(data, freq, frequency, self.order, **sort_kwargs)
-            self._set_data(
-                convert(
-                    data, form, frequency=freq, area=self.area, thickness=self.thickness, **kwargs
-                ),
-                freq,
-            )
-        else:
-            freq, data = ensure_order(data, freq, frequency, self.order, **sort_kwargs)
-            self._set_data(Complexer(data), freq)
-
-        self.thickness = thickness
-        self.area = area
-
-    def clone(
-        self, data: ArrayLike | Complexer | "ComplexSystem", form="impedance", **kwargs
-    ) -> "ComplexSystem":
+    def clone(self, data: ArrayLike | Complexer | Self, form: str = "impedance", **kwargs) -> Self:
         """
         Create a new ComplexSystem instance with new data, while preserving
         this instance's thickness, area, and attrs. Frequency from the new data
@@ -512,56 +527,93 @@ class ComplexSystem(ZDataOps, ZDataParser, ItemTransforms[Complexer | np.ndarray
 
         return new
 
-    def __repr__(self) -> str:
-        """Custom repr to include self.array."""
-        if hasattr(self, "complexer_obj"):
-            return f"{self.__class__.__name__}({self.complexer_obj.array})"
-        return f"{self.__class__.__name__}"
+    def update(
+        self, data: ArrayLike | Complexer | Self, form: str = "impedance", **kwargs
+    ) -> None:
+        """
+        Update this ComplexSystem with new data or parameters.
 
-    def __setattr__(self, name, value):
-        name = self.aliases.get(str(name), str(name))
-        # name = self.aliases.get(str(name), self.c_aliases.get(str(name), str(name)))
-        object.__setattr__(self, name, value)
+        Parameters
+        ----------
+        data : ArrayLike | Complexer | ComplexSystem
+            Input data or object to merge into this system.
+        form : str, default="impedance"
+            Data representation form. Conversion to impedance is performed if needed.
+        **kwargs : dict
+            Explicit overrides for metadata (e.g., thickness, area).
 
-    def __getattr__(self, name) -> "Complexer | np.ndarray | float | int":
-        if name == "aliases":
-            raise AttributeError
-        name = self.aliases.get(name.lower(), name)
-        # name = self.aliases.get(name.lower(), self.c_aliases.get(name.lower(), name))
-        return object.__getattribute__(self, str(name))
+        Notes
+        -----
+        - It is recommended that all data be provided in impedance form,
+        rather than relying on internal conversion.
+        - Precedence rules:
+            * Frequency: parsed from data > keep existing frequency > ignore kwargs.
+            * Thickness: parsed from data > keep existing value > final override from `thickness` kwarg.
+            * Area: parsed from data > keep existing value > final override from `area` kwarg.
+        - Kwargs are applied *after* conversions, ensuring that updates do not
+        interfere with internal reversion/normalization steps.
+        """
+        if not self.writeable:
+            raise AttributeError("ComplexSystem instance is locked; cannot update")
 
-    def __getitem__(self, index) -> "Complexer | np.ndarray | float | int":
-        """Allow slicing and indexing."""
-        if isinstance(index, str):
-            if hasattr(self, index.lower()):
-                return getattr(self, index.lower())
-            elif hasattr(self.complexer_obj, index.lower()):
-                return getattr(self.complexer_obj, index.lower())
-            try:
-                return self._parse_and_transform(index)
-            except Exception as e:
-                raise AttributeError(
-                    f"'{index}' is not a valid index for '{self.__class__.__name__}'\nError: {e}"
-                ) from e
+        internal = {}
+        if isinstance(data, ComplexSystem):
+            internal = data.__dict__.copy()
+        freq, data, thick, ar, attrs = self.dissect_data(data, form)
+
+        # Precedence: parsed val > provided value > existing value
+        self.__dict__.update(internal)
+
+        thickness = kwargs.pop("thickness", None)
+        area = kwargs.pop("area", None)
+
+        self.thickness = thick if thick is not None else thickness
+        self.area = ar if ar is not None else area
+        self.attrs |= attrs
+
+        # self.complexer_obj = Complexer(data)
+        # self.complexer_obj = self.to_impedance(form)
+        sort_kwargs = {}
+        frequency = kwargs.pop("frequency", self.frequency)
+        sort_kwargs["expected_z_at_dc"] = kwargs.pop("expected_z_at_dc", True)
+        sort_kwargs["tolerance"] = kwargs.pop("tolerance", 0.1)
+
+        if form != "impedance":
+            sort_kwargs["expected_z_at_dc"] = None
+            freq, data = ensure_order(data, freq, frequency, self.order, **sort_kwargs)
+            kwargs.setdefault("strict", True)
+            self._set_data(
+                convert(
+                    data, form, frequency=freq, area=self.area, thickness=self.thickness, **kwargs
+                ),
+                freq,
+            )
         else:
-            raise TypeError("Index must be a string")
+            freq, data = ensure_order(data, freq, frequency, self.order, **sort_kwargs)
+            self._set_data(Complexer(data), freq)
 
-    def __copy__(self):
-        cls = self.__class__
-        result = cls.__new__(cls)
-        result.__dict__.update(self.__dict__)
-        return result
+        self.thickness = thickness
+        self.area = area
 
-    def __deepcopy__(self, memo):
-        cls = self.__class__
-        result = cls.__new__(cls)
-        memo[id(self)] = result
-        for k, v in self.__dict__.items():
-            setattr(result, k, copy.deepcopy(v, memo))
-        return result
+    @property
+    def writeable(self) -> bool:
+        """Flag indicating whether the ComplexSystem is writeable (modifiable)."""
+        return self._writeable
 
-    def __len__(self):
-        return len(self.complexer_obj.array)
+    @writeable.setter
+    def writeable(self, value: bool):
+        value = bool(value)
+        object.__setattr__(self, "_writeable", value)
+        for obj in self.__dict__.values():
+            if isinstance(obj, np.ndarray):
+                obj.flags.writeable = value
+
+            elif hasattr(obj, "writeable"):
+                try:
+                    obj.writeable = value
+                    # setattr(obj, "writeable", value)
+                except Exception:
+                    pass
 
     @property
     def order(self) -> SortOrder:
@@ -575,6 +627,7 @@ class ComplexSystem(ZDataOps, ZDataParser, ItemTransforms[Complexer | np.ndarray
         """
         old_order = self._order
         self._order = SortOrder(value)
+        # NOTE: Check relies on old(?) default freq
         if not self._order.is_none and old_order != self._order and not all(self.frequency == 1):
             freq, data = ensure_order(
                 self.complexer_obj.array, self.frequency, None, self._order, None
@@ -589,6 +642,7 @@ class ComplexSystem(ZDataOps, ZDataParser, ItemTransforms[Complexer | np.ndarray
             "thickness": self.thickness,
             "c_0": self.characteristic_capacitance,
         }
+        # NOTE: Check relies on old(?) default Z
         if len(self.complexer_obj.array) <= 1:
             return init
         return {
@@ -753,7 +807,7 @@ class ComplexSystem(ZDataOps, ZDataParser, ItemTransforms[Complexer | np.ndarray
         base = COMP_ALIASES.get(name.lower(), name)
 
         if raw and base in OFFSET_FORMS:
-            data = convert(self.Z, from_form="impedance", to_form=base, system=self)
+            data = convert(self.Z, from_form="impedance", to_form=base, system=self, strict=False)
         else:
             try:
                 data = self[base]
@@ -771,7 +825,7 @@ class ComplexSystem(ZDataOps, ZDataParser, ItemTransforms[Complexer | np.ndarray
 
     def get_df(
         self,
-        *args,
+        *args: str,
         cartesian: bool = True,
         as_complex: bool = False,
         f_of_point: int | float | list[int | float] = 0,
@@ -901,8 +955,7 @@ class ComplexSystem(ZDataOps, ZDataParser, ItemTransforms[Complexer | np.ndarray
         except (AttributeError, TypeError, KeyError):
             return False
 
-    # @staticmethod
-    def _ensure_array(self, value) -> np.ndarray:
+    def _ensure_array(self, value: ArrayLike | HasArray | Self) -> np.ndarray:
         """
         Helper function to ensure the input is converted to a numpy array.
 
@@ -913,10 +966,11 @@ class ComplexSystem(ZDataOps, ZDataParser, ItemTransforms[Complexer | np.ndarray
         np.ndarray: The converted numpy array.
         """
         if isinstance(value, str):
-            value = getattr(self, value)
-        if isinstance(value, Complexer) or hasattr(value, "array"):
-            value = getattr(value, "array")
-        return np.asarray(value)
+            val = getattr(self, value)
+            if val is None:
+                raise ValueError(f"Attribute '{value}' not found in ComplexSystem.")
+            return np.array(getattr(val, "array", val))
+        return np.asarray(getattr(value, "array", value))
 
     def cirith_ungol(
         self, freq_array: NDArray[np.floating], z_array: NDArray[np.complexfloating]
@@ -937,7 +991,8 @@ class ComplexSystem(ZDataOps, ZDataParser, ItemTransforms[Complexer | np.ndarray
             1D array of complex impedance values.
         """
         self.complexer_obj = Complexer._from_valid(z_array)
-        self._frequency = np.asarray(freq_array)
+        self._frequency = FreqArray._from_valid(freq_array)
+        # self._frequency = np.asarray(freq_array)
         return
 
 
@@ -951,6 +1006,24 @@ if __name__ == "__main__":
     ckt = RCCircuit(true_values=[24, 1e9, 1e-11], noise=0.01)
     rc_system = ComplexSystem(data=ckt.Z_noisy, frequency=ckt.freq, area=25, thickness=500e-4)
 
+    # rc_system.writeable = False
+
+    # rc_system.writeable=True
+
+    # rc_system.order = True
+
+    # freq = rc_system.frequency
+    # ones = np.ones_like(freq, dtype=complex)
+
+    # # Case 1: Update with raw array, explicit area/thickness
+    # cs1 = ComplexSystem(data=ones, frequency=freq, area=1.0, thickness=1.0)
+    # cs1.update(
+    #     rc_system.e_r.array,
+    #     form="relative_permittivity",
+    #     area=rc_system.area,
+    #     thickness=rc_system.thickness,
+    # )
+
     from_form = "relative_permittivity_corrected"
     data = rc_system.get_complexer(from_form, raw=True)
 
@@ -959,14 +1032,22 @@ if __name__ == "__main__":
         kwargs["phys_const"] = rc_system.val_towards_zero(rc_system.conductivity.real)
     elif from_form == "susceptibility":
         kwargs["phys_const"] = rc_system.val_towards_infinity(rc_system.relative_permittivity.real)
-    arr = data.array
+
     result = convert(
-        arr.real - 1j * arr.imag,
+        data.array.real - 1j * data.array.imag,
         from_form=from_form,
         to_form="impedance",
         system=rc_system,
         **kwargs,
     )
+
+    # np.testing.assert_allclose(
+    #     result.array,
+    #     rc_system.impedance.array,
+    #     rtol=1e-6,
+    #     atol=1e-8,
+    #     err_msg=f"Conversion from {from_form} to impedance failed for",
+    # )
 
     # ckt = RCCircuit(freq=(-4, 7, 200), true_values=[24, 1e9, 1e-11], noise=0.01)
     # # Z = ckt.Z_noisy
@@ -1069,404 +1150,3 @@ if __name__ == "__main__":
     # #     else:
     # #         assert res[1] is None
     # #     assert np.allclose(res[0], Z)  # , rtol=1e-1)
-
-
-# def spacing_consistency_old(
-#     arr: np.ndarray, axis: int = 0, eps: float = 1e-12, alpha=0.9
-# ) -> np.ndarray:
-#     """
-#     Measure consistency of spacing along an axis.
-#     Returns values in [0,1], where 1 = perfectly consistent.
-
-#     Parameters
-#     ----------
-#     arr : ndarray
-#         Input array (1D or 2D).
-#     axis : int
-#         Axis along which to compute differences.
-#     eps : float
-#         Small constant to avoid division by zero and rounding tolerance.
-#     """
-#     a1, a2 = min(alpha, 1 - alpha), max(alpha, 1 - alpha)
-#     diffs = np.diff(arr, axis=axis)
-
-#     q1, q2 = np.quantile(diffs, [a1, a2], axis=0)
-#     frac = 1 - np.clip((q2 - q1) / np.maximum(np.abs(np.median(diffs, axis=0)), eps), 0, 1)
-
-#     frac_r = np.abs(np.mean(diffs, axis=0)) / np.maximum(np.max(np.abs(diffs), axis=0), eps)
-
-#     frac = frac * (a2 + a1 * frac_r)
-
-#     frac[frac >= 1.0 - eps] = 1.0
-#     return frac
-
-# def resolve_rect_old(data, avail, col1=None, col2=None, s_dict=None, **_) -> np.ndarray | None:
-#     """Try to resolve rectangular (real/imag) representation."""
-#     if col1 is not None and col2 is not None:
-#         return col1 + 1j * col2
-
-#     if avail.sum() == 1:  # Case: exactly one column left
-#         if col1 is not None:
-#             return col1 + 1j * data[:, avail][:, 0]
-#         if col2 is not None:
-#             return data[:, avail][:, 0] + 1j * col2
-
-#     if s_dict is not None:  # Case: fill using scores (if provided)
-#         if col1 is not None:
-#             return col1 + 1j * data[:, np.argmax(s_dict["imag"] * avail)]
-#         if col2 is not None:
-#             return data[:, np.argmax(s_dict["real"] * avail)] + 1j * col2
-#         if avail.sum() >= 2:
-#             i = np.argmax(s_dict["imag"] * avail)
-#             p = np.argmax(s_dict["phase"] * avail)
-#             idx_range = np.arange(data.shape[1])
-#             real_sc = s_dict["real"] * avail * (idx_range != i)
-#             mag_sc = s_dict["mag"] * avail * (idx_range != p)
-#             r = np.argmax(real_sc + 0.01 * (np.abs(idx_range - i) == 1))
-#             m = np.argmax(mag_sc + 0.01 * (np.abs(idx_range - p) == 1))
-
-#             if s_dict["mag"][m] * s_dict["phase"][p] <= s_dict["real"][r] * s_dict["imag"][i]:
-#                 return data[:, r] + 1j * data[:, i]
-#             if abs(data[:, p]).max() > np.pi / 2:
-#                 return data[:, m] * np.exp(1j * np.deg2rad(data[:, p]))
-#             return data[:, m] * np.exp(1j * data[:, p])
-#     return None
-
-
-# @staticmethod
-# def _dissect_df_old(
-#     df: pd.DataFrame, form: str = "impedance"
-# ) -> tuple[np.ndarray | None, np.ndarray, float | None, float | None, dict[str, Any]]:
-#     """
-#     Parse a pandas DataFrame into components.
-#     Returns frequency (if found), data, thickness, area, attrs.
-#     """
-#     form = COMP_ALIASES.get(str(form).lower(), "impedance")
-
-#     attrs = {}
-#     attrs |= df.attrs
-#     freq = None
-#     thickness = attrs.pop("thickness", None)
-#     area = attrs.pop("area", None)
-
-#     # frequency column detection
-#     if "freq" in df.columns:
-#         freq = df["freq"].to_numpy()
-#         df = df.drop(columns=["freq"])
-#     elif "frequency" in df.columns:
-#         freq = df["frequency"].to_numpy()
-#         df = df.drop(columns=["frequency"])
-
-#     # group detection
-#     for grp_k, grp in MOD_GRPS.items():
-#         if all(col in df.columns for col in grp):
-#             data = df[grp].to_numpy()
-#             break
-#         elif all(f"impedance.{col}" in df.columns for col in grp):
-#             data = df[[f"impedance.{col}" for col in grp]].to_numpy()
-#             break
-#     else:
-#         # fallback: single column or raw values
-#         if form in df.columns:
-#             data = df[form].to_numpy()
-#         elif form.title() in df.columns:
-#             data = df[form.title()].to_numpy()
-#         else:
-#             data = df.to_numpy()
-
-#     return freq, data, thickness, area, attrs
-#     # Convert to numpy array and get rid of extra dimensions
-#     arr = np.array(value).squeeze()
-#     # If the prior step results in a 0-d array (i.e., a single value), redo without squeeze
-#     if not arr.shape and arr != complex(1, 1):
-#         arr = np.array(value)
-
-# # If the array has any shape (i.e., not empty) begin parsing
-# if arr.shape:
-#     if arr.dtype == "complex128":
-#         if len(arr.shape) == 2 and arr.shape[1] >= 2:
-#             arr = arr[:, 0]
-#         self._array = arr
-
-#     else:
-#         if len(arr.shape) == 2 and arr.shape[1] >= 2:
-#             if "pol" in self.name.lower():
-#                 # Assume polar coordinates and convert
-#                 if (abs(arr[:, 1]) > np.pi / 2).any():  # Convert degrees to radians
-#                     arr[:, 1] = np.deg2rad(arr[:, 1])
-#                 self._array = arr[:, 0] * (np.cos(arr[:, 1]) + 1j * np.sin(arr[:, 1]))
-#             else:
-#                 self._array = arr[:, 0] + 1j * arr[:, 1]
-#         else:
-#             self._array = arr + 1j * 0
-
-# def to_impedance(
-#     self,
-#     form: str = "impedance",
-#     data: ArrayLike | Complexer | "ComplexSystem" | None = None,
-#     phys_const: int | float = 0.0,
-# ) -> Complexer:
-#     """
-#     Convert a stored property to impedance (Z) as a Complexer.
-
-#     This method applies the inverse of the forward definitions (see the table below)
-#     so that Z is recovered from the given form. For most properties, where the
-#     relationship can be expressed as ƒ(ω) = A·Z(ω)⁻¹ with A representing a multiplier
-#     (e.g. 1 or μ (see Notes)), the reversion follows directly. Certain forms
-#     (M, ρ, ε_r(corr), χ) require explicit handling; ε_r(corr) and χ additionally
-#     depend on a physical constant. If that constant is omitted, the result will
-#     only be partially correct.
-
-#     Parameters
-#     ----------
-#     form : str, default="impedance"
-#         Property name or alias to convert from (e.g. Z, M, ρ, Y, C, σ, ε, χ).
-#     data : array-like, Complexer, ComplexSystem, or None
-#         Optional replacement data; if given, a copy of self is updated.
-#     phys_const : float or int, default=0.0
-#         Physical constant(s) required for special cases:
-#         - χ (susceptibility): phys_const = ε∞
-#         - ε_r(corr) (dc-corrected permittivity): phys_const = σ_dc
-
-#     Returns
-#     -------
-#     Complexer
-#         Impedance representation of the property.
-
-#     Notes
-#     -----
-#     - All valid form names and aliases are defined in ``COMP_ALIASES``.
-#     - Quick reference of forward (from Z) and reverse (to Z) mappings:
-#         - μ is defined as μ = j·ω·C₀, with C₀ = ε₀·A/d.
-
-#     Z (impedance): root form
-#     Y (admittance): Y = 1/Z → Z = 1/Y
-#     M (modulus): M = μ·Z → Z = M/μ
-#     C (capacitance): C = 1/(j·ω·Z) → Z = 1/(j·ω·C)
-#     ρ (resistivity): ρ = Z·(A/d) → Z = ρ/(A/d)
-#     σ (conductivity): σ = 1/(Z·(A/d)) → Z = 1/(σ·(A/d))
-#     ε (permittivity): ε = ε₀/(μ·Z) → Z = ε₀/(μ·ε_r)
-#     ε_r (relative_permittivity): ε_r = 1/(μ·Z) → Z = 1/(μ·ε_r)
-#     ε_r(corr) (relative_permittivity_corrected): ε_r(corr) = ε_r + j·σ_dc/(ε₀·ω) → Z = 1/(μ·ε_r(corr) + σ_dc·A/d)
-#     χ (susceptibility): χ = ε_r − ε∞ → Z = 1/(μ·(χ + ε∞))
-#     """
-
-#     # Create a copy and update with new data if provided
-#     system = self.copy(deep=True)
-#     if data is not None:
-#         if isinstance(data, ComplexSystem):
-#             system.update(data)
-#         else:
-#             system.update(system.__class__(data, frequency=system.frequency))
-
-#     form = COMP_ALIASES.get(str(form).lower(), "impedance")
-#     if form == "impedance":
-#         return system.impedance
-#     if form == "modulus":
-#         return Complexer(system.array / system._mu)
-#     if form == "resistivity":
-#         return Complexer(system.array / system.a_d)
-#     if form == "susceptibility":
-#         return Complexer(1 / (system._mu * (system.array + phys_const)), sign=-1)
-#     if form == "relative_permittivity_corrected":
-#         return Complexer(1 / (system._mu * system.array + phys_const * system.a_d), sign=-1)
-#     return system.get_complexer(form, True)
-
-# def ensure_order(
-#     self,
-#     data: np.ndarray,
-#     primary_freq: ArrayLike | None,
-#     backup_freq: ArrayLike | None = None,
-#     expected_z_at_dc: str | bool | None | ArrayAt0 = ArrayAt0.IS_MAX,
-#     tolerance: float = 0.1,
-# ) -> tuple[np.ndarray, np.ndarray]:
-#     """
-#     Ensure frequency is ordered according to self.order and align data rows.
-#     If primary_freq is None, fall back to backup_freq.
-#     If backup_freq is used (external source), then z_size_at_dc may enforce
-#     a re-sort based on impedance expectation at DC.
-#     """
-#     # Resolve frequency source
-#     freq = np.array(primary_freq) if primary_freq is not None else np.array(backup_freq)
-#     if freq is None or all(freq == 1) or len(freq) != len(data):
-#         # No frequency available: return dummy axis
-#         return self._frequency, data
-
-#     z_at_dc = ArrayAt0(expected_z_at_dc)
-#     data = np.array(data)
-
-#     # Decide sorting based on self.order
-#     if self.order.is_none:  # SortOrder.NONE
-#         # self.order is NONE → check monotonicity (ie mostly increasing or decreasing)
-#         diffs = np.diff(freq)
-#         if max(np.sum(diffs >= 0), np.sum(diffs <= 0)) / len(diffs) < 1 - tolerance:
-#             return freq, data
-#     else:
-#         idx = np.argsort(freq)
-#         if self.order.is_descending:  # SortOrder.DESCENDING
-#             idx = idx[::-1]
-#         freq, data = freq[idx], data[idx]
-
-#     # 2) If external frequency was used, enforce DC expectation on data only
-#     #    (invert data if |data| at DC does not meet expectation).
-#     if primary_freq is None and not z_at_dc.expect_nothing:
-#         dc_idx = int(np.argmin(freq))  # DC = minimal frequency
-#         mag = Complexer(data).mag
-#         target_idx = np.argmax(mag) if z_at_dc.expect_max else np.argmin(mag)
-#         if abs(dc_idx - target_idx) > len(mag) * max(tolerance, 0.05):
-#             data = data[::-1]
-
-#     return freq, data
-
-
-# @dataclass
-# class Complexer(object):
-#     """Calculate. generic discription."""
-
-#     data: InitVar[ArrayLike | "Complexer"] = np.array([complex(1, 1)])
-#     name: str = "Z"
-#     sign: int = 1
-#     long_name: str = "impedance"
-#     latex: str = "$Z$"
-#     units: str = r"$\Omega$"
-
-#     def __post_init__(self, data: ArrayLike | "Complexer"):
-#         """Calculate. generic discription."""
-#         # self._sign = 1
-#         self._array = None
-#         self.array = data
-
-#     def __add__(self, other):
-#         if isinstance(other, Complexer):
-#             return Complexer(self.array + other.array)
-#         return Complexer(self.array + other)
-
-#     def __radd__(self, other):
-#         return self.__add__(other)
-
-#     def __sub__(self, other):
-#         if isinstance(other, Complexer):
-#             return Complexer(self.array - other.array)
-#         return Complexer(self.array - other)
-
-#     def __rsub__(self, other):
-#         if isinstance(other, Complexer):
-#             return Complexer(other.array - self.array)
-#         return Complexer(other - self.array)
-
-#     def __mul__(self, other):
-#         if isinstance(other, Complexer):
-#             return Complexer(self.array * other.array)
-#         elif isinstance(other, (int, float, complex, np.ndarray)):
-#             return Complexer(self.array * other)
-#         raise TypeError(
-#             f"Multiplication not supported between Complexer and {type(other).__name__}"
-#         )
-
-#     def __rmul__(self, other):
-#         return self.__mul__(other)
-
-#     def __truediv__(self, other):
-#         if isinstance(other, Complexer):
-#             return Complexer(self.array / other.array)
-#         return Complexer(self.array / other)
-
-#     def __rtruediv__(self, other):
-#         if isinstance(other, Complexer):
-#             return Complexer(other.array / self.array)
-#         return Complexer(other / self.array)
-
-#     def __pow__(self, power, modulo=None):
-#         return Complexer(self.array**power)
-
-#     def __neg__(self):
-#         return Complexer(-self.array)
-
-#     def __abs__(self):
-#         return Complexer(abs(self.array))
-
-#     def __eq__(self, other):
-#         if isinstance(other, Complexer):
-#             return np.array_equal(self.array, other.array)
-#         return np.array_equal(self.array, other)
-
-#     def __ne__(self, other):
-#         return not self.__eq__(other)
-
-#     def __len__(self):
-#         return len(self.array)
-
-#     def __iter__(self):
-#         return iter(self.array)
-
-#     def __getitem__(self, index) -> np.ndarray | int | float | complex:
-#         """Allow slicing and indexing."""
-#         if isinstance(index, str) and hasattr(self, index):
-#             return getattr(self, index)
-#         return self.array[index]
-
-#     def __repr__(self):
-#         return f"{self.__class__.__name__}(array={self.array}, sign={self.sign})"
-
-#     def __array__(self, dtype=None, copy=None) -> np.ndarray:
-#         return np.array(self.array, dtype=dtype, copy=copy)
-
-#     @property
-#     def array(self) -> np.ndarray:
-#         """Calculate. generic discription."""
-#         if self._array is None:
-#             return np.array([complex(1, 1)])
-#         return self._array
-
-#     @array.setter
-#     def array(self, value: ArrayLike | "Complexer"):
-#         if isinstance(value, type(self)):
-#             # If complexer, parsing not really needed
-#             self._array = value.array
-#         else:
-#             self._array = ZDataParser.parse_z_array(value, "pol" in self.name.lower())[0]
-
-#     @property
-#     def real(self):
-#         """Calculate. generic discription."""
-#         return self.array.real
-
-#     @real.setter
-#     def real(self, _):
-#         pass
-
-#     @property
-#     def imag(self):
-#         """Calculate. generic discription."""
-#         return self.sign * self.array.imag
-
-#     @imag.setter
-#     def imag(self, _):
-#         pass
-
-#     @property
-#     def mag(self):
-#         """Calculate. generic discription."""
-#         return np.abs(self.array)
-
-#     @mag.setter
-#     def mag(self, _):
-#         pass
-
-#     @property
-#     def phase(self):
-#         """Calculates the phase angle."""
-#         return self.sign * np.angle(self.array, deg=True)
-
-#     @phase.setter
-#     def phase(self, _):
-#         pass
-
-#     @property
-#     def slope(self):
-#         """Calculates the ratio of imaginary/real (aka tan(phase))."""
-#         return self.sign * np.tan(np.angle(self.array, deg=False))
-
-#     @slope.setter
-#     def slope(self, _):
-#         pass

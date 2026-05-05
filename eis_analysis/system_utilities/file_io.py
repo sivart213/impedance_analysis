@@ -1155,8 +1155,8 @@ def get_file_stats(file):
         stats["st_ctime"] = _convert_to_datetime(f_stat, "st_ctime_ns")
         stats["st_birthtime"] = _convert_to_datetime(f_stat, "st_birthtime_ns")
 
-    except Exception as e:
-        logger.warning("Could not retrieve file stats for %s: %s", file, e)
+    except Exception as exc:
+        logger.warning("Could not retrieve file stats for %s: %s", file, exc)
     return stats
 
 

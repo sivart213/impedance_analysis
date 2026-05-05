@@ -318,8 +318,8 @@ class WatlowSerial:
                     hexlify(bytes_response),
                 )
                 raise ValueError(f"Invalid response received from address {self.address}")
-        except (ValueError, PermissionError, FileNotFoundError, IOError) as e:
-            return WatlowOutput(address=self.address, error=e)
+        except (ValueError, PermissionError, FileNotFoundError, IOError) as exc:
+            return WatlowOutput(address=self.address, error=str(exc))
         else:
             # Case where response data value is an int used to represent a state defined
             # in the manual (e.g. param 8003, heat algorithm, where 62 means 'PID')
@@ -421,10 +421,10 @@ class WatlowSerial:
                     response = serial.read(21) if data_type == float else serial.read(20)
                     output = self._parse_response(response)
                     return output
-            except (ValueError, PermissionError, FileNotFoundError, IOError) as e:
+            except (ValueError, PermissionError, FileNotFoundError, IOError) as exc:
                 attempt += 1
                 if attempt >= retries:
-                    return WatlowOutput(address=self.address, error=e)
+                    return WatlowOutput(address=self.address, error=str(exc))
                 time.sleep(self.timeout)
 
     def write_param(
@@ -478,10 +478,10 @@ class WatlowSerial:
                     response = serial.read(20) if data_type == float else serial.read(19)
                     output = self._parse_response(response)
                     return output
-            except (ValueError, PermissionError, FileNotFoundError, IOError) as e:
+            except (ValueError, PermissionError, FileNotFoundError, IOError) as exc:
                 attempt += 1
                 if attempt >= retries:
-                    return WatlowOutput(address=self.address, error=e)
+                    return WatlowOutput(address=self.address, error=str(exc))
                 time.sleep(self.timeout)
 
 
